@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/cagent/pkg/team"
 	"github.com/docker/cagent/pkg/teamloader"
 	"github.com/docker/cagent/pkg/tools"
+	"github.com/docker/cagent/pkg/tools/builtin"
 )
 
 // Agent implements the ACP Agent interface for cagent
@@ -81,6 +83,10 @@ func (a *Agent) Initialize(ctx context.Context, params acp.InitializeRequest) (a
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		AgentCapabilities: acp.AgentCapabilities{
 			LoadSession: false,
+			McpCapabilities: acp.McpCapabilities{
+				Http: true,
+				Sse:  true,
+			},
 			PromptCapabilities: acp.PromptCapabilities{
 				EmbeddedContext: true,
 			},
@@ -370,11 +376,17 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpd
 		kind = acp.ToolKindRead
 	}
 
+	var args map[string]any
+	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err == nil {
+		// If arguments can be parsed as JSON, include them in raw input
+	}
+
 	return acp.StartToolCall(
 		acp.ToolCallId(toolCall.ID),
 		title,
 		acp.WithStartKind(kind),
 		acp.WithStartStatus(acp.ToolCallStatusPending),
+		acp.WithStartRawInput(args),
 		acp.WithStartContent([]acp.ToolCallContent{
 			acp.ToolContent(acp.ContentBlock{
 				Text: &acp.ContentBlockText{
@@ -387,6 +399,25 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpd
 
 // buildToolCallComplete creates a tool call completion update
 func buildToolCallComplete(toolCall tools.ToolCall, output string) acp.SessionUpdate {
+	if toolCall.Function.Name == "write_file" {
+		var args builtin.WriteFileArgs
+		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err == nil {
+			output = args.Content
+		}
+
+		return acp.UpdateToolCall(
+			acp.ToolCallId(toolCall.ID),
+			acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
+			acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock(output))}),
+			acp.WithUpdateLocations([]acp.ToolCallLocation{
+				{
+					Path: args.Path,
+				},
+			}),
+			acp.WithUpdateRawOutput(map[string]any{"content": output}),
+		)
+	}
+
 	return acp.UpdateToolCall(
 		acp.ToolCallId(toolCall.ID),
 		acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
@@ -407,6 +438,32 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 		kind = acp.ToolKindRead
 	}
 
+	if toolCall.Function.Name == "write_file" {
+		var args builtin.WriteFileArgs
+		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err == nil {
+			title = fmt.Sprintf("Write to file: %s", args.Path)
+		}
+		return acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId(toolCall.ID),
+			Title:      acp.Ptr(title),
+			Kind:       acp.Ptr(kind),
+			Status:     acp.Ptr(status),
+			Locations: []acp.ToolCallLocation{
+				{
+					Path: args.Path,
+				},
+			},
+			Content: []acp.ToolCallContent{
+				acp.ToolContent(
+					acp.ContentBlock{
+						Text: &acp.ContentBlockText{
+							Text: args.Content,
+						},
+					},
+				),
+			},
+		}
+	}
 	return acp.ToolCallUpdate{
 		ToolCallId: acp.ToolCallId(toolCall.ID),
 		Title:      acp.Ptr(title),
