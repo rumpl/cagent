@@ -2,7 +2,6 @@ package acp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -360,7 +359,7 @@ func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session
 
 // buildToolCallStart creates a tool call start update
 func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpdate {
-	kind := acp.ToolKindExecute
+	kind := acp.ToolKindOther
 	title := tool.Annotations.Title
 	if title == "" {
 		title = toolCall.Function.Name
@@ -376,7 +375,13 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool) acp.SessionUpd
 		title,
 		acp.WithStartKind(kind),
 		acp.WithStartStatus(acp.ToolCallStatusPending),
-		acp.WithStartRawInput(parseToolCallArguments(toolCall.Function.Arguments)),
+		acp.WithStartContent([]acp.ToolCallContent{
+			acp.ToolContent(acp.ContentBlock{
+				Text: &acp.ContentBlockText{
+					Text: toolCall.Function.Arguments,
+				},
+			}),
+		}),
 	)
 }
 
@@ -392,7 +397,7 @@ func buildToolCallComplete(toolCall tools.ToolCall, output string) acp.SessionUp
 
 // buildToolCallUpdate creates a tool call update for permission requests
 func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.ToolCallStatus) acp.ToolCallUpdate {
-	kind := acp.ToolKindExecute
+	kind := acp.ToolKindOther
 	title := tool.Annotations.Title
 	if title == "" {
 		title = toolCall.Function.Name
@@ -407,16 +412,14 @@ func buildToolCallUpdate(toolCall tools.ToolCall, tool tools.Tool, status acp.To
 		Title:      acp.Ptr(title),
 		Kind:       acp.Ptr(kind),
 		Status:     acp.Ptr(status),
-		RawInput:   parseToolCallArguments(toolCall.Function.Arguments),
+		Content: []acp.ToolCallContent{
+			acp.ToolContent(
+				acp.ContentBlock{
+					Text: &acp.ContentBlockText{
+						Text: toolCall.Function.Arguments,
+					},
+				},
+			),
+		},
 	}
-}
-
-// parseToolCallArguments parses JSON tool call arguments into a map
-func parseToolCallArguments(argsJSON string) map[string]any {
-	var args map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		slog.Warn("Failed to parse tool call arguments", "error", err)
-		return map[string]any{"raw": argsJSON}
-	}
-	return args
 }
