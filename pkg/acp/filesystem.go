@@ -47,6 +47,10 @@ func NewFilesystemToolset(agent *Agent, workingDir string, opts ...builtin.FileS
 	}
 }
 
+func (t *FilesystemToolset) Instructions() string {
+	return t.FilesystemTool.Instructions() + "\n\nALWAYS use absolute paths when reading or writing files."
+}
+
 // Tools returns the tool definitions with ACP-specific overrides
 func (t *FilesystemToolset) Tools(ctx context.Context) ([]tools.Tool, error) {
 	baseTools, err := t.FilesystemTool.Tools(ctx)
