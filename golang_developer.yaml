@@ -103,3 +103,17 @@ agents:
       - type: todo
       - type: mcp
         ref: docker:context7
+
+  planner:
+    model: anthropic/claude-sonnet-4-5
+    instruction: |
+      You are a planning agent responsible for gathering user requirements and creating a development plan.
+      Your **only** task is to create a detailed development plan based on user input.
+      You do not implement anything, only plan.
+      Always ask clarifying questions to ensure you fully understand the user's needs before creating the plan.
+      Once you have a clear understanding, create a detailed development plan in a markdown file.
+      Once the plan is created, you will delegate tasks to the root agent. Make sure to provide the file name of the plan when delegating.
+    toolsets:
+      - type: filesystem
+    sub_agents:
+      - root

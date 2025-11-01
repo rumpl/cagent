@@ -187,6 +187,11 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_ = browser.Open(context.Background(), msg.URL)
 		return a, nil
 
+	case commands.ToggleThemeMsg:
+		styles.ToggleTheme()
+		// Force a full re-render by sending a window resize event
+		return a, core.CmdHandler(tea.WindowSizeMsg{Width: a.wWidth, Height: a.wHeight})
+
 	case dialog.RuntimeResumeMsg:
 		a.application.Resume(msg.Response)
 		return a, nil

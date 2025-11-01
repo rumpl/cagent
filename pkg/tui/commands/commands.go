@@ -18,6 +18,11 @@ type (
 	CopySessionToClipboardMsg struct{}
 )
 
+// Theme commands
+type (
+	ToggleThemeMsg struct{}
+)
+
 // Agent commands
 type AgentCommandMsg struct {
 	Command string
@@ -88,6 +93,20 @@ func BuiltInSessionCommands() []Item {
 	}
 }
 
+func builtInUICommands() []Item {
+	return []Item{
+		{
+			ID:          "ui.theme.toggle",
+			Label:       "Toggle Theme",
+			Description: "Switch between light and dark theme",
+			Category:    "UI",
+			Execute: func() tea.Cmd {
+				return core.CmdHandler(ToggleThemeMsg{})
+			},
+		},
+	}
+}
+
 func builtInFeedbackCommands() []Item {
 	return []Item{
 		{
@@ -117,6 +136,10 @@ func BuildCommandCategories(ctx context.Context, application *app.App) []Categor
 		{
 			Name:     "Session",
 			Commands: BuiltInSessionCommands(),
+		},
+		{
+			Name:     "UI",
+			Commands: builtInUICommands(),
 		},
 		{
 			Name:     "Feedback",
