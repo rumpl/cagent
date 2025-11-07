@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/v2/spinner"
-	tea "github.com/charmbracelet/bubbletea/v2"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/glamour/v2"
 
 	"github.com/docker/cagent/pkg/app"
@@ -77,7 +77,7 @@ func (mv *toolModel) Init() tea.Cmd {
 	return nil
 }
 
-func (mv *toolModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (mv *toolModel) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	if _, ok := msg.(ToggleDiffViewMsg); ok {
 		mv.splitDiffView = !mv.splitDiffView
 		return mv, nil

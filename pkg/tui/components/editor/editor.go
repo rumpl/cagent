@@ -3,8 +3,8 @@ package editor
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/v2/textarea"
-	tea "github.com/charmbracelet/bubbletea/v2"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/cagent/pkg/app"
 	"github.com/docker/cagent/pkg/history"
@@ -69,7 +69,7 @@ func (e *editor) Init() tea.Cmd {
 }
 
 // Update handles messages and updates the component state
-func (e *editor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:

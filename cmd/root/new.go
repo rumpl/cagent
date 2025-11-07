@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/docker/cagent/pkg/app"
@@ -109,11 +109,10 @@ func (f *newFlags) runNewCommand(cmd *cobra.Command, args []string) error {
 	m := tui.New(a)
 
 	progOpts := []tea.ProgramOption{
-		tea.WithAltScreen(),
 		tea.WithContext(ctx),
 		tea.WithFilter(tui.MouseEventFilter),
-		tea.WithMouseCellMotion(),
-		tea.WithMouseAllMotion(),
+		// tea.WithMouseCellMotion(),
+		// tea.WithMouseAllMotion(),
 	}
 
 	p := tea.NewProgram(m, progOpts...)

@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/v2/spinner"
-	tea "github.com/charmbracelet/bubbletea/v2"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/cagent/pkg/tui/components/markdown"
 	"github.com/docker/cagent/pkg/tui/core/layout"
@@ -56,7 +56,7 @@ func (mv *messageModel) SetMessage(msg *types.Message) {
 }
 
 // Update handles messages and updates the message view state
-func (mv *messageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (mv *messageModel) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	if mv.message.Type == types.MessageTypeSpinner {
 		var cmd tea.Cmd
 		mv.spinner, cmd = mv.spinner.Update(msg)
