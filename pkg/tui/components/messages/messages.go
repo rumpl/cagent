@@ -75,6 +75,12 @@ type selectionState struct {
 	mouseY          int // Screen Y coordinate for autoscroll
 }
 
+// scrollState tracks scroll velocity for adaptive scrolling
+type scrollState struct {
+	lastScrollTime time.Time
+	scrollCount    int
+}
+
 // start initializes a new selection at the given position
 func (s *selectionState) start(line, col int) {
 	s.active = true
@@ -110,8 +116,8 @@ type model struct {
 	renderedItems map[int]renderedItem // Cache of rendered items with positions
 	totalHeight   int                  // Total height of all content in lines
 
-	selection selectionState
-
+	selection    selectionState
+	scrollState  scrollState
 	sessionState *service.SessionState
 
 	xPos, yPos int
@@ -199,25 +205,25 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
-		const mouseScrollAmount = 3
+		scrollAmount := m.calculateScrollAmount()
 		buttonStr := msg.Button.String()
 
 		switch buttonStr {
 		case "wheelup":
-			for range mouseScrollAmount {
+			for range scrollAmount {
 				m.scrollUp()
 			}
 		case "wheeldown":
-			for range mouseScrollAmount {
+			for range scrollAmount {
 				m.scrollDown()
 			}
 		default:
 			if msg.Y < 0 {
-				for range min(-msg.Y, mouseScrollAmount) {
+				for range min(-msg.Y*scrollAmount/3, scrollAmount) {
 					m.scrollUp()
 				}
 			} else if msg.Y > 0 {
-				for range min(msg.Y, mouseScrollAmount) {
+				for range min(msg.Y*scrollAmount/3, scrollAmount) {
 					m.scrollDown()
 				}
 			}
@@ -366,6 +372,41 @@ func (m *model) Help() help.KeyMap {
 	return core.NewSimpleHelp(m.Bindings())
 }
 
+// calculateScrollAmount determines scroll speed based on scroll velocity
+func (m *model) calculateScrollAmount() int {
+	const (
+		baseScrollAmount   = 3
+		mediumScrollAmount = 6
+		fastScrollAmount   = 12
+		velocityThreshold  = 100 * time.Millisecond // Time window for fast scrolling
+		velocityDecay      = 300 * time.Millisecond // Time after which scroll count resets
+	)
+
+	now := time.Now()
+	sinceLastScroll := now.Sub(m.scrollState.lastScrollTime)
+
+	// Reset count if too much time has passed
+	if sinceLastScroll > velocityDecay {
+		m.scrollState.scrollCount = 0
+	}
+
+	// Increment scroll count for velocity tracking
+	m.scrollState.scrollCount++
+	m.scrollState.lastScrollTime = now
+
+	// Determine scroll amount based on velocity
+	if sinceLastScroll < velocityThreshold {
+		// Fast scrolling detected
+		if m.scrollState.scrollCount >= 5 {
+			return fastScrollAmount
+		} else if m.scrollState.scrollCount >= 3 {
+			return mediumScrollAmount
+		}
+	}
+
+	return baseScrollAmount
+}
+
 // Simple scrolling methods
 const defaultScrollAmount = 1
 
@@ -392,6 +433,10 @@ func (m *model) scrollToTop() {
 }
 
 func (m *model) scrollToBottom() {
+	// Only scroll if we're already at the bottom (user hasn't scrolled up)
+	if !m.isAtBottom() {
+		return
+	}
 	m.scrollOffset = 9_999_999 // Will be clamped in View()
 }
 
@@ -504,8 +549,11 @@ func (m *model) isAtBottom() bool {
 		return true
 	}
 
-	totalHeight := lipgloss.Height(m.rendered) - 1
-	maxScrollOffset := max(0, totalHeight-m.height)
+	if m.totalHeight == 0 {
+		return true
+	}
+
+	maxScrollOffset := max(0, m.totalHeight-m.height)
 	return m.scrollOffset >= maxScrollOffset
 }
 
@@ -541,8 +589,6 @@ func (m *model) AddAssistantMessage() tea.Cmd {
 func (m *model) addMessage(msg *types.Message) tea.Cmd {
 	m.clearSelection()
 
-	wasAtBottom := m.isAtBottom()
-
 	m.messages = append(m.messages, *msg)
 
 	view := m.createMessageView(msg)
@@ -553,12 +599,10 @@ func (m *model) addMessage(msg *types.Message) tea.Cmd {
 		cmds = append(cmds, initCmd)
 	}
 
-	if wasAtBottom {
-		cmds = append(cmds, func() tea.Msg {
-			m.scrollToBottom()
-			return nil
-		})
-	}
+	cmds = append(cmds, func() tea.Msg {
+		m.scrollToBottom()
+		return nil
+	})
 
 	return tea.Batch(cmds...)
 }
@@ -663,7 +707,11 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 		lastMsg.Content += content
 		m.views[lastIdx].(message.Model).SetMessage(lastMsg)
 		m.invalidateItem(lastIdx)
-		return nil
+
+		return func() tea.Msg {
+			m.scrollToBottom()
+			return nil
+		}
 	} else {
 		// Create new assistant message
 		msg := types.Message{
@@ -676,11 +724,17 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 		view := m.createMessageView(&msg)
 		m.views = append(m.views, view)
 
-		var cmd tea.Cmd
+		var cmds []tea.Cmd
 		if initCmd := view.Init(); initCmd != nil {
-			cmd = initCmd
+			cmds = append(cmds, initCmd)
 		}
-		return cmd
+
+		cmds = append(cmds, func() tea.Msg {
+			m.scrollToBottom()
+			return nil
+		})
+
+		return tea.Batch(cmds...)
 	}
 }
 
