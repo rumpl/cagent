@@ -396,7 +396,7 @@ func TestView(t *testing.T) {
 
 	t.Run("no content provider", func(t *testing.T) {
 		view := v.View()
-		assert.Equal(t, "", view)
+		assert.Empty(t, view)
 	})
 
 	t.Run("with content", func(t *testing.T) {
@@ -405,7 +405,7 @@ func TestView(t *testing.T) {
 		view := v.View()
 		assert.NotEmpty(t, view)
 		lines := strings.Split(view, "\n")
-		assert.Equal(t, 5, len(lines))
+		assert.Len(t, lines, 5)
 		assert.Equal(t, "Line A", lines[0])
 	})
 
@@ -415,7 +415,7 @@ func TestView(t *testing.T) {
 		v.scrollOffset = 3
 		view := v.View()
 		lines := strings.Split(view, "\n")
-		assert.Equal(t, 5, len(lines))
+		assert.Len(t, lines, 5)
 		assert.Equal(t, "Line D", lines[0])
 	})
 }

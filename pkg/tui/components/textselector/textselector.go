@@ -242,10 +242,11 @@ func (m *model) GetAutoScrollDirection(mouseY, viewportHeight int) int {
 
 // UpdateSelectionForScroll updates the selection end line when scrolling
 func (m *model) UpdateSelectionForScroll(direction int) {
-	if direction == -1 {
+	switch direction {
+	case -1:
 		// Scrolling up
 		m.selection.endLine = max(0, m.selection.endLine-1)
-	} else if direction == 1 {
+	case 1:
 		// Scrolling down
 		m.selection.endLine++
 	}

@@ -297,18 +297,18 @@ var (
 // Tool Call Styles
 var (
 	ToolCallArgs = BaseStyle.
-		// PaddingLeft(1).
-		BorderLeft(true).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(BorderSecondary)
+			PaddingLeft(1).
+			BorderLeft(true).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(BorderSecondary)
 
 	ToolCallArgKey = BaseStyle.Bold(true).Foreground(TextSecondary)
 
 	ToolCallResult = BaseStyle.
-		// PaddingLeft(1).
-		BorderLeft(true).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(BorderSecondary)
+			PaddingLeft(1).
+			BorderLeft(true).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(BorderSecondary)
 
 	ToolCallResultKey = BaseStyle.Bold(true).Foreground(TextSecondary)
 )

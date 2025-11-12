@@ -25,7 +25,7 @@ type MessageList interface {
 	GetView(index int) layout.Model
 	CreateMessageView(msg *types.Message, width int) layout.Model
 	CreateToolCallView(msg *types.Message, width int) layout.Model
-	UpdateView(index int, width int) tea.Cmd
+	UpdateView(index, width int) tea.Cmd
 	AddView(view layout.Model)
 
 	// Special operations
@@ -101,14 +101,14 @@ func (ml *messageList) CreateMessageView(msg *types.Message, width int) layout.M
 
 // CreateToolCallView creates a view for a tool call message
 func (ml *messageList) CreateToolCallView(msg *types.Message, width int) layout.Model {
-	// -3 because of the padding in the tool calls
-	view := tool.New(msg, markdown.NewRenderer(width-3), ml.sessionState)
+	// -4 because of the padding in the tool calls
+	view := tool.New(msg, markdown.NewRenderer(width-4), ml.sessionState)
 	view.SetSize(width, 0)
 	return view
 }
 
 // UpdateView updates the view at the given index
-func (ml *messageList) UpdateView(index int, width int) tea.Cmd {
+func (ml *messageList) UpdateView(index, width int) tea.Cmd {
 	if index < 0 || index >= len(ml.messages) {
 		return nil
 	}

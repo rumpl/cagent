@@ -59,7 +59,7 @@ func TestUpdateMessage_InvalidIndex(t *testing.T) {
 
 	// Original message should be unchanged
 	messages := ml.GetMessages()
-	assert.Equal(t, 1, len(messages))
+	assert.Len(t, messages, 1)
 	assert.Equal(t, msg, messages[0])
 }
 
@@ -165,7 +165,7 @@ func TestRemovePendingToolCalls(t *testing.T) {
 	assert.Equal(t, types.MessageTypeAssistant, messages[2].Type)
 
 	// Views should also be updated
-	assert.Equal(t, 3, len(ml.views))
+	assert.Len(t, ml.views, 3)
 }
 
 func TestRemovePendingToolCalls_NoToolCalls(t *testing.T) {
@@ -243,7 +243,7 @@ func TestUpdateView(t *testing.T) {
 	_ = cmd
 
 	// View should be created
-	assert.Equal(t, 1, len(ml.views))
+	assert.Len(t, ml.views, 1)
 }
 
 func TestUpdateView_InvalidIndex(t *testing.T) {
@@ -300,7 +300,7 @@ func TestRenderAllViews(t *testing.T) {
 // Helper functions for testing
 func mockToolCall() tools.ToolCall {
 	return tools.ToolCall{
-		ID: "test-id",
+		ID:   "test-id",
 		Type: "function",
 		Function: tools.FunctionCall{
 			Name:      "test-function",

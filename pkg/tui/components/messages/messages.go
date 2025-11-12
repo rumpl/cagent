@@ -12,6 +12,7 @@ import (
 	"github.com/docker/cagent/pkg/app"
 	"github.com/docker/cagent/pkg/runtime"
 	"github.com/docker/cagent/pkg/tools"
+	"github.com/docker/cagent/pkg/tui/components/notification"
 	"github.com/docker/cagent/pkg/tui/components/scrollbar"
 	"github.com/docker/cagent/pkg/tui/components/textselector"
 	"github.com/docker/cagent/pkg/tui/components/tool/editfile"
@@ -19,13 +20,11 @@ import (
 	"github.com/docker/cagent/pkg/tui/core"
 	"github.com/docker/cagent/pkg/tui/core/layout"
 	"github.com/docker/cagent/pkg/tui/service"
-	"github.com/docker/cagent/pkg/tui/components/notification"
 	"github.com/docker/cagent/pkg/tui/types"
 )
 
 const (
 	// Layout constants for proper spacing and positioning
-	scrollbarWidth  = 1 // Width reserved for scrollbar
 	appStylePadding = 1 // Left padding from AppStyle
 	totalRightSpace = 2 // scrollbarWidth + extra space
 )
@@ -59,11 +58,11 @@ type Model interface {
 // model implements Model using sub-components
 type model struct {
 	// Sub-components
-	viewport     viewport.Model
-	selector     textselector.Model
-	messageList  MessageList
-	renderCache  RenderCache
-	scrollbar    *scrollbar.Model
+	viewport    viewport.Model
+	selector    textselector.Model
+	messageList MessageList
+	renderCache RenderCache
+	scrollbar   *scrollbar.Model
 
 	// Configuration
 	app          *app.App
@@ -221,20 +220,17 @@ func (m *model) View() string {
 		return ""
 	}
 
-	// Ensure all items are rendered
 	m.ensureAllItemsRendered()
 
 	if m.renderCache.GetTotalHeight() == 0 {
 		return ""
 	}
 
-	// Get visible content from viewport
 	visibleLines := m.viewport.GetVisibleContent()
 	if len(visibleLines) == 0 {
 		return ""
 	}
 
-	// Apply selection highlighting if active
 	if m.selector.IsActive() {
 		startLine := m.viewport.GetScrollOffset()
 		visibleLines = m.selector.ApplyHighlight(visibleLines, startLine)
@@ -353,6 +349,8 @@ func (m *model) addMessage(msg *types.Message) tea.Cmd {
 	m.renderCache.InvalidateAll()
 
 	if wasAtBottom {
+		// Ensure items are rendered before scrolling
+		m.ensureAllItemsRendered()
 		cmds = append(cmds, func() tea.Msg {
 			m.viewport.ScrollToBottom()
 			return nil
@@ -455,6 +453,9 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 	lastMsg := messages[lastIdx]
 
 	if lastMsg.Type == messageType {
+		// Check if we were at the bottom before updating
+		wasAtBottom := m.viewport.IsAtBottom()
+
 		lastMsg.Content += content
 		views := m.messageList.GetViews()
 		if lastIdx < len(views) {
@@ -463,8 +464,21 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 			}
 		}
 		m.renderCache.Invalidate(lastIdx)
+
+		// If we were at the bottom, scroll to the new bottom to show incoming tokens
+		if wasAtBottom {
+			// Ensure items are rendered before scrolling
+			m.ensureAllItemsRendered()
+			return func() tea.Msg {
+				m.viewport.ScrollToBottom()
+				return nil
+			}
+		}
+
 		return nil
 	} else {
+		wasAtBottom := m.viewport.IsAtBottom()
+
 		msg := types.Agent(messageType, agentName, content)
 		m.messageList.AddMessage(msg)
 
@@ -473,11 +487,21 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 
 		m.renderCache.InvalidateAll()
 
-		var cmd tea.Cmd
+		var cmds []tea.Cmd
 		if initCmd := view.Init(); initCmd != nil {
-			cmd = initCmd
+			cmds = append(cmds, initCmd)
 		}
-		return cmd
+
+		if wasAtBottom {
+			// Ensure items are rendered before scrolling
+			m.ensureAllItemsRendered()
+			cmds = append(cmds, func() tea.Msg {
+				m.viewport.ScrollToBottom()
+				return nil
+			})
+		}
+
+		return tea.Batch(cmds...)
 	}
 }
 
@@ -532,8 +556,6 @@ func (m *model) copySelectionToClipboard() tea.Cmd {
 
 // autoScroll handles auto-scrolling during text selection
 func (m *model) autoScroll() tea.Cmd {
-	const scrollThreshold = 2
-
 	// Use stored screen Y coordinate
 	viewportY := max(m.selector.GetMouseY()-m.yPos, 0)
 

@@ -36,7 +36,7 @@ func (m *mockView) SetSize(width, height int) tea.Cmd {
 func TestNewRenderCache(t *testing.T) {
 	rc := NewRenderCache()
 	require.NotNil(t, rc)
-	assert.Equal(t, "", rc.GetContent())
+	assert.Empty(t, rc.GetContent())
 	assert.Equal(t, 0, rc.GetTotalHeight())
 }
 
@@ -63,8 +63,8 @@ func TestInvalidateAll(t *testing.T) {
 
 	rc.InvalidateAll()
 
-	assert.Equal(t, 0, len(rc.renderedItems))
-	assert.Equal(t, "", rc.rendered)
+	assert.Empty(t, rc.renderedItems)
+	assert.Empty(t, rc.rendered)
 	assert.Equal(t, 0, rc.totalHeight)
 }
 
@@ -228,7 +228,7 @@ func TestRenderItem_EmptyContent(t *testing.T) {
 	view := &mockView{content: ""}
 
 	item := rc.RenderItem(0, msg, view)
-	assert.Equal(t, "", item.view)
+	assert.Empty(t, item.view)
 	assert.Equal(t, 0, item.height)
 }
 
@@ -236,7 +236,7 @@ func TestRenderAll_Empty(t *testing.T) {
 	rc := NewRenderCache()
 
 	result := rc.RenderAll(nil, nil)
-	assert.Equal(t, "", result)
+	assert.Empty(t, result)
 	assert.Equal(t, 0, rc.GetTotalHeight())
 }
 
@@ -296,7 +296,7 @@ func TestRenderAll_UpdatesCacheState(t *testing.T) {
 	result := rc.RenderAll(messages, views)
 
 	assert.Equal(t, result, rc.GetContent())
-	assert.Greater(t, rc.GetTotalHeight(), 0)
+	assert.Positive(t, rc.GetTotalHeight())
 }
 
 func TestRenderAll_MismatchedMessageCount(t *testing.T) {
