@@ -116,7 +116,7 @@ func NewScrollableView(width, height int, sessionState *service.SessionState) Mo
 
 // Init initializes the component
 func (m *model) Init() tea.Cmd {
-	return m.messageList.InitAllViews()
+	return m.messageList.Init()
 }
 
 // Update handles messages and updates the component state
@@ -127,7 +127,6 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case StreamCancelledMsg:
 		m.messageList.RemoveSpinner()
 		m.messageList.RemovePendingToolCalls()
-		m.renderCache.InvalidateAll()
 		m.ensureAllItemsRendered()
 		return m, nil
 
@@ -208,13 +207,13 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	}
 
 	// Forward updates to all message views
-	cmd := m.messageList.UpdateAllViews(msg)
+	ml, cmd := m.messageList.Update(msg)
+	m.messageList = ml.(MessageList)
 	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
-// View renders the component
 func (m *model) View() string {
 	if m.messageList.GetMessageCount() == 0 {
 		return ""
@@ -255,8 +254,7 @@ func (m *model) SetSize(width, height int) tea.Cmd {
 	// Update viewport size
 	m.viewport.SetSize(m.width, m.height)
 
-	// Update all message view sizes
-	m.messageList.SetAllViewSizes(m.width)
+	m.messageList.SetSize(m.width, m.height)
 
 	// Position scrollbar accounting for AppStyle padding
 	scrollbarX := appStylePadding + m.xPos + m.width
@@ -345,9 +343,6 @@ func (m *model) addMessage(msg *types.Message) tea.Cmd {
 		cmds = append(cmds, initCmd)
 	}
 
-	// Invalidate cache since we added a message
-	m.renderCache.InvalidateAll()
-
 	if wasAtBottom {
 		// Ensure items are rendered before scrolling
 		m.ensureAllItemsRendered()
@@ -368,7 +363,6 @@ func (m *model) AddCancelledMessage() tea.Cmd {
 	view := m.messageList.CreateMessageView(msg, m.width)
 	m.messageList.AddView(view)
 
-	m.renderCache.InvalidateAll()
 	return view.Init()
 }
 
@@ -383,7 +377,6 @@ func (m *model) AddWelcomeMessage(content string) tea.Cmd {
 	view := m.messageList.CreateMessageView(msg, m.width)
 	m.messageList.AddView(view)
 
-	m.renderCache.InvalidateAll()
 	return view.Init()
 }
 
@@ -417,7 +410,6 @@ func (m *model) AddOrUpdateToolCall(agentName string, toolCall tools.ToolCall, t
 	view := m.messageList.CreateToolCallView(msg, m.width)
 	m.messageList.AddView(view)
 
-	m.renderCache.InvalidateAll()
 	return view.Init()
 }
 
@@ -484,8 +476,6 @@ func (m *model) AppendToLastMessage(agentName string, messageType types.MessageT
 
 		view := m.messageList.CreateMessageView(msg, m.width)
 		m.messageList.AddView(view)
-
-		m.renderCache.InvalidateAll()
 
 		var cmds []tea.Cmd
 		if initCmd := view.Init(); initCmd != nil {

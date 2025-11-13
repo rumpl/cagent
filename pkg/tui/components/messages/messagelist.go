@@ -14,6 +14,7 @@ import (
 
 // MessageList manages a collection of messages and their views
 type MessageList interface {
+	layout.Model
 	// Message operations
 	AddMessage(msg *types.Message) tea.Cmd
 	UpdateMessage(index int, msg *types.Message)
@@ -31,15 +32,6 @@ type MessageList interface {
 	// Special operations
 	RemoveSpinner()
 	RemovePendingToolCalls()
-
-	// State queries
-	GetLastMessage() *types.Message
-
-	// Batch operations
-	SetAllViewSizes(width int)
-	InitAllViews() tea.Cmd
-	UpdateAllViews(msg tea.Msg) tea.Cmd
-	RenderAllViews() string
 }
 
 // messageList implements MessageList
@@ -173,23 +165,16 @@ func (ml *messageList) RemovePendingToolCalls() {
 	ml.views = newViews
 }
 
-// GetLastMessage returns the last message, or nil if there are no messages
-func (ml *messageList) GetLastMessage() *types.Message {
-	if len(ml.messages) == 0 {
-		return nil
-	}
-	return ml.messages[len(ml.messages)-1]
-}
-
-// SetAllViewSizes updates the size of all views
-func (ml *messageList) SetAllViewSizes(width int) {
+func (ml *messageList) SetSize(width, height int) tea.Cmd {
+	var cmds []tea.Cmd
 	for _, view := range ml.views {
-		view.SetSize(width, 0)
+		cmds = append(cmds, view.SetSize(width, height))
 	}
+	return tea.Batch(cmds...)
 }
 
-// InitAllViews initializes all views and returns batched commands
-func (ml *messageList) InitAllViews() tea.Cmd {
+// Init initializes all views and returns batched commands
+func (ml *messageList) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, view := range ml.views {
 		if cmd := view.Init(); cmd != nil {
@@ -200,18 +185,18 @@ func (ml *messageList) InitAllViews() tea.Cmd {
 }
 
 // UpdateAllViews forwards a message to all views and returns batched commands
-func (ml *messageList) UpdateAllViews(msg tea.Msg) tea.Cmd {
+func (ml *messageList) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	for i, view := range ml.views {
 		updatedView, cmd := view.Update(msg)
 		ml.views[i] = updatedView
 		cmds = append(cmds, cmd)
 	}
-	return tea.Batch(cmds...)
+	return ml, tea.Batch(cmds...)
 }
 
 // RenderAllViews renders all views into a single string with separators
-func (ml *messageList) RenderAllViews() string {
+func (ml *messageList) View() string {
 	if len(ml.views) == 0 {
 		return ""
 	}

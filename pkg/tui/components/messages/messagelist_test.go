@@ -182,21 +182,6 @@ func TestRemovePendingToolCalls_NoToolCalls(t *testing.T) {
 	assert.Equal(t, 2, ml.GetMessageCount())
 }
 
-func TestGetLastMessage(t *testing.T) {
-	ml := NewMessageList(nil)
-
-	// Empty list
-	assert.Nil(t, ml.GetLastMessage())
-
-	msg1 := types.User("Hello")
-	ml.AddMessage(msg1)
-	assert.Equal(t, msg1, ml.GetLastMessage())
-
-	msg2 := types.Agent(types.MessageTypeAssistant, "agent1", "Hi")
-	ml.AddMessage(msg2)
-	assert.Equal(t, msg2, ml.GetLastMessage())
-}
-
 func TestGetViews(t *testing.T) {
 	ml := NewMessageList(nil).(*messageList)
 
@@ -264,7 +249,7 @@ func TestSetAllViewSizes(t *testing.T) {
 	ml.AddView(view)
 
 	// Should not panic
-	ml.SetAllViewSizes(100)
+	ml.SetSize(100, 24)
 }
 
 func TestInitAllViews(t *testing.T) {
@@ -274,7 +259,7 @@ func TestInitAllViews(t *testing.T) {
 	view := ml.CreateMessageView(types.User("Hello"), 80)
 	ml.AddView(view)
 
-	cmd := ml.InitAllViews()
+	cmd := ml.Init()
 	// Command may be nil or batched
 	_ = cmd
 }
@@ -283,7 +268,7 @@ func TestRenderAllViews(t *testing.T) {
 	ml := NewMessageList(nil).(*messageList)
 
 	t.Run("empty list", func(t *testing.T) {
-		result := ml.RenderAllViews()
+		result := ml.View()
 		assert.Empty(t, result)
 	})
 
@@ -292,7 +277,7 @@ func TestRenderAllViews(t *testing.T) {
 		view := ml.CreateMessageView(types.User("Hello"), 80)
 		ml.AddView(view)
 
-		result := ml.RenderAllViews()
+		result := ml.View()
 		assert.NotEmpty(t, result)
 	})
 }
