@@ -29,6 +29,7 @@ require (
 	github.com/k3a/html2text v1.2.1
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/mattn/go-runewidth v0.0.19
+	github.com/mergestat/timediff v0.0.4
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 	github.com/openai/openai-go/v3 v3.8.1
 	github.com/spf13/cobra v1.10.1

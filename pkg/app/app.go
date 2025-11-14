@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os/exec"
 	"time"
 
@@ -20,9 +22,12 @@ type App struct {
 	events           chan tea.Msg
 	throttleDuration time.Duration
 	cancel           context.CancelFunc
+	sessionStore     session.Store
+	saveTimer        *time.Timer
+	savePending      bool
 }
 
-func New(agentFilename string, rt runtime.Runtime, sess *session.Session, firstMessage *string) *App {
+func New(agentFilename string, rt runtime.Runtime, sess *session.Session, firstMessage *string, sessionStore session.Store) *App {
 	return &App{
 		agentFilename:    agentFilename,
 		runtime:          rt,
@@ -30,11 +35,22 @@ func New(agentFilename string, rt runtime.Runtime, sess *session.Session, firstM
 		firstMessage:     firstMessage,
 		events:           make(chan tea.Msg, 128),
 		throttleDuration: 50 * time.Millisecond, // Throttle rapid events
+		sessionStore:     sessionStore,
 	}
 }
 
 func (a *App) FirstMessage() *string {
 	return a.firstMessage
+}
+
+// SessionStore returns the session store
+func (a *App) SessionStore() session.Store {
+	return a.sessionStore
+}
+
+// AgentFilename returns the agent filename
+func (a *App) AgentFilename() string {
+	return a.agentFilename
 }
 
 // CurrentWelcomeMessage returns the welcome message for the active agent
@@ -62,11 +78,19 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 	a.cancel = cancel
 	go func() {
 		a.session.AddMessage(session.UserMessage(a.agentFilename, message))
+
+		if err := a.sessionStore.UpdateSession(ctx, a.session); err != nil {
+			slog.Error("Failed to update session in store", "session_id", a.session.ID, "error", err)
+		}
+
 		for event := range a.runtime.RunStream(ctx, a.session) {
 			if ctx.Err() != nil {
 				return
 			}
 			a.events <- event
+		}
+		if err := a.sessionStore.UpdateSession(ctx, a.session); err != nil {
+			slog.Error("Failed to update session in store", "session_id", a.session.ID, "error", err)
 		}
 	}()
 }
@@ -111,6 +135,40 @@ func (a *App) NewSession() {
 
 func (a *App) Session() *session.Session {
 	return a.session
+}
+
+// LoadSession loads a session from the store by ID and replaces the current session
+func (a *App) LoadSession(ctx context.Context, sessionID string) error {
+	if a.sessionStore == nil {
+		return fmt.Errorf("no session store available")
+	}
+
+	// Retrieve the session from store
+	loadedSession, err := a.sessionStore.GetSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Cancel any running context
+	if a.cancel != nil {
+		a.cancel()
+		a.cancel = nil
+	}
+
+	// Replace the current session
+	a.session = loadedSession
+
+	return nil
+}
+
+// SessionExists checks if the current session exists in the store
+func (a *App) SessionExists(ctx context.Context) bool {
+	if a.sessionStore == nil || a.session == nil {
+		return false
+	}
+
+	_, err := a.sessionStore.GetSession(ctx, a.session.ID)
+	return err == nil
 }
 
 func (a *App) CompactSession() {
