@@ -2,11 +2,15 @@ package commands
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/mergestat/timediff"
 
 	"github.com/docker/cagent/pkg/app"
 	"github.com/docker/cagent/pkg/feedback"
+	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/tui/core"
 )
 
@@ -17,6 +21,9 @@ type (
 	CompactSessionMsg         struct{}
 	CopySessionToClipboardMsg struct{}
 	ToggleYoloMsg             struct{}
+	LoadSessionMsg            struct {
+		SessionID string
+	}
 )
 
 // Agent commands
@@ -99,6 +106,73 @@ func BuiltInSessionCommands() []Item {
 	}
 }
 
+// getSessionPreview generates a preview string from session messages
+func getSessionPreview(sess *session.Session) string {
+	// Find the first user message
+	for _, item := range sess.Messages {
+		if item.IsMessage() && item.Message.Message.Content != "" {
+			// Get first line or first 60 characters
+			content := strings.TrimSpace(item.Message.Message.Content)
+			if idx := strings.Index(content, "\n"); idx > 0 {
+				content = content[:idx]
+			}
+			if len(content) > 60 {
+				content = content[:57] + "..."
+			}
+			return content
+		}
+	}
+	return "Empty session"
+}
+
+// BuildSessionHistoryCommands creates command items for past sessions
+func BuildSessionHistoryCommands(ctx context.Context, store session.Store, agentFilename string) []Item {
+	if store == nil {
+		return nil
+	}
+
+	// Get sessions for this agent
+	sessions, err := store.GetSessionsByAgent(ctx, agentFilename)
+	if err != nil {
+		return nil
+	}
+
+	// Limit to 20 most recent sessions
+	if len(sessions) > 20 {
+		sessions = sessions[:20]
+	}
+
+	commands := make([]Item, 0, len(sessions))
+	for _, sess := range sessions {
+		sessionID := sess.ID
+		relativeTime := timediff.TimeDiff(sess.CreatedAt)
+		preview := getSessionPreview(sess)
+		messageCount := len(sess.Messages)
+
+		// Use title if available, otherwise use preview
+		title := sess.Title
+		if title == "" {
+			title = preview
+		}
+
+		label := fmt.Sprintf("[%s] %s (%d messages)", relativeTime, title, messageCount)
+
+		commands = append(commands, Item{
+			ID:          "session.load." + sessionID,
+			Label:       label,
+			Description: preview,
+			Category:    "Session History",
+			Execute: func() tea.Cmd {
+				// Capture sessionID in closure
+				sid := sessionID
+				return core.CmdHandler(LoadSessionMsg{SessionID: sid})
+			},
+		})
+	}
+
+	return commands
+}
+
 func builtInFeedbackCommands() []Item {
 	return []Item{
 		{
@@ -133,6 +207,17 @@ func BuildCommandCategories(ctx context.Context, application *app.App) []Categor
 			Name:     "Feedback",
 			Commands: builtInFeedbackCommands(),
 		},
+	}
+
+	// Add session history if session store is available
+	if sessionStore := application.SessionStore(); sessionStore != nil {
+		sessionHistoryCommands := BuildSessionHistoryCommands(ctx, sessionStore, application.AgentFilename())
+		if len(sessionHistoryCommands) > 0 {
+			categories = append(categories, Category{
+				Name:     "Session History",
+				Commands: sessionHistoryCommands,
+			})
+		}
 	}
 
 	agentCommands := application.CurrentAgentCommands(ctx)
