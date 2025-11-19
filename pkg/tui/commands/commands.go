@@ -31,6 +31,19 @@ type AgentCommandMsg struct {
 	Command string
 }
 
+// Tab commands
+type (
+	CreateNewTabMsg   struct{}
+	SwitchTabMsg      struct{ TabIndex int }
+	CloseTabMsg       struct{ TabIndex int }
+	NextTabMsg        struct{}
+	PreviousTabMsg    struct{}
+	UpdateTabTitleMsg struct {
+		TabIndex int
+		Title    string
+	}
+)
+
 // CommandCategory represents a category of commands
 type Category struct {
 	Name     string
@@ -61,6 +74,16 @@ func BuiltInSessionCommands() []Item {
 			Category:     "Session",
 			Execute: func() tea.Cmd {
 				return core.CmdHandler(NewSessionMsg{})
+			},
+		},
+		{
+			ID:           "session.newtab",
+			Label:        "New Tab",
+			SlashCommand: "/newtab",
+			Description:  "Open a new tab",
+			Category:     "Session",
+			Execute: func() tea.Cmd {
+				return core.CmdHandler(CreateNewTabMsg{})
 			},
 		},
 		{

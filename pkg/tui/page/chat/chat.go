@@ -14,6 +14,7 @@ import (
 	"github.com/docker/cagent/pkg/app"
 	"github.com/docker/cagent/pkg/history"
 	"github.com/docker/cagent/pkg/runtime"
+	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/tui/components/editor"
 	"github.com/docker/cagent/pkg/tui/components/messages"
 	"github.com/docker/cagent/pkg/tui/components/notification"
@@ -59,6 +60,7 @@ type chatPage struct {
 	editor   editor.Editor
 
 	sessionState *service.SessionState
+	session      *session.Session
 
 	// State
 	focusedPanel FocusedPanel
@@ -98,7 +100,7 @@ func defaultKeyMap() KeyMap {
 }
 
 // New creates a new chat page
-func New(a *app.App, sessionState *service.SessionState) Page {
+func New(a *app.App, sessionState *service.SessionState, sess *session.Session) Page {
 	historyStore, err := history.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize command history: %v\n", err)
@@ -113,6 +115,7 @@ func New(a *app.App, sessionState *service.SessionState) Page {
 		keyMap:       defaultKeyMap(),
 		history:      historyStore,
 		sessionState: sessionState,
+		session:      sess,
 	}
 }
 
@@ -525,7 +528,7 @@ func (p *chatPage) processMessage(content string) tea.Cmd {
 		}
 	}
 
-	p.app.Run(ctx, p.msgCancel, content)
+	p.app.RunWithSession(ctx, p.msgCancel, p.session, content)
 
 	return p.messages.ScrollToBottom()
 }

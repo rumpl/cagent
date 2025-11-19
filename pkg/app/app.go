@@ -23,8 +23,12 @@ type App struct {
 	throttleDuration time.Duration
 	cancel           context.CancelFunc
 	sessionStore     session.Store
-	saveTimer        *time.Timer
-	savePending      bool
+}
+
+// SessionEvent wraps a runtime event with a session ID for routing
+type SessionEvent struct {
+	SessionID string
+	Event     runtime.Event
 }
 
 func New(agentFilename string, rt runtime.Runtime, sess *session.Session, firstMessage *string, sessionStore session.Store) *App {
@@ -73,7 +77,7 @@ func (a *App) EmitStartupInfo(ctx context.Context, events chan runtime.Event) {
 	a.runtime.EmitStartupInfo(ctx, events)
 }
 
-// Run one agent loop
+// Run one agent loop (backward compatible - uses current session)
 func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string) {
 	a.cancel = cancel
 	go func() {
@@ -91,6 +95,31 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 		}
 		if err := a.sessionStore.UpdateSession(ctx, a.session); err != nil {
 			slog.Error("Failed to update session in store", "session_id", a.session.ID, "error", err)
+		}
+	}()
+}
+
+// RunWithSession runs an agent loop with an explicit session and wraps events with session ID
+func (a *App) RunWithSession(ctx context.Context, cancel context.CancelFunc, sess *session.Session, message string) {
+	go func() {
+		sess.AddMessage(session.UserMessage(a.agentFilename, message))
+
+		if err := a.sessionStore.UpdateSession(ctx, sess); err != nil {
+			slog.Error("Failed to update session in store", "session_id", sess.ID, "error", err)
+		}
+
+		for event := range a.runtime.RunStream(ctx, sess) {
+			if ctx.Err() != nil {
+				return
+			}
+			// Wrap event with session ID
+			a.events <- SessionEvent{
+				SessionID: sess.ID,
+				Event:     event,
+			}
+		}
+		if err := a.sessionStore.UpdateSession(ctx, sess); err != nil {
+			slog.Error("Failed to update session in store", "session_id", sess.ID, "error", err)
 		}
 	}()
 }
