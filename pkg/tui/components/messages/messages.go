@@ -7,7 +7,6 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
@@ -60,8 +59,9 @@ type Model interface {
 
 // renderedItem represents a cached rendered message with position information
 type renderedItem struct {
-	view   string // Cached rendered content
-	height int    // Height in lines
+	view   string   // Cached rendered content (full string)
+	lines  []string // Cached split-by-line form
+	height int      // Height in lines
 }
 
 // selectionState encapsulates all state related to text selection
@@ -278,34 +278,22 @@ func (m *model) View() string {
 		return ""
 	}
 
-	// Ensure all items are rendered and positioned
-	m.ensureAllItemsRendered()
+	m.recomputeTotalHeight()
 
 	if m.totalHeight == 0 {
 		return ""
 	}
 
-	// Calculate viewport bounds
 	maxScrollOffset := max(0, m.totalHeight-m.height)
 	m.scrollOffset = max(0, min(m.scrollOffset, maxScrollOffset))
 
-	// Extract visible portion from complete rendered content
-	lines := strings.Split(m.rendered, "\n")
-	if len(lines) == 0 {
+	visibleLines := m.buildVisibleLines()
+	if len(visibleLines) == 0 {
 		return ""
 	}
-
-	startLine := m.scrollOffset
-	endLine := min(startLine+m.height, len(lines))
-
-	if startLine >= endLine {
-		return ""
-	}
-
-	visibleLines := lines[startLine:endLine]
 
 	if m.selection.active {
-		visibleLines = m.applySelectionHighlight(visibleLines, startLine)
+		visibleLines = m.applySelectionHighlight(visibleLines, m.scrollOffset)
 	}
 
 	return strings.Join(visibleLines, "\n")
@@ -440,13 +428,19 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 
 	// Render the item (always for dynamic content, or when not cached)
 	rendered := view.View()
-	height := lipgloss.Height(rendered)
-	if rendered == "" {
-		height = 0
+
+	var lines []string
+	if rendered != "" {
+		lines = strings.Split(rendered, "\n")
+	} else {
+		lines = nil
 	}
+
+	height := len(lines)
 
 	item := renderedItem{
 		view:   rendered,
+		lines:  lines,
 		height: height,
 	}
 
@@ -458,34 +452,112 @@ func (m *model) renderItem(index int, view layout.Model) renderedItem {
 	return item
 }
 
-// ensureAllItemsRendered ensures all message items are rendered and positioned
-func (m *model) ensureAllItemsRendered() {
+// recomputeTotalHeight computes the total height of all messages without building the full rendered string
+func (m *model) recomputeTotalHeight() {
 	if len(m.views) == 0 {
-		m.rendered = ""
 		m.totalHeight = 0
 		return
 	}
 
-	// Render all items and build the full content
-	var allLines []string
-
+	total := 0
 	for i, view := range m.views {
 		item := m.renderItem(i, view)
+		if item.height == 0 {
+			continue
+		}
+		total += item.height
 
-		// Add content to complete rendered string
-		if item.view != "" {
-			lines := strings.Split(item.view, "\n")
-			allLines = append(allLines, lines...)
+		// Separator blank line between messages
+		if i < len(m.views)-1 {
+			total++
+		}
+	}
+	m.totalHeight = total
+}
+
+// buildVisibleLines renders only the messages that are visible in the viewport
+func (m *model) buildVisibleLines() []string {
+	var result []string
+
+	remainingSkip := m.scrollOffset // how many lines to skip from top
+	remainingLines := m.height      // how many lines we still need to fill viewport
+
+	for i, view := range m.views {
+		if remainingLines <= 0 {
+			break
 		}
 
-		// Add separator between messages (but not after last message)
-		if i < len(m.views)-1 && item.view != "" {
+		item := m.renderItem(i, view)
+		if item.height == 0 {
+			continue
+		}
+
+		itemLines := item.lines
+		if len(itemLines) == 0 {
+			continue
+		}
+
+		// If the entire item is above the viewport, skip it (including its separator)
+		if remainingSkip >= item.height {
+			remainingSkip -= item.height
+
+			// Skip the separator if any
+			if i < len(m.views)-1 && remainingSkip > 0 {
+				remainingSkip--
+			}
+			continue
+		}
+
+		// Now this item intersects the viewport
+		startInItem := remainingSkip
+		if startInItem < 0 {
+			startInItem = 0
+		}
+
+		// Add visible lines from this item
+		for li := startInItem; li < item.height && remainingLines > 0; li++ {
+			result = append(result, itemLines[li])
+			remainingLines--
+		}
+
+		remainingSkip = 0
+
+		// Add separator blank line if we still have space and this is not the last message
+		if i < len(m.views)-1 && remainingLines > 0 {
+			result = append(result, "")
+			remainingLines--
+		}
+	}
+
+	// Pad with empty lines if content is shorter than viewport
+	for len(result) < m.height {
+		result = append(result, "")
+	}
+
+	return result
+}
+
+// ensureRenderedString builds the full rendered string lazily (only when needed for selection)
+func (m *model) ensureRenderedString() {
+	if m.rendered != "" {
+		return
+	}
+
+	var allLines []string
+	for i, view := range m.views {
+		item := m.renderItem(i, view)
+		if item.height == 0 {
+			continue
+		}
+
+		allLines = append(allLines, item.lines...)
+
+		if i < len(m.views)-1 {
 			allLines = append(allLines, "")
 		}
 	}
 
 	m.rendered = strings.Join(allLines, "\n")
-	m.totalHeight = len(allLines)
 }
 
 // invalidateItem removes an item from cache, forcing re-render
@@ -509,8 +581,7 @@ func (m *model) isAtBottom() bool {
 		return true
 	}
 
-	totalHeight := lipgloss.Height(m.rendered) - 1
-	maxScrollOffset := max(0, totalHeight-m.height)
+	maxScrollOffset := max(0, m.totalHeight-m.height)
 	return m.scrollOffset >= maxScrollOffset
 }
 
@@ -744,6 +815,7 @@ func (m *model) extractSelectedText() string {
 		return ""
 	}
 
+	m.ensureRenderedString()
 	lines := strings.Split(m.rendered, "\n")
 
 	// Normalize selection direction
