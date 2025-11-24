@@ -403,6 +403,10 @@ var (
 					Foreground(TextMuted).
 					Italic(true).
 					Align(lipgloss.Center)
+
+	FileReferenceStyle = BaseStyle.
+				Foreground(Info).
+				Bold(true)
 )
 
 // Agent and transfer badge styles

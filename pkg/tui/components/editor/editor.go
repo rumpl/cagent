@@ -55,6 +55,8 @@ type editor struct {
 	cursorHidden  bool
 	// userTyped tracks whether the user has manually typed content (vs loaded from history)
 	userTyped bool
+	// fileReferences tracks the file paths that were selected from autocompletion
+	fileReferences map[string]struct{}
 }
 
 // New creates a new editor component
@@ -71,9 +73,10 @@ func New(a *app.App, hist *history.History) Editor {
 	ta.KeyMap.InsertNewline.SetEnabled(true) // Enable newline insertion
 
 	return &editor{
-		textarea:    ta,
-		hist:        hist,
-		completions: completions.Completions(a),
+		textarea:       ta,
+		hist:           hist,
+		completions:    completions.Completions(a),
+		fileReferences: make(map[string]struct{}),
 	}
 }
 
@@ -231,6 +234,10 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 				newValue := currentValue[:lastIdx-1] + msg.Value + currentValue[lastIdx+len(e.completionWord):]
 				e.textarea.SetValue(newValue)
 				e.textarea.MoveToEnd()
+				// Track file reference if it was a file completion (@ trigger)
+				if e.currentCompletion != nil {
+					e.fileReferences[msg.Value] = struct{}{}
+				}
 			}
 			return e, nil
 		}
@@ -261,7 +268,8 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 					e.textarea.SetValue(prev)
 					e.textarea.MoveToEnd()
 					e.textarea.Reset()
-					e.userTyped = false // Reset after sending
+					e.userTyped = false
+					e.fileReferences = make(map[string]struct{})
 					e.refreshSuggestion()
 					return e, core.CmdHandler(SendMsg{Content: prev})
 				}
@@ -286,7 +294,8 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			// Normal Enter submit (no textarea change): send current value.
 			if value != "" && !e.working {
 				e.textarea.Reset()
-				e.userTyped = false // Reset after sending
+				e.userTyped = false
+				e.fileReferences = make(map[string]struct{})
 				e.refreshSuggestion()
 				return e, core.CmdHandler(SendMsg{Content: value})
 			}
@@ -368,9 +377,68 @@ func (e *editor) startCompletion(c completions.Completion) tea.Cmd {
 	})
 }
 
+// applyFileReferenceHighlighting applies highlighting to file references in the view.
+// It searches for known file references and renders them with the FileReferenceStyle.
+func (e *editor) applyFileReferenceHighlighting(view string) string {
+	if len(e.fileReferences) == 0 {
+		return view
+	}
+
+	value := e.textarea.Value()
+	prompt := e.textarea.Prompt
+	promptWidth := runewidth.StringWidth(stripANSI(prompt))
+
+	lines := strings.Split(view, "\n")
+	valueLines := strings.Split(value, "\n")
+
+	var layers []*lipgloss.Layer
+	baseLayer := lipgloss.NewLayer(view)
+	layers = append(layers, baseLayer)
+
+	// For each line in the textarea value, find file references and create overlays
+	for lineIdx, valueLine := range valueLines {
+		if lineIdx >= len(lines) {
+			break
+		}
+
+		for fileRef := range e.fileReferences {
+			// Find all occurrences of this file reference in the line
+			searchStart := 0
+			for {
+				idx := strings.Index(valueLine[searchStart:], fileRef)
+				if idx == -1 {
+					break
+				}
+				actualIdx := searchStart + idx
+
+				// Calculate the x position accounting for the prompt
+				xPos := promptWidth + runewidth.StringWidth(valueLine[:actualIdx])
+
+				// Create highlighted overlay for this file reference
+				highlighted := styles.FileReferenceStyle.Render(fileRef)
+				overlay := lipgloss.NewLayer(highlighted).X(xPos).Y(lineIdx)
+				layers = append(layers, overlay)
+
+				searchStart = actualIdx + len(fileRef)
+			}
+		}
+	}
+
+	if len(layers) == 1 {
+		// No overlays to apply
+		return view
+	}
+
+	canvas := lipgloss.NewCanvas(layers...)
+	return canvas.Render()
+}
+
 // View renders the component
 func (e *editor) View() string {
 	view := e.textarea.View()
+
+	// Apply file reference highlighting
+	view = e.applyFileReferenceHighlighting(view)
 
 	if e.hasSuggestion && e.suggestion != "" {
 		view = e.applySuggestionOverlay(view)
