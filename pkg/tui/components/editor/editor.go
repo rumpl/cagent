@@ -64,7 +64,7 @@ func New(a *app.App, hist *history.History) Editor {
 	ta := textarea.New()
 	ta.SetStyles(styles.InputStyle)
 	ta.Placeholder = "Type your message here..."
-	ta.Prompt = "│ "
+	ta.Prompt = " "
 	ta.CharLimit = -1
 	ta.SetWidth(50)
 	ta.SetHeight(3) // Set minimum 3 lines for multi-line input
@@ -419,7 +419,7 @@ func (e *editor) View() string {
 		view = e.applySuggestionOverlay(view)
 	}
 
-	return styles.EditorStyle.Render(view)
+	return styles.RenderComposite(styles.EditorBackgroundStyle, styles.EditorStyle.Render(view))
 }
 
 // SetSize sets the dimensions of the component

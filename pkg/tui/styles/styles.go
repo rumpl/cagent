@@ -346,7 +346,8 @@ var (
 			Color: Accent,
 		},
 	}
-	EditorStyle = BaseStyle.Padding(2, 0, 0, 0)
+	EditorBackgroundStyle = BaseStyle.Background(BackgroundAlt)
+	EditorStyle           = BaseStyle.Padding(1, 0, 1, 0)
 	// SuggestionGhostStyle renders inline auto-complete hints in a muted tone.
 	// Use a distinct grey so suggestion text is visually separate from the user's input.
 	SuggestionGhostStyle = BaseStyle.Foreground(lipgloss.Color(ColorSuggestionGhost))

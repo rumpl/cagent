@@ -74,8 +74,8 @@ type chatPage struct {
 	history *history.History
 
 	// Cached layout dimensions
-	chatHeight  int
-	inputHeight int
+	messagesHeight int
+	inputHeight    int
 
 	// keyboardEnhancementsSupported tracks whether the terminal supports keyboard enhancements
 	keyboardEnhancementsSupported bool
@@ -403,30 +403,38 @@ func (p *chatPage) View() string {
 
 	var bodyContent string
 
+	inputView := p.editor.View()
+
 	if p.width >= minWindowWidth {
 		chatWidth := innerWidth - sidebarWidth
 
 		chatView := styles.ChatStyle.
-			Height(p.chatHeight).
+			Height(p.messagesHeight).
 			Width(chatWidth).
+			Padding(0, 0, 1, 0).
 			Render(p.messages.View())
+
+		letfView := lipgloss.JoinVertical(lipgloss.Top,
+			chatView,
+			inputView,
+		)
 
 		sidebarView := lipgloss.NewStyle().
 			Width(sidebarWidth).
-			Height(p.chatHeight).
+			Height(p.messagesHeight).
 			Align(lipgloss.Left, lipgloss.Top).
 			Render(p.sidebar.View())
 
 		bodyContent = lipgloss.JoinHorizontal(
 			lipgloss.Left,
-			chatView,
+			letfView,
 			sidebarView,
 		)
 	} else {
 		sidebarWidth, sidebarHeight := p.sidebar.GetSize()
 
 		chatView := styles.ChatStyle.
-			Height(p.chatHeight).
+			Height(p.messagesHeight).
 			Width(innerWidth).
 			Render(p.messages.View())
 
@@ -440,22 +448,13 @@ func (p *chatPage) View() string {
 			lipgloss.Top,
 			sidebarView,
 			chatView,
+			inputView,
 		)
 	}
 
-	// Input field spans full width below everything
-	input := p.editor.View()
-
-	// Create a full-height layout with header, body, and input
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		bodyContent,
-		input,
-	)
-
 	return styles.AppStyle.
 		Height(p.height).
-		Render(content)
+		Render(bodyContent)
 }
 
 func (p *chatPage) SetSize(width, height int) tea.Cmd {
@@ -464,33 +463,32 @@ func (p *chatPage) SetSize(width, height int) tea.Cmd {
 
 	var cmds []tea.Cmd
 
-	// Calculate heights accounting for padding
-	editorHeight := 3 // fixed 3 lines for multi-line input
-
-	// Calculate available space, ensuring status bar remains visible
-	p.inputHeight = editorHeight + 3 // account for editor padding
-
-	// Account for horizontal padding in width
-	innerWidth := width - 2 // subtract left/right padding
+	editorHeight := 3 // fixed 3 lines for multi-line input + paddin
+	p.inputHeight = editorHeight + 2
 
 	var mainWidth int
+	horizontalSidebarHeight := 1
+	sw := sidebarWidth
+	editorPadding := 3
+	hs := 0
 	if width >= minWindowWidth {
-		mainWidth = innerWidth - sidebarWidth
-		p.chatHeight = height - p.inputHeight
 		p.sidebar.SetMode(sidebar.ModeVertical)
-		cmds = append(cmds, p.sidebar.SetSize(sidebarWidth, p.chatHeight), p.messages.SetPosition(0, 0))
+		cmds = append(cmds, p.sidebar.SetSize(sidebarWidth, p.messagesHeight), p.messages.SetPosition(0, 0))
 	} else {
-		const horizontalSidebarHeight = 3
-		mainWidth = innerWidth
-		p.chatHeight = height - p.inputHeight - horizontalSidebarHeight
+		horizontalSidebarHeight = 3
+		sw = 0
+		editorPadding = 2
+		hs = 1
 		p.sidebar.SetMode(sidebar.ModeHorizontal)
 		cmds = append(cmds, p.sidebar.SetSize(width, horizontalSidebarHeight), p.messages.SetPosition(0, horizontalSidebarHeight))
 	}
 
-	// Set component sizes
+	p.messagesHeight = height - p.inputHeight - horizontalSidebarHeight - hs
+	mainWidth = width - sw
+
 	cmds = append(cmds,
-		p.messages.SetSize(mainWidth, p.chatHeight),
-		p.editor.SetSize(innerWidth, editorHeight), // Use calculated editor height
+		p.messages.SetSize(mainWidth, p.messagesHeight),
+		p.editor.SetSize(mainWidth-editorPadding, editorHeight),
 	)
 
 	return tea.Batch(cmds...)

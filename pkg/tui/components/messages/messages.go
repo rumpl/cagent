@@ -288,7 +288,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *model) View() string {
+func (m *model) view() string {
 	if len(m.messages) == 0 {
 		return ""
 	}
@@ -333,6 +333,10 @@ func (m *model) View() string {
 	}
 
 	return strings.Join(visibleLines, "\n")
+}
+
+func (m *model) View() string {
+	return styles.BaseStyle.Height(m.height).Render(m.view())
 }
 
 // SetSize sets the dimensions of the component
