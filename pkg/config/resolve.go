@@ -38,7 +38,7 @@ func ResolveSources(agentsPath string) (Sources, error) {
 
 	if isLocalFile(resolvedPath) {
 		return map[string]Source{
-			resolvedPath: NewFileSource(resolvedPath),
+			filepath.Base(agentsPath): NewFileSource(resolvedPath),
 		}, nil
 	}
 
