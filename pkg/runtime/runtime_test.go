@@ -460,6 +460,7 @@ func TestStartBackgroundRAGInit_StopsForwardingAfterContextCancel(t *testing.T) 
 	rt := &LocalRuntime{
 		team:         tm,
 		currentAgent: "root",
+		ragService:   NewRAGService(tm),
 	}
 
 	eventsCh := make(chan Event, 10)
