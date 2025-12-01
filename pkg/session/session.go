@@ -387,6 +387,9 @@ func (s *Session) GetMessages(a *agent.Agent) []chat.Message {
 
 	trimmed := trimMessages(messages, maxItems)
 
+	// Clear old tool results to reduce token usage
+	trimmed = clearOldToolResults(trimmed)
+
 	systemCount := 0
 	conversationCount := 0
 	for i := range trimmed {
@@ -407,6 +410,56 @@ func (s *Session) GetMessages(a *agent.Agent) []chat.Message {
 		"max_history_items", maxItems)
 
 	return trimmed
+}
+
+// clearOldToolResults replaces tool call results that are more than 40k tokens from the end
+// with a placeholder message. Token count is estimated as len(content) / 4.
+func clearOldToolResults(messages []chat.Message) []chat.Message {
+	const tokenThreshold = 40000
+	const placeholder = "[Content cleared]"
+
+	if len(messages) == 0 {
+		return messages
+	}
+
+	// Calculate total tokens from the end to find the cutoff point
+	// Messages at index < cutoffIndex are considered "old"
+	totalTokens := 0
+	cutoffIndex := 0 // By default, no messages are old
+
+	// Walk backwards through messages to find where we exceed the threshold
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		// Estimate tokens for this message
+		msgTokens := len(msg.Content) / 4
+		totalTokens += msgTokens
+
+		if totalTokens > tokenThreshold {
+			// All messages at index <= i are "old" (more than 40k tokens from end)
+			cutoffIndex = i + 1
+			break
+		}
+	}
+
+	// If no messages are old, return as-is
+	if cutoffIndex == 0 {
+		return messages
+	}
+
+	// Create result with old tool results cleared
+	result := make([]chat.Message, len(messages))
+	for i, msg := range messages {
+		if i < cutoffIndex && msg.Role == chat.MessageRoleTool && msg.Content != "" {
+			// This is an old tool result - clear its content
+			clearedMsg := msg
+			clearedMsg.Content = placeholder
+			result[i] = clearedMsg
+		} else {
+			result[i] = msg
+		}
+	}
+
+	return result
 }
 
 // trimMessages ensures we don't exceed the maximum number of messages while maintaining

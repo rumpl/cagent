@@ -156,6 +156,89 @@ func TestGetMessagesWithToolCalls(t *testing.T) {
 	}
 }
 
+func TestClearOldToolResults(t *testing.T) {
+	// Create a string that's about 40k tokens (40k * 4 = 160k characters)
+	largeContent := make([]byte, 160001)
+	for i := range largeContent {
+		largeContent[i] = 'x'
+	}
+
+	tests := []struct {
+		name     string
+		messages []chat.Message
+		want     func(t *testing.T, result []chat.Message)
+	}{
+		{
+			name: "no clearing when under threshold",
+			messages: []chat.Message{
+				{Role: chat.MessageRoleUser, Content: "hello"},
+				{Role: chat.MessageRoleAssistant, Content: "hi"},
+				{Role: chat.MessageRoleTool, ToolCallID: "1", Content: "tool result"},
+			},
+			want: func(t *testing.T, result []chat.Message) {
+				t.Helper()
+				assert.Equal(t, "tool result", result[2].Content)
+			},
+		},
+		{
+			name: "clear old tool results when over threshold",
+			messages: []chat.Message{
+				{Role: chat.MessageRoleTool, ToolCallID: "1", Content: "old tool result"},
+				{Role: chat.MessageRoleUser, Content: string(largeContent)}, // This pushes old content past threshold
+				{Role: chat.MessageRoleTool, ToolCallID: "2", Content: "recent tool result"},
+			},
+			want: func(t *testing.T, result []chat.Message) {
+				t.Helper()
+				assert.Equal(t, "[Content cleared]", result[0].Content)
+				assert.Equal(t, "recent tool result", result[2].Content)
+			},
+		},
+		{
+			name: "preserve non-tool messages",
+			messages: []chat.Message{
+				{Role: chat.MessageRoleUser, Content: "old user message"},
+				{Role: chat.MessageRoleAssistant, Content: "old assistant message"},
+				{Role: chat.MessageRoleTool, ToolCallID: "1", Content: "old tool result"},
+				{Role: chat.MessageRoleUser, Content: string(largeContent)},
+			},
+			want: func(t *testing.T, result []chat.Message) {
+				t.Helper()
+				assert.Equal(t, "old user message", result[0].Content)
+				assert.Equal(t, "old assistant message", result[1].Content)
+				assert.Equal(t, "[Content cleared]", result[2].Content) // Tool result cleared
+				assert.Equal(t, string(largeContent), result[3].Content)
+			},
+		},
+		{
+			name:     "empty messages",
+			messages: []chat.Message{},
+			want: func(t *testing.T, result []chat.Message) {
+				t.Helper()
+				assert.Empty(t, result)
+			},
+		},
+		{
+			name: "preserve tool call ID when clearing",
+			messages: []chat.Message{
+				{Role: chat.MessageRoleTool, ToolCallID: "my-tool-id", Content: "old result"},
+				{Role: chat.MessageRoleUser, Content: string(largeContent)},
+			},
+			want: func(t *testing.T, result []chat.Message) {
+				t.Helper()
+				assert.Equal(t, "[Content cleared]", result[0].Content)
+				assert.Equal(t, "my-tool-id", result[0].ToolCallID) // ID preserved
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := clearOldToolResults(tt.messages)
+			tt.want(t, result)
+		})
+	}
+}
+
 func TestGetMessagesWithSummary(t *testing.T) {
 	testAgent := &agent.Agent{}
 
