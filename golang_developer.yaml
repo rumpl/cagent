@@ -33,6 +33,17 @@ metadata:
 
     Pro tip: ask the planner to wait for you to modify and approve the plan before delegating tasks:
 
+# session:
+#   compaction:
+#     enabled: true
+#     model: haiku
+#   prune:
+#     strategy: keep_last_n
+#     n: 20
+# prune:
+#   strategy: prune_old_tool_responses
+#   n: 40000
+
 models:
   opus:
     provider: anthropic

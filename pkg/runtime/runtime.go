@@ -133,6 +133,7 @@ type LocalRuntime struct {
 	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
 	ragInitialized              atomic.Bool
 	titleGenerationWg           sync.WaitGroup // Wait group for title generation
+	compaction                  *Compaction
 }
 
 type streamResult struct {
@@ -190,6 +191,11 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, err
 	}
 
+	compaction, err := NewCompaction(agents)
+	if err != nil {
+		return nil, err
+	}
+
 	r := &LocalRuntime{
 		toolMap:              make(map[string]ToolHandler),
 		team:                 agents,
@@ -199,6 +205,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		modelsStore:          modelsStore,
 		sessionCompaction:    true,
 		managedOAuth:         true,
+		compaction:           compaction,
 	}
 
 	for _, opt := range opts {
@@ -643,7 +650,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 			if m != nil && r.sessionCompaction {
 				if sess.InputTokens+sess.OutputTokens > int64(float64(contextLimit)*0.9) {
-					r.Summarize(ctx, sess, events)
+					r.compaction.Summarize(ctx, sess, r.currentAgent, events)
 					events <- TokenUsage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
 				}
 			}
@@ -1421,68 +1428,7 @@ func (r *LocalRuntime) generateSessionTitle(ctx context.Context, sess *session.S
 
 // Summarize generates a summary for the session based on the conversation history
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, events chan Event) {
-	slog.Debug("Generating summary for session", "session_id", sess.ID)
-
-	events <- SessionCompaction(sess.ID, "started", r.currentAgent)
-	defer func() {
-		events <- SessionCompaction(sess.ID, "completed", r.currentAgent)
-	}()
-
-	// Create conversation history for summarization
-	var conversationHistory strings.Builder
-	messages := sess.GetAllMessages()
-
-	// Check if session is empty
-	if len(messages) == 0 {
-		events <- &WarningEvent{Message: "Session is empty. Start a conversation before compacting."}
-		return
-	}
-	for i := range messages {
-		role := "Unknown"
-		switch messages[i].Message.Role {
-		case "user":
-			role = "User"
-		case "assistant":
-			role = "Assistant"
-		case "system":
-			continue // Skip system messages for summarization
-		}
-		conversationHistory.WriteString(fmt.Sprintf("\n%s: %s", role, messages[i].Message.Content))
-	}
-
-	// Create a new session for summary generation
-	systemPrompt := "You are a helpful AI assistant that creates comprehensive summaries of conversations. You will be given a conversation history and asked to create a concise yet thorough summary that captures the key points, decisions made, and outcomes."
-	userPrompt := fmt.Sprintf("Based on the following conversation between a user and an AI assistant, create a comprehensive summary that captures:\n- The main topics discussed\n- Key information exchanged\n- Decisions made or conclusions reached\n- Important outcomes or results\n\nProvide a well-structured summary (2-4 paragraphs) that someone could read to understand what happened in this conversation. Return ONLY the summary text, nothing else.\n\nConversation history:%s\n\nGenerate a summary for this conversation:", conversationHistory.String())
-	newModel := provider.CloneWithOptions(ctx, r.CurrentAgent().Model(), options.WithStructuredOutput(nil))
-	newTeam := team.New(
-		team.WithAgents(agent.New("root", systemPrompt, agent.WithModel(newModel))),
-	)
-
-	summarySession := session.New(session.WithSystemMessage(systemPrompt))
-	summarySession.AddMessage(session.UserMessage(userPrompt))
-	summarySession.Title = "Generating summary..."
-
-	summaryRuntime, err := New(newTeam, WithSessionCompaction(false))
-	if err != nil {
-		slog.Error("Failed to create summary generator runtime", "error", err)
-		return
-	}
-
-	// Run the summary generation
-	_, err = summaryRuntime.Run(ctx, summarySession)
-	if err != nil {
-		slog.Error("Failed to generate session summary", "session_id", sess.ID, "error", err)
-		return
-	}
-
-	summary := summarySession.GetLastAssistantMessageContent()
-	if summary == "" {
-		return
-	}
-	// Add the summary to the session as a summary item
-	sess.Messages = append(sess.Messages, session.Item{Summary: summary})
-	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
-	events <- SessionSummary(sess.ID, summary, r.currentAgent)
+	r.compaction.Summarize(ctx, sess, r.currentAgent, events)
 }
 
 // setElicitationEventsChannel sets the current events channel for elicitation requests
