@@ -8,11 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -86,21 +84,19 @@ type RAGInitializer interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	toolMap                     map[string]ToolHandler
-	team                        *team.Team
-	currentAgent                string
-	rootSessionID               string // Root session ID for OAuth state encoding (preserved across sub-sessions)
-	resumeChan                  chan ResumeType
-	tracing                     *tracingProvider
-	modelsStore                 ModelStore
-	sessionCompaction           bool
-	managedOAuth                bool
-	startupInfoEmitted          bool                   // Track if startup info has been emitted to avoid unnecessary duplication
-	elicitationRequestCh        chan ElicitationResult // Channel for receiving elicitation responses
-	elicitationEventsChannel    chan Event             // Current events channel for sending elicitation requests
-	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
-	ragInitialized              atomic.Bool
-	titleGen                    *titleGenerator
+	toolMap            map[string]ToolHandler
+	team               *team.Team
+	currentAgent       string
+	rootSessionID      string // Root session ID for OAuth state encoding (preserved across sub-sessions)
+	resumeChan         chan ResumeType
+	tracing            *tracingProvider
+	modelsStore        ModelStore
+	sessionCompaction  bool
+	managedOAuth       bool
+	startupInfoEmitted bool // Track if startup info has been emitted to avoid unnecessary duplication
+	elicitation        *elicitationHandler
+	ragInitialized     atomic.Bool
+	titleGen           *titleGenerator
 }
 
 type Opt func(*LocalRuntime)
@@ -150,20 +146,24 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	r := &LocalRuntime{
-		toolMap:              make(map[string]ToolHandler),
-		team:                 agents,
-		currentAgent:         "root",
-		resumeChan:           make(chan ResumeType),
-		tracing:              newTracingProvider(nil),
-		elicitationRequestCh: make(chan ElicitationResult),
-		modelsStore:          modelsStore,
-		sessionCompaction:    true,
-		managedOAuth:         true,
+		toolMap:           make(map[string]ToolHandler),
+		team:              agents,
+		currentAgent:      "root",
+		resumeChan:        make(chan ResumeType),
+		tracing:           newTracingProvider(nil),
+		modelsStore:       modelsStore,
+		sessionCompaction: true,
+		managedOAuth:      true,
 	}
 
 	for _, opt := range opts {
 		opt(r)
 	}
+
+	r.elicitation = newElicitationHandler(
+		&channelPublisher{},
+		func() string { return r.currentAgent },
+	)
 
 	// Validate that we have at least one agent and that the current agent exists
 	if _, err = r.team.Agent(r.currentAgent); err != nil {
@@ -466,9 +466,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		))
 		defer sessionSpan.End()
 
-		// Set the events channel for elicitation requests
-		r.setElicitationEventsChannel(events)
-		defer r.clearElicitationEventsChannel()
+		// Set up elicitation handler with the events channel
+		r.elicitation.events = &channelPublisher{ch: events}
 
 		// Set elicitation handler on all MCP toolsets before getting tools
 		a := r.CurrentAgent()
@@ -490,7 +489,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		r.emitAgentWarnings(a, events)
 
 		for _, toolset := range a.ToolSets() {
-			toolset.SetElicitationHandler(r.elicitationHandler)
+			toolset.SetElicitationHandler(r.elicitation.GetHandlerFunc())
 			toolset.SetOAuthSuccessHandler(func() {
 				events <- Authorization(tools.ElicitationActionAccept, r.currentAgent)
 			})
@@ -538,7 +537,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			r.emitAgentWarnings(a, events)
 
 			for _, toolset := range a.ToolSets() {
-				toolset.SetElicitationHandler(r.elicitationHandler)
+				toolset.SetElicitationHandler(r.elicitation.GetHandlerFunc())
 				toolset.SetOAuthSuccessHandler(func() {
 					events <- Authorization("confirmed", r.currentAgent)
 				})
@@ -759,24 +758,7 @@ func (r *LocalRuntime) Resume(_ context.Context, confirmationType ResumeType) {
 
 // ResumeElicitation sends an elicitation response back to a waiting elicitation request
 func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
-	slog.Debug("Resuming runtime with elicitation response", "agent", r.currentAgent, "action", action)
-
-	result := ElicitationResult{
-		Action:  action,
-		Content: content,
-	}
-
-	select {
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while sending elicitation response")
-		return ctx.Err()
-	case r.elicitationRequestCh <- result:
-		slog.Debug("Elicitation response sent successfully", "action", action)
-		return nil
-	default:
-		slog.Debug("Elicitation channel not ready")
-		return fmt.Errorf("no elicitation request in progress")
-	}
+	return r.elicitation.Resume(ctx, action, content)
 }
 
 // Run starts the agent's interaction loop
@@ -1373,51 +1355,4 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, eve
 	sess.Messages = append(sess.Messages, session.Item{Summary: summary})
 	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
 	events <- SessionSummary(sess.ID, summary, r.currentAgent)
-}
-
-// setElicitationEventsChannel sets the current events channel for elicitation requests
-func (r *LocalRuntime) setElicitationEventsChannel(events chan Event) {
-	r.elicitationEventsChannelMux.Lock()
-	defer r.elicitationEventsChannelMux.Unlock()
-	r.elicitationEventsChannel = events
-}
-
-// clearElicitationEventsChannel clears the current events channel
-func (r *LocalRuntime) clearElicitationEventsChannel() {
-	r.elicitationEventsChannelMux.Lock()
-	defer r.elicitationEventsChannelMux.Unlock()
-	r.elicitationEventsChannel = nil
-}
-
-// elicitationHandler creates an elicitation handler that can be used by MCP clients
-// This handler propagates elicitation requests to the runtime's client via events
-func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
-	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
-
-	// Get the current events channel
-	r.elicitationEventsChannelMux.RLock()
-	eventsChannel := r.elicitationEventsChannel
-	r.elicitationEventsChannelMux.RUnlock()
-
-	if eventsChannel == nil {
-		return tools.ElicitationResult{}, fmt.Errorf("no events channel available for elicitation")
-	}
-
-	slog.Debug("Sending elicitation request event to client", "message", req.Message, "requested_schema", req.RequestedSchema)
-	slog.Debug("Elicitation request meta", "meta", req.Meta)
-
-	// Send elicitation request event to the runtime's client
-	eventsChannel <- ElicitationRequest(req.Message, req.RequestedSchema, req.Meta, r.currentAgent)
-
-	// Wait for response from the client
-	select {
-	case result := <-r.elicitationRequestCh:
-		return tools.ElicitationResult{
-			Action:  result.Action,
-			Content: result.Content,
-		}, nil
-	case <-ctx.Done():
-		slog.Debug("Context cancelled while waiting for elicitation response")
-		return tools.ElicitationResult{}, ctx.Err()
-	}
 }
