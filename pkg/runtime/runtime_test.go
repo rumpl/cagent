@@ -910,7 +910,7 @@ func TestTruncateTitle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := truncateTitle(tt.title, tt.maxLength)
+			result := TruncateTitle(tt.title, tt.maxLength)
 			require.Equal(t, tt.expected, result)
 			// Only check length constraint if maxLength >= 3 (otherwise ellipsis alone is 3 chars)
 			if tt.maxLength >= 3 {
