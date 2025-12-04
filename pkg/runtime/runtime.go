@@ -49,38 +49,6 @@ func UnwrapMCPToolset(toolset tools.ToolSet) *mcptools.Toolset {
 	return nil
 }
 
-type ResumeType string
-
-// ElicitationResult represents the result of an elicitation request
-type ElicitationResult struct {
-	Action  tools.ElicitationAction
-	Content map[string]any // The submitted form data (only present when action is "accept")
-}
-
-// ElicitationError represents an error from a declined/cancelled elicitation
-type ElicitationError struct {
-	Action  string
-	Message string
-}
-
-func (e *ElicitationError) Error() string {
-	return fmt.Sprintf("elicitation %s: %s", e.Action, e.Message)
-}
-
-const (
-	ResumeTypeApprove        ResumeType = "approve"
-	ResumeTypeApproveSession ResumeType = "approve-session"
-	ResumeTypeReject         ResumeType = "reject"
-)
-
-// ToolHandlerFunc is a function type for handling tool calls
-type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events chan Event) (*tools.ToolCallResult, error)
-
-type ToolHandler struct {
-	handler ToolHandlerFunc
-	tool    tools.Tool
-}
-
 // ElicitationRequestHandler is a function type for handling elicitation requests
 type ElicitationRequestHandler func(ctx context.Context, message string, schema map[string]any) (map[string]any, error)
 
@@ -133,15 +101,6 @@ type LocalRuntime struct {
 	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
 	ragInitialized              atomic.Bool
 	titleGenerationWg           sync.WaitGroup // Wait group for title generation
-}
-
-type streamResult struct {
-	Calls             []tools.ToolCall
-	Content           string
-	ReasoningContent  string
-	ThinkingSignature string // Used with Anthropic's extended thinking feature
-	ThoughtSignature  []byte
-	Stopped           bool
 }
 
 type Opt func(*LocalRuntime)
@@ -472,7 +431,7 @@ func (r *LocalRuntime) registerDefaultTools() {
 
 	for _, t := range allTools {
 		if h, exists := handlers[t.Name]; exists {
-			r.toolMap[t.Name] = ToolHandler{handler: h, tool: t}
+			r.toolMap[t.Name] = ToolHandler{Handler: h, Tool: t}
 		} else {
 			slog.Warn("No handler found for default tool", "tool", t.Name)
 		}
@@ -1001,33 +960,33 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 		if exists {
 			slog.Debug("Using runtime tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
 			// TODO: make this better, these tools define themselves as read-only
-			if sess.ToolsApproved || def.tool.Annotations.ReadOnlyHint {
-				r.runAgentTool(callCtx, def.handler, sess, toolCall, def.tool, events, a)
+			if sess.ToolsApproved || def.Tool.Annotations.ReadOnlyHint {
+				r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
 			} else {
 				slog.Debug("Tools not approved, waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
 
-				events <- ToolCallConfirmation(toolCall, def.tool, a.Name())
+				events <- ToolCallConfirmation(toolCall, def.Tool, a.Name())
 
 				select {
 				case cType := <-r.resumeChan:
 					switch cType {
 					case ResumeTypeApprove:
 						slog.Debug("Resume signal received, approving tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.runAgentTool(callCtx, def.handler, sess, toolCall, def.tool, events, a)
+						r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
 					case ResumeTypeApproveSession:
 						slog.Debug("Resume signal received, approving session", "tool", toolCall.Function.Name, "session_id", sess.ID)
 						sess.ToolsApproved = true
-						r.runAgentTool(callCtx, def.handler, sess, toolCall, def.tool, events, a)
+						r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
 					case ResumeTypeReject:
 						slog.Debug("Resume signal received, rejecting tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.addToolRejectedResponse(sess, toolCall, def.tool, events)
+						r.addToolRejectedResponse(sess, toolCall, def.Tool, events)
 					}
 				case <-callCtx.Done():
 					slog.Debug("Context cancelled while waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
 					// Synthesize cancellation responses for the current and any remaining tool calls
-					r.addToolCancelledResponse(sess, toolCall, def.tool, events)
+					r.addToolCancelledResponse(sess, toolCall, def.Tool, events)
 					for j := i + 1; j < len(calls); j++ {
-						r.addToolCancelledResponse(sess, calls[j], def.tool, events)
+						r.addToolCancelledResponse(sess, calls[j], def.Tool, events)
 					}
 					callSpan.SetStatus(codes.Ok, "tool call canceled by user")
 					return
