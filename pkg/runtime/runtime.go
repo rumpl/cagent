@@ -91,7 +91,7 @@ type LocalRuntime struct {
 	currentAgent                string
 	rootSessionID               string // Root session ID for OAuth state encoding (preserved across sub-sessions)
 	resumeChan                  chan ResumeType
-	tracer                      trace.Tracer
+	tracing                     *tracingProvider
 	modelsStore                 ModelStore
 	sessionCompaction           bool
 	managedOAuth                bool
@@ -126,7 +126,7 @@ func WithRootSessionID(sessionID string) Opt {
 // WithTracer sets a custom OpenTelemetry tracer; if not provided, tracing is disabled (no-op).
 func WithTracer(t trace.Tracer) Opt {
 	return func(r *LocalRuntime) {
-		r.tracer = t
+		r.tracing.SetTracer(t)
 	}
 }
 
@@ -154,6 +154,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		team:                 agents,
 		currentAgent:         "root",
 		resumeChan:           make(chan ResumeType),
+		tracing:              newTracingProvider(nil),
 		elicitationRequestCh: make(chan ElicitationResult),
 		modelsStore:          modelsStore,
 		sessionCompaction:    true,
@@ -459,7 +460,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	go func() {
 		telemetry.RecordSessionStart(ctx, r.currentAgent, sess.ID)
 
-		ctx, sessionSpan := r.startSpan(ctx, "runtime.session", trace.WithAttributes(
+		ctx, sessionSpan := r.tracing.StartSpan(ctx, "runtime.session", trace.WithAttributes(
 			attribute.String("agent", r.currentAgent),
 			attribute.String("session.id", sess.ID),
 		))
@@ -581,7 +582,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			}
 			slog.Debug("Starting conversation loop iteration", "agent", a.Name())
 
-			streamCtx, streamSpan := r.startSpan(ctx, "runtime.stream", trace.WithAttributes(
+			streamCtx, streamSpan := r.tracing.StartSpan(ctx, "runtime.stream", trace.WithAttributes(
 				attribute.String("agent", a.Name()),
 				attribute.String("session.id", sess.ID),
 			))
@@ -947,7 +948,7 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 
 	for i, toolCall := range calls {
 		// Start a span for each tool call
-		callCtx, callSpan := r.startSpan(ctx, "runtime.tool.call", trace.WithAttributes(
+		callCtx, callSpan := r.tracing.StartSpan(ctx, "runtime.tool.call", trace.WithAttributes(
 			attribute.String("tool.name", toolCall.Function.Name),
 			attribute.String("tool.type", string(toolCall.Type)),
 			attribute.String("agent", a.Name()),
@@ -1050,7 +1051,7 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 // with ExecuteWithOAuth to automatically handle authorization flows and retries.
 func (r *LocalRuntime) runTool(ctx context.Context, tool tools.Tool, toolCall tools.ToolCall, events chan Event, sess *session.Session, a *agent.Agent) {
 	// Start a child span for the actual tool handler execution
-	ctx, span := r.startSpan(ctx, "runtime.tool.handler", trace.WithAttributes(
+	ctx, span := r.tracing.StartSpan(ctx, "runtime.tool.handler", trace.WithAttributes(
 		attribute.String("tool.name", toolCall.Function.Name),
 		attribute.String("agent", a.Name()),
 		attribute.String("session.id", sess.ID),
@@ -1106,7 +1107,7 @@ func (r *LocalRuntime) runTool(ctx context.Context, tool tools.Tool, toolCall to
 
 func (r *LocalRuntime) runAgentTool(ctx context.Context, handler ToolHandlerFunc, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent) {
 	// Start a child span for runtime-provided tool handler execution
-	ctx, span := r.startSpan(ctx, "runtime.tool.handler.runtime", trace.WithAttributes(
+	ctx, span := r.tracing.StartSpan(ctx, "runtime.tool.handler.runtime", trace.WithAttributes(
 		attribute.String("tool.name", toolCall.Function.Name),
 		attribute.String("agent", a.Name()),
 		attribute.String("session.id", sess.ID),
@@ -1189,14 +1190,6 @@ func (r *LocalRuntime) addToolCancelledResponse(sess *session.Session, toolCall 
 	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
 }
 
-// startSpan wraps tracer.Start, returning a no-op span if the tracer is nil.
-func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
-	if r.tracer == nil {
-		return ctx, trace.SpanFromContext(ctx)
-	}
-	return r.tracer.Start(ctx, name, opts...)
-}
-
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
 	var params struct {
 		Agent          string `json:"agent"`
@@ -1211,7 +1204,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	a := r.CurrentAgent()
 
 	// Span for task transfer (optional)
-	ctx, span := r.startSpan(ctx, "runtime.task_transfer", trace.WithAttributes(
+	ctx, span := r.tracing.StartSpan(ctx, "runtime.task_transfer", trace.WithAttributes(
 		attribute.String("from.agent", a.Name()),
 		attribute.String("to.agent", params.Agent),
 		attribute.String("session.id", sess.ID),
