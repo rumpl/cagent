@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,7 +21,6 @@ import (
 	"github.com/docker/cagent/pkg/team"
 	"github.com/docker/cagent/pkg/telemetry"
 	"github.com/docker/cagent/pkg/tools"
-	"github.com/docker/cagent/pkg/tools/builtin"
 	mcptools "github.com/docker/cagent/pkg/tools/mcp"
 )
 
@@ -335,27 +333,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, events chan Event) {
 // registerDefaultTools registers the default tool handlers
 func (r *LocalRuntime) registerDefaultTools() {
 	slog.Debug("Registering default tools")
-
-	tt := builtin.NewTransferTaskTool()
-	ht := builtin.NewHandoffTool()
-	ttTools, _ := tt.Tools(context.TODO())
-	htTools, _ := ht.Tools(context.TODO())
-	allTools := append(ttTools, htTools...)
-
-	handlers := map[string]ToolHandlerFunc{
-		builtin.ToolNameTransferTask: r.handleTaskTransfer,
-		builtin.ToolNameHandoff:      r.handleHandoff,
-	}
-
-	for _, t := range allTools {
-		if h, exists := handlers[t.Name]; exists {
-			r.toolExec.RegisterHandler(t.Name, ToolHandler{Handler: h, Tool: t})
-		} else {
-			slog.Warn("No handler found for default tool", "tool", t.Name)
-		}
-	}
-
-	slog.Debug("Registered default tools", "count", len(r.toolExec.toolMap))
+	r.registerTaskTransferHandlers()
 }
 
 func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, events chan Event) {
@@ -626,121 +604,6 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 	}
 
 	return sess.GetAllMessages(), nil
-}
-
-func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
-	var params struct {
-		Agent          string `json:"agent"`
-		Task           string `json:"task"`
-		ExpectedOutput string `json:"expected_output"`
-	}
-
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
-		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-
-	a := r.CurrentAgent()
-
-	// Span for task transfer (optional)
-	ctx, span := r.tracing.StartSpan(ctx, "runtime.task_transfer", trace.WithAttributes(
-		attribute.String("from.agent", a.Name()),
-		attribute.String("to.agent", params.Agent),
-		attribute.String("session.id", sess.ID),
-	))
-	defer span.End()
-
-	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
-
-	ca := r.agents.CurrentAgentName()
-
-	// Emit agent switching start event
-	evts <- AgentSwitching(true, ca, params.Agent)
-
-	_ = r.agents.SetCurrentAgent(params.Agent)
-	defer func() {
-		_ = r.agents.SetCurrentAgent(ca)
-
-		// Emit agent switching end event
-		evts <- AgentSwitching(false, params.Agent, ca)
-
-		// Restore original agent info in sidebar
-		if originalAgent, err := r.agents.Agent(ca); err == nil {
-			var modelID string
-			if model := originalAgent.Model(); model != nil {
-				modelID = model.ID()
-			}
-			evts <- AgentInfo(originalAgent.Name(), modelID, originalAgent.Description())
-		}
-	}()
-
-	// Emit agent info for the new agent
-	if newAgent, err := r.agents.Agent(params.Agent); err == nil {
-		var modelID string
-		if model := newAgent.Model(); model != nil {
-			modelID = model.ID()
-		}
-		evts <- AgentInfo(newAgent.Name(), modelID, newAgent.Description())
-	}
-
-	memberAgentTask := "You are a member of a team of agents. Your goal is to complete the following task:"
-	memberAgentTask += fmt.Sprintf("\n\n<task>\n%s\n</task>", params.Task)
-	if params.ExpectedOutput != "" {
-		memberAgentTask += fmt.Sprintf("\n\n<expected_output>\n%s\n</expected_output>", params.ExpectedOutput)
-	}
-
-	slog.Debug("Creating new session with parent session", "parent_session_id", sess.ID, "tools_approved", sess.ToolsApproved)
-
-	child, err := r.agents.Agent(params.Agent)
-	if err != nil {
-		return nil, err
-	}
-
-	s := session.New(
-		session.WithSystemMessage(memberAgentTask),
-		session.WithImplicitUserMessage("Follow the default instructions"),
-		session.WithMaxIterations(child.MaxIterations()),
-		session.WithTitle("Transferred task"),
-		session.WithToolsApproved(sess.ToolsApproved),
-		session.WithSendUserMessage(false),
-	)
-
-	for event := range r.RunStream(ctx, s) {
-		evts <- event
-		if errEvent, ok := event.(*ErrorEvent); ok {
-			span.RecordError(fmt.Errorf("%s", errEvent.Error))
-			span.SetStatus(codes.Error, "error in transferred session")
-			return nil, fmt.Errorf("%s", errEvent.Error)
-		}
-	}
-
-	sess.ToolsApproved = s.ToolsApproved
-
-	sess.AddSubSession(s)
-
-	slog.Debug("Task transfer completed", "agent", params.Agent, "task", params.Task)
-
-	span.SetStatus(codes.Ok, "task transfer completed")
-	return &tools.ToolCallResult{
-		Output: s.GetLastAssistantMessageContent(),
-	}, nil
-}
-
-func (r *LocalRuntime) handleHandoff(_ context.Context, _ *session.Session, toolCall tools.ToolCall, _ chan Event) (*tools.ToolCallResult, error) {
-	var params builtin.HandoffArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
-		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-
-	ca := r.agents.CurrentAgentName()
-	next, err := r.agents.Agent(params.Agent)
-	if err != nil {
-		return nil, err
-	}
-
-	_ = r.agents.SetCurrentAgent(next.Name())
-	return &tools.ToolCallResult{
-		Output: fmt.Sprintf("The agent %s handed off the conversation to you, look at the history of the conversation and continue where it left off. Once you are done with your task or if the user asks you, handoff the conversation back to %s.", ca, ca),
-	}, nil
 }
 
 // Summarize generates a summary for the session based on the conversation history
