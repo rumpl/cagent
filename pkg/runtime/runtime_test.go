@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -567,11 +568,14 @@ func TestToolCallVariations(t *testing.T) {
 type queueProvider struct {
 	id      string
 	streams []chat.MessageStream
+	mu      sync.Mutex
 }
 
 func (p *queueProvider) ID() string { return p.id }
 
 func (p *queueProvider) CreateChatCompletionStream(context.Context, []chat.Message, []tools.Tool) (chat.MessageStream, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if len(p.streams) == 0 {
 		return &mockStream{}, nil
 	}
@@ -613,6 +617,7 @@ func TestCompaction(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Start"))
+	sess.Title = "Compaction Test" // Set title to avoid title generator race
 	e := rt.RunStream(t.Context(), sess)
 	for range e {
 	}
