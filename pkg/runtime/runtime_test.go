@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/chat"
@@ -457,14 +456,16 @@ func TestStartBackgroundRAGInit_StopsForwardingAfterContextCancel(t *testing.T) 
 		"default": mgr,
 	}))
 
+	tracing := newTracingProvider(nil)
+	agentsMgr := newAgentManager(tm, &channelPublisher{}, tracing)
+
 	rt := &LocalRuntime{
-		team:         tm,
-		currentAgent: "root",
+		agents: agentsMgr,
 	}
 	rt.ragMgr = newRuntimeRAGManager(
 		tm,
 		&channelPublisher{},
-		func() string { return rt.currentAgent },
+		func() string { return rt.agents.CurrentAgentName() },
 	)
 
 	eventsCh := make(chan Event, 10)
@@ -710,14 +711,14 @@ func TestGetTools_WarningHandling(t *testing.T) {
 			require.NoError(t, err)
 
 			events := make(chan Event, 10)
-			sessionSpan := trace.SpanFromContext(t.Context())
 
 			// First call
-			tools1, err := rt.getTools(t.Context(), root, sessionSpan, events)
+			rt.agents.events = &channelPublisher{ch: events}
+			tools1, err := rt.agents.GetTools(t.Context(), root)
 			require.NoError(t, err)
 			require.Len(t, tools1, tt.wantToolCount)
 
-			rt.emitAgentWarnings(root, events)
+			rt.agents.EmitAgentWarnings(root)
 			evs := collectEvents(events)
 			require.Equal(t, tt.wantWarning, hasWarningEvent(evs), "warning event mismatch on first call")
 		})

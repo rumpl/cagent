@@ -80,8 +80,7 @@ type RAGInitializer interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	team               *team.Team
-	currentAgent       string
+	agents             *agentManager
 	rootSessionID      string // Root session ID for OAuth state encoding (preserved across sub-sessions)
 	tracing            *tracingProvider
 	modelsStore        ModelStore
@@ -99,7 +98,7 @@ type Opt func(*LocalRuntime)
 
 func WithCurrentAgent(agentName string) Opt {
 	return func(r *LocalRuntime) {
-		r.currentAgent = agentName
+		_ = r.agents.SetCurrentAgent(agentName)
 	}
 }
 
@@ -144,8 +143,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	tracing := newTracingProvider(nil)
 
 	r := &LocalRuntime{
-		team:              agents,
-		currentAgent:      "root",
+		agents:            newAgentManager(agents, &channelPublisher{}, tracing),
 		tracing:           tracing,
 		modelsStore:       modelsStore,
 		sessionCompaction: true,
@@ -158,13 +156,13 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 
 	r.elicitation = newElicitationHandler(
 		&channelPublisher{},
-		func() string { return r.currentAgent },
+		func() string { return r.agents.CurrentAgentName() },
 	)
 
 	r.ragMgr = newRuntimeRAGManager(
 		agents,
 		&channelPublisher{},
-		func() string { return r.currentAgent },
+		func() string { return r.agents.CurrentAgentName() },
 	)
 
 	r.streamProc = newStreamProcessor(&channelPublisher{})
@@ -172,11 +170,16 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	r.toolExec = newToolExecutor(&channelPublisher{}, tracing)
 
 	// Validate that we have at least one agent and that the current agent exists
-	if _, err = r.team.Agent(r.currentAgent); err != nil {
+	if _, err = r.agents.Agent(r.agents.CurrentAgentName()); err != nil {
 		return nil, err
 	}
 
-	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
+	// Check if a requested agent was set via WithCurrentAgent but not found
+	if err := r.agents.ValidateRequestedAgent(); err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Creating new runtime", "agent", r.agents.CurrentAgentName(), "available_agents", agents.Size())
 
 	return r, nil
 }
@@ -196,15 +199,15 @@ func (r *LocalRuntime) InitializeRAG(ctx context.Context, events chan Event) {
 }
 
 func (r *LocalRuntime) CurrentAgentName() string {
-	return r.currentAgent
+	return r.agents.CurrentAgentName()
 }
 
-func (r *LocalRuntime) CurrentAgentCommands(context.Context) map[string]string {
-	return r.CurrentAgent().Commands()
+func (r *LocalRuntime) CurrentAgentCommands(ctx context.Context) map[string]string {
+	return r.agents.CurrentAgentCommands(ctx)
 }
 
-func (r *LocalRuntime) CurrentWelcomeMessage(context.Context) string {
-	return r.CurrentAgent().WelcomeMessage()
+func (r *LocalRuntime) CurrentWelcomeMessage(ctx context.Context) string {
+	return r.agents.CurrentWelcomeMessage(ctx)
 }
 
 // CurrentMCPPrompts returns the available MCP prompts from all active MCP toolsets
@@ -288,9 +291,7 @@ func (r *LocalRuntime) discoverMCPPrompts(ctx context.Context, toolset *mcptools
 
 // CurrentAgent returns the current agent
 func (r *LocalRuntime) CurrentAgent() *agent.Agent {
-	// We validated already that the agent exists
-	current, _ := r.team.Agent(r.currentAgent)
-	return current
+	return r.agents.CurrentAgent()
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information for immediate sidebar display
@@ -310,23 +311,24 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, events chan Event) {
 	events <- AgentInfo(a.Name(), modelID, a.Description())
 
 	// Emit team information
-	availableAgents := r.team.AgentNames()
-	events <- TeamInfo(availableAgents, r.currentAgent)
+	availableAgents := r.agents.AgentNames()
+	events <- TeamInfo(availableAgents, r.agents.CurrentAgentName())
 
 	// Emit agent warnings (if any)
-	r.emitAgentWarnings(a, events)
+	r.agents.events = &channelPublisher{ch: events}
+	r.agents.EmitAgentWarnings(a)
 
 	agentTools, err := a.Tools(ctx)
 	if err != nil {
 		slog.Warn("Failed to get agent tools during startup", "agent", a.Name(), "error", err)
 		// Emit toolset info with 0 tools if we can't get them
-		events <- ToolsetInfo(0, r.currentAgent)
+		events <- ToolsetInfo(0, r.agents.CurrentAgentName())
 		r.startupInfoEmitted = true
 		return
 	}
 
 	// Emit toolset information
-	events <- ToolsetInfo(len(agentTools), r.currentAgent)
+	events <- ToolsetInfo(len(agentTools), r.agents.CurrentAgentName())
 	r.startupInfoEmitted = true
 }
 
@@ -359,7 +361,7 @@ func (r *LocalRuntime) registerDefaultTools() {
 func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, events chan Event) {
 	defer close(events)
 
-	events <- StreamStopped(sess.ID, r.currentAgent)
+	events <- StreamStopped(sess.ID, r.agents.CurrentAgentName())
 
 	telemetry.RecordSessionEnd(ctx)
 
@@ -369,20 +371,21 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 
 // RunStream starts the agent's interaction loop and returns a channel of events
 func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan Event {
-	slog.Debug("Starting runtime stream", "agent", r.currentAgent, "session_id", sess.ID)
+	slog.Debug("Starting runtime stream", "agent", r.agents.CurrentAgentName(), "session_id", sess.ID)
 	events := make(chan Event, 128)
 
 	go func() {
-		telemetry.RecordSessionStart(ctx, r.currentAgent, sess.ID)
+		telemetry.RecordSessionStart(ctx, r.agents.CurrentAgentName(), sess.ID)
 
 		ctx, sessionSpan := r.tracing.StartSpan(ctx, "runtime.session", trace.WithAttributes(
-			attribute.String("agent", r.currentAgent),
+			attribute.String("agent", r.agents.CurrentAgentName()),
 			attribute.String("session.id", sess.ID),
 		))
 		defer sessionSpan.End()
 
 		// Set up elicitation handler with the events channel
 		r.elicitation.events = &channelPublisher{ch: events}
+		r.agents.events = &channelPublisher{ch: events}
 
 		// Set elicitation handler on all MCP toolsets before getting tools
 		a := r.CurrentAgent()
@@ -395,30 +398,30 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		events <- AgentInfo(a.Name(), modelID, a.Description())
 
 		// Emit team information
-		availableAgents := r.team.AgentNames()
-		events <- TeamInfo(availableAgents, r.currentAgent)
+		availableAgents := r.agents.AgentNames()
+		events <- TeamInfo(availableAgents, r.agents.CurrentAgentName())
 
 		// Initialize RAG and forward events
 		r.InitializeRAG(ctx, events)
 
-		r.emitAgentWarnings(a, events)
+		r.agents.EmitAgentWarnings(a)
 
 		for _, toolset := range a.ToolSets() {
 			toolset.SetElicitationHandler(r.elicitation.GetHandlerFunc())
 			toolset.SetOAuthSuccessHandler(func() {
-				events <- Authorization(tools.ElicitationActionAccept, r.currentAgent)
+				events <- Authorization(tools.ElicitationActionAccept, r.agents.CurrentAgentName())
 			})
 			toolset.SetManagedOAuth(r.managedOAuth)
 		}
 
-		agentTools, err := r.getTools(ctx, a, sessionSpan, events)
+		agentTools, err := r.agents.GetTools(ctx, a)
 		if err != nil {
 			events <- Error(fmt.Sprintf("failed to get tools: %v", err))
 			return
 		}
 
 		// Emit toolset information
-		events <- ToolsetInfo(len(agentTools), r.currentAgent)
+		events <- ToolsetInfo(len(agentTools), r.agents.CurrentAgentName())
 
 		messages := sess.GetMessages(a)
 		if sess.SendUserMessage {
@@ -434,7 +437,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		r.titleGen = newTitleGenerator(
 			&channelPublisher{ch: events},
 			func() provider.Provider { return r.CurrentAgent().Model() },
-			func() string { return r.currentAgent },
+			func() string { return r.agents.CurrentAgentName() },
 		)
 
 		if sess.Title == "" {
@@ -449,16 +452,16 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			// Set elicitation handler on all MCP toolsets before getting tools
 			a := r.CurrentAgent()
 
-			r.emitAgentWarnings(a, events)
+			r.agents.EmitAgentWarnings(a)
 
 			for _, toolset := range a.ToolSets() {
 				toolset.SetElicitationHandler(r.elicitation.GetHandlerFunc())
 				toolset.SetOAuthSuccessHandler(func() {
-					events <- Authorization("confirmed", r.currentAgent)
+					events <- Authorization("confirmed", r.agents.CurrentAgentName())
 				})
 			}
 
-			agentTools, err := r.getTools(ctx, a, sessionSpan, events)
+			agentTools, err := r.agents.GetTools(ctx, a)
 			if err != nil {
 				events <- Error(fmt.Sprintf("failed to get tools: %v", err))
 				return
@@ -522,7 +525,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			if m != nil && r.sessionCompaction {
 				if sess.InputTokens+sess.OutputTokens > int64(float64(contextLimit)*0.9) {
 					r.Summarize(ctx, sess, events)
-					events <- TokenUsage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
+					events <- TokenUsage(sess.ID, r.agents.CurrentAgentName(), sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
 				}
 			}
 
@@ -588,7 +591,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
 			}
 
-			events <- TokenUsage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
+			events <- TokenUsage(sess.ID, r.agents.CurrentAgentName(), sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
 
 			r.toolExec.events = &channelPublisher{ch: events}
 			r.toolExec.ProcessToolCalls(ctx, sess, res.Calls, agentTools, a, events)
@@ -601,57 +604,6 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	}()
 
 	return events
-}
-
-// getTools executes tool retrieval with automatic OAuth handling
-func (r *LocalRuntime) getTools(ctx context.Context, a *agent.Agent, sessionSpan trace.Span, events chan Event) ([]tools.Tool, error) {
-	shouldEmitMCPInit := len(a.ToolSets()) > 0
-	if shouldEmitMCPInit {
-		events <- MCPInitStarted(a.Name())
-	}
-	defer func() {
-		if shouldEmitMCPInit {
-			events <- MCPInitFinished(a.Name())
-		}
-	}()
-
-	agentTools, err := a.Tools(ctx)
-	if err != nil {
-		slog.Error("Failed to get agent tools", "agent", a.Name(), "error", err)
-		sessionSpan.RecordError(err)
-		sessionSpan.SetStatus(codes.Error, "failed to get tools")
-		telemetry.RecordError(ctx, err.Error())
-		return nil, err
-	}
-
-	slog.Debug("Retrieved agent tools", "agent", a.Name(), "tool_count", len(agentTools))
-	return agentTools, nil
-}
-
-func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, events chan Event) {
-	warnings := a.DrainWarnings()
-	if len(warnings) == 0 {
-		return
-	}
-
-	slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
-
-	if events != nil {
-		events <- Warning(formatToolWarning(a, warnings), r.currentAgent)
-	}
-}
-
-func formatToolWarning(a *agent.Agent, warnings []string) string {
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Some toolsets failed to initialize for agent '%s'.\n\n", a.Name()))
-	builder.WriteString("Details:\n\n")
-	for _, warning := range warnings {
-		builder.WriteString("- ")
-		builder.WriteString(warning)
-		builder.WriteByte('\n')
-	}
-
-	return strings.TrimSuffix(builder.String(), "\n")
 }
 
 func (r *LocalRuntime) Resume(ctx context.Context, confirmationType ResumeType) {
@@ -699,20 +651,20 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
 
-	ca := r.currentAgent
+	ca := r.agents.CurrentAgentName()
 
 	// Emit agent switching start event
 	evts <- AgentSwitching(true, ca, params.Agent)
 
-	r.currentAgent = params.Agent
+	_ = r.agents.SetCurrentAgent(params.Agent)
 	defer func() {
-		r.currentAgent = ca
+		_ = r.agents.SetCurrentAgent(ca)
 
 		// Emit agent switching end event
 		evts <- AgentSwitching(false, params.Agent, ca)
 
 		// Restore original agent info in sidebar
-		if originalAgent, err := r.team.Agent(ca); err == nil {
+		if originalAgent, err := r.agents.Agent(ca); err == nil {
 			var modelID string
 			if model := originalAgent.Model(); model != nil {
 				modelID = model.ID()
@@ -722,7 +674,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	}()
 
 	// Emit agent info for the new agent
-	if newAgent, err := r.team.Agent(params.Agent); err == nil {
+	if newAgent, err := r.agents.Agent(params.Agent); err == nil {
 		var modelID string
 		if model := newAgent.Model(); model != nil {
 			modelID = model.ID()
@@ -738,7 +690,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 	slog.Debug("Creating new session with parent session", "parent_session_id", sess.ID, "tools_approved", sess.ToolsApproved)
 
-	child, err := r.team.Agent(params.Agent)
+	child, err := r.agents.Agent(params.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -779,13 +731,13 @@ func (r *LocalRuntime) handleHandoff(_ context.Context, _ *session.Session, tool
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	ca := r.currentAgent
-	next, err := r.team.Agent(params.Agent)
+	ca := r.agents.CurrentAgentName()
+	next, err := r.agents.Agent(params.Agent)
 	if err != nil {
 		return nil, err
 	}
 
-	r.currentAgent = next.Name()
+	_ = r.agents.SetCurrentAgent(next.Name())
 	return &tools.ToolCallResult{
 		Output: fmt.Sprintf("The agent %s handed off the conversation to you, look at the history of the conversation and continue where it left off. Once you are done with your task or if the user asks you, handoff the conversation back to %s.", ca, ca),
 	}, nil
@@ -795,9 +747,9 @@ func (r *LocalRuntime) handleHandoff(_ context.Context, _ *session.Session, tool
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, events chan Event) {
 	slog.Debug("Generating summary for session", "session_id", sess.ID)
 
-	events <- SessionCompaction(sess.ID, "started", r.currentAgent)
+	events <- SessionCompaction(sess.ID, "started", r.agents.CurrentAgentName())
 	defer func() {
-		events <- SessionCompaction(sess.ID, "completed", r.currentAgent)
+		events <- SessionCompaction(sess.ID, "completed", r.agents.CurrentAgentName())
 	}()
 
 	// Create conversation history for summarization
@@ -854,5 +806,5 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, eve
 	// Add the summary to the session as a summary item
 	sess.Messages = append(sess.Messages, session.Item{Summary: summary})
 	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
-	events <- SessionSummary(sess.ID, summary, r.currentAgent)
+	events <- SessionSummary(sess.ID, summary, r.agents.CurrentAgentName())
 }
