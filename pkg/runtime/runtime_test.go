@@ -794,8 +794,9 @@ func TestProcessToolCalls_UnknownTool_NoToolResultMessage(t *testing.T) {
 
 	events := make(chan Event, 10)
 
-	// No agentTools provided and runtime toolMap doesn't have this tool name
-	rt.processToolCalls(t.Context(), sess, calls, nil, events)
+	// No agentTools provided and toolExec toolMap doesn't have this tool name
+	rt.toolExec.events = &channelPublisher{ch: events}
+	rt.toolExec.ProcessToolCalls(t.Context(), sess, calls, nil, root, events)
 
 	// Drain events channel
 	close(events)

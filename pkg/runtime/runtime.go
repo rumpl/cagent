@@ -80,11 +80,9 @@ type RAGInitializer interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	toolMap            map[string]ToolHandler
 	team               *team.Team
 	currentAgent       string
 	rootSessionID      string // Root session ID for OAuth state encoding (preserved across sub-sessions)
-	resumeChan         chan ResumeType
 	tracing            *tracingProvider
 	modelsStore        ModelStore
 	sessionCompaction  bool
@@ -94,6 +92,7 @@ type LocalRuntime struct {
 	ragMgr             *runtimeRAGManager
 	titleGen           *titleGenerator
 	streamProc         *streamProcessor
+	toolExec           *toolExecutor
 }
 
 type Opt func(*LocalRuntime)
@@ -142,12 +141,12 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, err
 	}
 
+	tracing := newTracingProvider(nil)
+
 	r := &LocalRuntime{
-		toolMap:           make(map[string]ToolHandler),
 		team:              agents,
 		currentAgent:      "root",
-		resumeChan:        make(chan ResumeType),
-		tracing:           newTracingProvider(nil),
+		tracing:           tracing,
 		modelsStore:       modelsStore,
 		sessionCompaction: true,
 		managedOAuth:      true,
@@ -169,6 +168,8 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	)
 
 	r.streamProc = newStreamProcessor(&channelPublisher{})
+
+	r.toolExec = newToolExecutor(&channelPublisher{}, tracing)
 
 	// Validate that we have at least one agent and that the current agent exists
 	if _, err = r.team.Agent(r.currentAgent); err != nil {
@@ -346,13 +347,13 @@ func (r *LocalRuntime) registerDefaultTools() {
 
 	for _, t := range allTools {
 		if h, exists := handlers[t.Name]; exists {
-			r.toolMap[t.Name] = ToolHandler{Handler: h, Tool: t}
+			r.toolExec.RegisterHandler(t.Name, ToolHandler{Handler: h, Tool: t})
 		} else {
 			slog.Warn("No handler found for default tool", "tool", t.Name)
 		}
 	}
 
-	slog.Debug("Registered default tools", "count", len(r.toolMap))
+	slog.Debug("Registered default tools", "count", len(r.toolExec.toolMap))
 }
 
 func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, events chan Event) {
@@ -470,7 +471,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 				// Wait for user decision
 				select {
-				case resumeType := <-r.resumeChan:
+				case resumeType := <-r.toolExec.resumeChan:
 					if resumeType == ResumeTypeApprove {
 						slog.Debug("User chose to continue after max iterations", "agent", a.Name())
 						runtimeMaxIterations = iteration + 10
@@ -589,7 +590,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 			events <- TokenUsage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost)
 
-			r.processToolCalls(ctx, sess, res.Calls, agentTools, events)
+			r.toolExec.events = &channelPublisher{ch: events}
+			r.toolExec.ProcessToolCalls(ctx, sess, res.Calls, agentTools, a, events)
 
 			if res.Stopped {
 				slog.Debug("Conversation stopped", "agent", a.Name())
@@ -652,23 +654,8 @@ func formatToolWarning(a *agent.Agent, warnings []string) string {
 	return strings.TrimSuffix(builder.String(), "\n")
 }
 
-func (r *LocalRuntime) Resume(_ context.Context, confirmationType ResumeType) {
-	slog.Debug("Resuming runtime", "agent", r.currentAgent, "confirmation_type", confirmationType)
-
-	cType := ResumeTypeApproveSession
-	switch confirmationType {
-	case ResumeTypeApprove:
-		cType = ResumeTypeApprove
-	case ResumeTypeReject:
-		cType = ResumeTypeReject
-	}
-
-	select {
-	case r.resumeChan <- cType:
-		slog.Debug("Resume signal sent", "agent", r.currentAgent)
-	default:
-		slog.Debug("Resume channel not ready, ignoring", "agent", r.currentAgent)
-	}
+func (r *LocalRuntime) Resume(ctx context.Context, confirmationType ResumeType) {
+	r.toolExec.Resume(ctx, confirmationType)
 }
 
 // ResumeElicitation sends an elicitation response back to a waiting elicitation request
@@ -687,255 +674,6 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 	}
 
 	return sess.GetAllMessages(), nil
-}
-
-// processToolCalls handles the execution of tool calls for an agent
-func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, events chan Event) {
-	a := r.CurrentAgent()
-	slog.Debug("Processing tool calls", "agent", a.Name(), "call_count", len(calls))
-
-	for i, toolCall := range calls {
-		// Start a span for each tool call
-		callCtx, callSpan := r.tracing.StartSpan(ctx, "runtime.tool.call", trace.WithAttributes(
-			attribute.String("tool.name", toolCall.Function.Name),
-			attribute.String("tool.type", string(toolCall.Type)),
-			attribute.String("agent", a.Name()),
-			attribute.String("session.id", sess.ID),
-			attribute.String("tool.call_id", toolCall.ID),
-		))
-
-		slog.Debug("Processing tool call", "agent", a.Name(), "tool", toolCall.Function.Name, "session_id", sess.ID)
-		def, exists := r.toolMap[toolCall.Function.Name]
-		if exists {
-			slog.Debug("Using runtime tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-			// TODO: make this better, these tools define themselves as read-only
-			if sess.ToolsApproved || def.Tool.Annotations.ReadOnlyHint {
-				r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
-			} else {
-				slog.Debug("Tools not approved, waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
-
-				events <- ToolCallConfirmation(toolCall, def.Tool, a.Name())
-
-				select {
-				case cType := <-r.resumeChan:
-					switch cType {
-					case ResumeTypeApprove:
-						slog.Debug("Resume signal received, approving tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
-					case ResumeTypeApproveSession:
-						slog.Debug("Resume signal received, approving session", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						sess.ToolsApproved = true
-						r.runAgentTool(callCtx, def.Handler, sess, toolCall, def.Tool, events, a)
-					case ResumeTypeReject:
-						slog.Debug("Resume signal received, rejecting tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.addToolRejectedResponse(sess, toolCall, def.Tool, events)
-					}
-				case <-callCtx.Done():
-					slog.Debug("Context cancelled while waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
-					// Synthesize cancellation responses for the current and any remaining tool calls
-					r.addToolCancelledResponse(sess, toolCall, def.Tool, events)
-					for j := i + 1; j < len(calls); j++ {
-						r.addToolCancelledResponse(sess, calls[j], def.Tool, events)
-					}
-					callSpan.SetStatus(codes.Ok, "tool call canceled by user")
-					return
-				}
-			}
-		}
-
-	toolLoop:
-		for _, tool := range agentTools {
-			if _, ok := r.toolMap[tool.Name]; ok {
-				continue
-			}
-			if tool.Name != toolCall.Function.Name {
-				continue
-			}
-			slog.Debug("Using agent tool handler", "tool", toolCall.Function.Name)
-
-			if sess.ToolsApproved || tool.Annotations.ReadOnlyHint {
-				slog.Debug("Tools approved, running tool", "tool", toolCall.Function.Name, "session_id", sess.ID)
-				r.runTool(callCtx, tool, toolCall, events, sess, a)
-			} else {
-				slog.Debug("Tools not approved, waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
-				events <- ToolCallConfirmation(toolCall, tool, a.Name())
-				select {
-				case cType := <-r.resumeChan:
-					switch cType {
-					case ResumeTypeApprove:
-						slog.Debug("Resume signal received, approving tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.runTool(callCtx, tool, toolCall, events, sess, a)
-					case ResumeTypeApproveSession:
-						slog.Debug("Resume signal received, approving session", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						sess.ToolsApproved = true
-						r.runTool(callCtx, tool, toolCall, events, sess, a)
-					case ResumeTypeReject:
-						slog.Debug("Resume signal received, rejecting tool handler", "tool", toolCall.Function.Name, "session_id", sess.ID)
-						r.addToolRejectedResponse(sess, toolCall, tool, events)
-					}
-
-					slog.Debug("Added tool response to session", "tool", toolCall.Function.Name, "session_id", sess.ID, "total_messages", len(sess.GetAllMessages()))
-					break toolLoop
-				case <-callCtx.Done():
-					slog.Debug("Context cancelled while waiting for resume", "tool", toolCall.Function.Name, "session_id", sess.ID)
-					// Synthesize cancellation responses for the current and any remaining tool calls
-					r.addToolCancelledResponse(sess, toolCall, tool, events)
-					for j := i + 1; j < len(calls); j++ {
-						r.addToolCancelledResponse(sess, calls[j], tool, events)
-					}
-					callSpan.SetStatus(codes.Ok, "tool call canceled by user")
-					return
-				}
-			}
-		}
-		// Set tool call span success after processing corresponding handler
-		callSpan.SetStatus(codes.Ok, "tool call processed")
-		callSpan.End()
-	}
-}
-
-// runTool executes agent tools from toolsets (MCP, filesystem, etc.).
-// Tool execution may require OAuth authorization, so the handler call is wrapped
-// with ExecuteWithOAuth to automatically handle authorization flows and retries.
-func (r *LocalRuntime) runTool(ctx context.Context, tool tools.Tool, toolCall tools.ToolCall, events chan Event, sess *session.Session, a *agent.Agent) {
-	// Start a child span for the actual tool handler execution
-	ctx, span := r.tracing.StartSpan(ctx, "runtime.tool.handler", trace.WithAttributes(
-		attribute.String("tool.name", toolCall.Function.Name),
-		attribute.String("agent", a.Name()),
-		attribute.String("session.id", sess.ID),
-		attribute.String("tool.call_id", toolCall.ID),
-	))
-	defer span.End()
-
-	events <- ToolCall(toolCall, tool, a.Name())
-
-	var res *tools.ToolCallResult
-	var err error
-	var duration time.Duration
-
-	res, err = tool.Handler(ctx, toolCall)
-
-	telemetry.RecordToolCall(ctx, toolCall.Function.Name, sess.ID, a.Name(), duration, err)
-
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			slog.Debug("Tool handler canceled by context", "tool", toolCall.Function.Name, "agent", a.Name(), "session_id", sess.ID)
-			// Synthesize a cancellation response so the transcript remains consistent
-			res = &tools.ToolCallResult{Output: "The tool call was canceled by the user."}
-			span.SetStatus(codes.Ok, "tool handler canceled by user")
-		} else {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "tool handler error")
-			slog.Error("Error calling tool", "tool", toolCall.Function.Name, "error", err)
-			res = &tools.ToolCallResult{
-				Output: fmt.Sprintf("Error calling tool: %v", err),
-			}
-		}
-	} else {
-		span.SetStatus(codes.Ok, "tool handler completed")
-		slog.Debug("Agent tool call completed", "tool", toolCall.Function.Name, "output_length", len(res.Output))
-	}
-
-	events <- ToolCallResponse(toolCall, tool, res.Output, a.Name())
-
-	// Ensure tool response content is not empty for API compatibility
-	content := res.Output
-	if strings.TrimSpace(content) == "" {
-		content = "(no output)"
-	}
-
-	toolResponseMsg := chat.Message{
-		Role:       chat.MessageRoleTool,
-		Content:    content,
-		ToolCallID: toolCall.ID,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-}
-
-func (r *LocalRuntime) runAgentTool(ctx context.Context, handler ToolHandlerFunc, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent) {
-	// Start a child span for runtime-provided tool handler execution
-	ctx, span := r.tracing.StartSpan(ctx, "runtime.tool.handler.runtime", trace.WithAttributes(
-		attribute.String("tool.name", toolCall.Function.Name),
-		attribute.String("agent", a.Name()),
-		attribute.String("session.id", sess.ID),
-		attribute.String("tool.call_id", toolCall.ID),
-	))
-	defer span.End()
-
-	events <- ToolCall(toolCall, tool, a.Name())
-	start := time.Now()
-	res, err := handler(ctx, sess, toolCall, events)
-	duration := time.Since(start)
-
-	telemetry.RecordToolCall(ctx, toolCall.Function.Name, sess.ID, a.Name(), duration, err)
-
-	var output string
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			slog.Debug("Runtime tool handler canceled by context", "tool", toolCall.Function.Name, "agent", a.Name(), "session_id", sess.ID)
-			// Synthesize a cancellation response so the transcript remains consistent
-			output = "The tool call was canceled by the user."
-			span.SetStatus(codes.Ok, "runtime tool handler canceled by user")
-		} else {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "runtime tool handler error")
-			output = fmt.Sprintf("error calling tool: %v", err)
-			slog.Error("Error executing tool", "tool", toolCall.Function.Name, "error", err)
-		}
-	} else {
-		output = res.Output
-		span.SetStatus(codes.Ok, "runtime tool handler completed")
-		slog.Debug("Tool executed successfully", "tool", toolCall.Function.Name)
-	}
-
-	events <- ToolCallResponse(toolCall, tool, output, a.Name())
-
-	// Ensure tool response content is not empty for API compatibility
-	content := output
-	if strings.TrimSpace(content) == "" {
-		content = "(no output)"
-	}
-
-	toolResponseMsg := chat.Message{
-		Role:       chat.MessageRoleTool,
-		Content:    content,
-		ToolCallID: toolCall.ID,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-}
-
-func (r *LocalRuntime) addToolRejectedResponse(sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event) {
-	a := r.CurrentAgent()
-
-	result := "The user rejected the tool call."
-
-	events <- ToolCallResponse(toolCall, tool, result, a.Name())
-
-	toolResponseMsg := chat.Message{
-		Role:       chat.MessageRoleTool,
-		Content:    result,
-		ToolCallID: toolCall.ID,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-}
-
-func (r *LocalRuntime) addToolCancelledResponse(sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event) {
-	a := r.CurrentAgent()
-
-	result := "The tool call was canceled by the user."
-
-	events <- ToolCallResponse(toolCall, tool, result, a.Name())
-
-	toolResponseMsg := chat.Message{
-		Role:       chat.MessageRoleTool,
-		Content:    result,
-		ToolCallID: toolCall.ID,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
 }
 
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts chan Event) (*tools.ToolCallResult, error) {
