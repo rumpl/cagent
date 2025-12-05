@@ -19,14 +19,6 @@ const (
 	titleUserPromptFormat = "Based on the following message a user sent to an AI assistant, generate a short, descriptive title (maximum 50 characters) that captures the main topic or purpose of the conversation. Return ONLY the title text, nothing else.\n\nUser message: %s\n\n"
 )
 
-type channelPublisher struct {
-	ch chan Event
-}
-
-func (p *channelPublisher) Publish(event Event) {
-	p.ch <- event
-}
-
 type titleGenerator struct {
 	wg           sync.WaitGroup
 	events       EventPublisher

@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -20,8 +19,6 @@ import (
 	"github.com/docker/cagent/pkg/model/provider"
 	"github.com/docker/cagent/pkg/model/provider/options"
 	"github.com/docker/cagent/pkg/modelsdev"
-	"github.com/docker/cagent/pkg/rag"
-	ragtypes "github.com/docker/cagent/pkg/rag/types"
 	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/team"
 	"github.com/docker/cagent/pkg/telemetry"
@@ -95,7 +92,7 @@ type LocalRuntime struct {
 	managedOAuth       bool
 	startupInfoEmitted bool // Track if startup info has been emitted to avoid unnecessary duplication
 	elicitation        *elicitationHandler
-	ragInitialized     atomic.Bool
+	ragMgr             *runtimeRAGManager
 	titleGen           *titleGenerator
 }
 
@@ -165,6 +162,12 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		func() string { return r.currentAgent },
 	)
 
+	r.ragMgr = newRuntimeRAGManager(
+		agents,
+		&channelPublisher{},
+		func() string { return r.currentAgent },
+	)
+
 	// Validate that we have at least one agent and that the current agent exists
 	if _, err = r.team.Agent(r.currentAgent); err != nil {
 		return nil, err
@@ -178,106 +181,15 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 // StartBackgroundRAGInit initializes RAG in background and forwards events
 // Should be called early (e.g., by App) to start indexing before RunStream
 func (r *LocalRuntime) StartBackgroundRAGInit(ctx context.Context, sendEvent func(Event)) {
-	if r.ragInitialized.Swap(true) {
-		return
-	}
-
-	ragManagers := r.team.RAGManagers()
-	if len(ragManagers) == 0 {
-		return
-	}
-
-	slog.Debug("Starting background RAG initialization with event forwarding", "manager_count", len(ragManagers))
-
-	// Set up event forwarding BEFORE starting initialization
-	// This ensures all events are captured
-	r.forwardRAGEvents(ctx, ragManagers, sendEvent)
-
-	// Now start initialization (events will be forwarded)
-	r.team.InitializeRAG(ctx)
-	r.team.StartRAGFileWatchers(ctx)
-}
-
-// forwardRAGEvents forwards RAG manager events to the given callback
-// Consolidates duplicated event forwarding logic
-func (r *LocalRuntime) forwardRAGEvents(ctx context.Context, ragManagers map[string]*rag.Manager, sendEvent func(Event)) {
-	for _, mgr := range ragManagers {
-		go func(mgr *rag.Manager) {
-			ragName := mgr.Name()
-			slog.Debug("Starting RAG event forwarder goroutine", "rag", ragName)
-			for {
-				select {
-				case <-ctx.Done():
-					slog.Debug("RAG event forwarder stopped", "rag", ragName)
-					return
-				case ragEvent, ok := <-mgr.Events():
-					if !ok {
-						slog.Debug("RAG events channel closed", "rag", ragName)
-						return
-					}
-
-					agentName := r.currentAgent
-					slog.Debug("Forwarding RAG event", "type", ragEvent.Type, "rag", ragName, "agent", agentName)
-
-					switch ragEvent.Type {
-					case ragtypes.EventTypeIndexingStarted:
-						sendEvent(RAGIndexingStarted(ragName, ragEvent.StrategyName, agentName))
-					case ragtypes.EventTypeIndexingProgress:
-						if ragEvent.Progress != nil {
-							sendEvent(RAGIndexingProgress(ragName, ragEvent.StrategyName, ragEvent.Progress.Current, ragEvent.Progress.Total, agentName))
-						}
-					case ragtypes.EventTypeIndexingComplete:
-						sendEvent(RAGIndexingCompleted(ragName, ragEvent.StrategyName, agentName))
-					case ragtypes.EventTypeUsage:
-						// Convert RAG usage to TokenUsageEvent so TUI displays it
-						sendEvent(TokenUsage(
-							"",
-							agentName,
-							ragEvent.TotalTokens, // input tokens (embeddings)
-							0,                    // output tokens (0 for embeddings)
-							ragEvent.TotalTokens, // context length
-							0,                    // context limit (not applicable)
-							ragEvent.Cost,
-						))
-					case ragtypes.EventTypeError:
-						if ragEvent.Error != nil {
-							sendEvent(Error(fmt.Sprintf("RAG %s error: %v", ragName, ragEvent.Error)))
-						}
-					default:
-						// Log unhandled events for debugging
-						slog.Debug("Unhandled RAG event type", "type", ragEvent.Type, "rag", ragName)
-					}
-				}
-			}
-		}(mgr)
-	}
+	r.ragMgr.events = &callbackPublisher{callback: sendEvent}
+	r.ragMgr.StartBackgroundInit(ctx)
 }
 
 // InitializeRAG is called within RunStream as a fallback when background init wasn't used
 // (e.g., for exec command or API mode where there's no App)
 func (r *LocalRuntime) InitializeRAG(ctx context.Context, events chan Event) {
-	// If already initialized via StartBackgroundRAGInit, skip entirely
-	// Event forwarding was already set up there
-	if r.ragInitialized.Swap(true) {
-		slog.Debug("RAG already initialized, event forwarding already active", "manager_count", len(r.team.RAGManagers()))
-		return
-	}
-
-	ragManagers := r.team.RAGManagers()
-	if len(ragManagers) == 0 {
-		return
-	}
-
-	slog.Debug("Setting up RAG initialization (fallback path for non-TUI)", "manager_count", len(ragManagers))
-
-	// Set up event forwarding BEFORE starting initialization
-	r.forwardRAGEvents(ctx, ragManagers, func(event Event) {
-		events <- event
-	})
-
-	// Start initialization and file watchers
-	r.team.InitializeRAG(ctx)
-	r.team.StartRAGFileWatchers(ctx)
+	r.ragMgr.events = &channelPublisher{ch: events}
+	r.ragMgr.Initialize(ctx)
 }
 
 func (r *LocalRuntime) CurrentAgentName() string {

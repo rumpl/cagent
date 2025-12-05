@@ -461,6 +461,11 @@ func TestStartBackgroundRAGInit_StopsForwardingAfterContextCancel(t *testing.T) 
 		team:         tm,
 		currentAgent: "root",
 	}
+	rt.ragMgr = newRuntimeRAGManager(
+		tm,
+		&channelPublisher{},
+		func() string { return rt.currentAgent },
+	)
 
 	eventsCh := make(chan Event, 10)
 

@@ -45,3 +45,23 @@ type streamResult struct {
 	ThoughtSignature  []byte
 	Stopped           bool
 }
+
+type channelPublisher struct {
+	ch chan Event
+}
+
+func (p *channelPublisher) Publish(event Event) {
+	if p.ch != nil {
+		p.ch <- event
+	}
+}
+
+type callbackPublisher struct {
+	callback func(Event)
+}
+
+func (p *callbackPublisher) Publish(event Event) {
+	if p.callback != nil {
+		p.callback(event)
+	}
+}
