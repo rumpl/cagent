@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -94,6 +93,7 @@ type LocalRuntime struct {
 	elicitation        *elicitationHandler
 	ragMgr             *runtimeRAGManager
 	titleGen           *titleGenerator
+	streamProc         *streamProcessor
 }
 
 type Opt func(*LocalRuntime)
@@ -167,6 +167,8 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		&channelPublisher{},
 		func() string { return r.currentAgent },
 	)
+
+	r.streamProc = newStreamProcessor(&channelPublisher{})
 
 	// Validate that we have at least one agent and that the current agent exists
 	if _, err = r.team.Agent(r.currentAgent); err != nil {
@@ -540,7 +542,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			}
 
 			slog.Debug("Processing stream", "agent", a.Name())
-			res, err := r.handleStream(ctx, stream, a, agentTools, sess, m, events)
+			r.streamProc.events = &channelPublisher{ch: events}
+			res, err := r.streamProc.ProcessStream(ctx, stream, a, agentTools, sess, m)
 			if err != nil {
 				// Treat context cancellation as a graceful stop
 				if errors.Is(err, context.Canceled) {
@@ -684,159 +687,6 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 	}
 
 	return sess.GetAllMessages(), nil
-}
-
-func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, events chan Event) (streamResult, error) {
-	defer stream.Close()
-
-	var fullContent strings.Builder
-	var fullReasoningContent strings.Builder
-	var thinkingSignature string
-	var thoughtSignature []byte
-	var toolCalls []tools.ToolCall
-	// Track which tool call indices we've already emitted partial events for
-	emittedPartialEvents := make(map[string]bool)
-
-	for {
-		response, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return streamResult{Stopped: true}, fmt.Errorf("error receiving from stream: %w", err)
-		}
-
-		if response.Usage != nil {
-			if m != nil {
-				cost := float64(response.Usage.InputTokens)*m.Cost.Input +
-					float64(response.Usage.OutputTokens)*m.Cost.Output +
-					float64(response.Usage.CachedInputTokens)*m.Cost.CacheRead +
-					float64(response.Usage.CacheWriteTokens)*m.Cost.CacheWrite
-				sess.Cost += cost / 1e6
-			}
-
-			sess.InputTokens = response.Usage.InputTokens + response.Usage.CachedInputTokens + response.Usage.CacheWriteTokens
-			sess.OutputTokens = response.Usage.OutputTokens
-
-			modelName := "unknown"
-			if m != nil {
-				modelName = m.Name
-			}
-			telemetry.RecordTokenUsage(ctx, modelName, sess.InputTokens, sess.OutputTokens, sess.Cost)
-		}
-
-		if len(response.Choices) == 0 {
-			continue
-		}
-		choice := response.Choices[0]
-
-		if len(choice.Delta.ThoughtSignature) > 0 {
-			thoughtSignature = choice.Delta.ThoughtSignature
-		}
-
-		if choice.FinishReason == chat.FinishReasonStop || choice.FinishReason == chat.FinishReasonLength {
-			return streamResult{
-				Calls:             toolCalls,
-				Content:           fullContent.String(),
-				ReasoningContent:  fullReasoningContent.String(),
-				ThinkingSignature: thinkingSignature,
-				ThoughtSignature:  thoughtSignature,
-				Stopped:           true,
-			}, nil
-		}
-
-		// Handle tool calls
-		if len(choice.Delta.ToolCalls) > 0 {
-			// Process each tool call delta
-			for _, deltaToolCall := range choice.Delta.ToolCalls {
-				// Find existing tool call by ID, or create a new one
-				idx := -1
-				for i, toolCall := range toolCalls {
-					if toolCall.ID == deltaToolCall.ID {
-						idx = i
-						break
-					}
-				}
-
-				// If tool call doesn't exist yet, append it
-				if idx == -1 {
-					idx = len(toolCalls)
-					toolCalls = append(toolCalls, tools.ToolCall{
-						ID:   deltaToolCall.ID,
-						Type: deltaToolCall.Type,
-					})
-				}
-
-				// Check if we should emit a partial event for this tool call
-				// We want to emit when we first get the function name
-				shouldEmitPartial := !emittedPartialEvents[deltaToolCall.ID] &&
-					deltaToolCall.Function.Name != "" &&
-					toolCalls[idx].Function.Name == "" // Don't emit if we already have the name
-
-				// Update fields based on what's in the delta
-				if deltaToolCall.ID != "" {
-					toolCalls[idx].ID = deltaToolCall.ID
-				}
-				if deltaToolCall.Type != "" {
-					toolCalls[idx].Type = deltaToolCall.Type
-				}
-				if deltaToolCall.Function.Name != "" {
-					toolCalls[idx].Function.Name = deltaToolCall.Function.Name
-				}
-				if deltaToolCall.Function.Arguments != "" {
-					if toolCalls[idx].Function.Arguments == "" {
-						toolCalls[idx].Function.Arguments = deltaToolCall.Function.Arguments
-					} else {
-						toolCalls[idx].Function.Arguments += deltaToolCall.Function.Arguments
-					}
-					// Emit if we get more arguments
-					shouldEmitPartial = true
-				}
-
-				// Emit PartialToolCallEvent when we first get the function name
-				if shouldEmitPartial {
-					// TODO: clean this up, it's gross
-					tool := tools.Tool{}
-					for _, t := range agentTools {
-						if t.Name == toolCalls[idx].Function.Name {
-							tool = t
-							break
-						}
-					}
-					events <- PartialToolCall(toolCalls[idx], tool, a.Name())
-					emittedPartialEvents[deltaToolCall.ID] = true
-				}
-			}
-			continue
-		}
-
-		if choice.Delta.ReasoningContent != "" {
-			events <- AgentChoiceReasoning(a.Name(), choice.Delta.ReasoningContent)
-			fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
-		}
-
-		// Capture thinking signature for Anthropic extended thinking
-		if choice.Delta.ThinkingSignature != "" {
-			thinkingSignature = choice.Delta.ThinkingSignature
-		}
-
-		if choice.Delta.Content != "" {
-			events <- AgentChoice(a.Name(), choice.Delta.Content)
-			fullContent.WriteString(choice.Delta.Content)
-		}
-	}
-
-	// If the stream completed without producing any content or tool calls, likely because of a token limit, stop to avoid breaking the request loop
-	// NOTE(krissetto): this can likely be removed once compaction works properly with all providers (aka dmr)
-	stoppedDueToNoOutput := fullContent.Len() == 0 && len(toolCalls) == 0
-	return streamResult{
-		Calls:             toolCalls,
-		Content:           fullContent.String(),
-		ReasoningContent:  fullReasoningContent.String(),
-		ThinkingSignature: thinkingSignature,
-		ThoughtSignature:  thoughtSignature,
-		Stopped:           stoppedDueToNoOutput,
-	}, nil
 }
 
 // processToolCalls handles the execution of tool calls for an agent
