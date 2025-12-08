@@ -139,6 +139,7 @@ type LocalRuntime struct {
 	ragInitialized              atomic.Bool
 	titleGen                    *titleGenerator
 	sessionStore                SessionStore
+	ragMgr                      *runtimeRAGManager
 }
 
 type streamResult struct {
@@ -252,6 +253,33 @@ func (r *LocalRuntime) StartBackgroundRAGInit(ctx context.Context, sendEvent fun
 	r.team.StartRAGFileWatchers(ctx)
 }
 
+// InitializeRAG is called within RunStream as a fallback when background init wasn't used
+// (e.g., for exec command or API mode where there's no App)
+func (r *LocalRuntime) InitializeRAG(ctx context.Context, events chan Event) {
+	// If already initialized via StartBackgroundRAGInit, skip entirely
+	// Event forwarding was already set up there
+	if r.ragInitialized.Swap(true) {
+		slog.Debug("RAG already initialized, event forwarding already active", "manager_count", len(r.team.RAGManagers()))
+		return
+	}
+
+	ragManagers := r.team.RAGManagers()
+	if len(ragManagers) == 0 {
+		return
+	}
+
+	slog.Debug("Setting up RAG initialization (fallback path for non-TUI)", "manager_count", len(ragManagers))
+
+	// Set up event forwarding BEFORE starting initialization
+	r.forwardRAGEvents(ctx, ragManagers, func(event Event) {
+		events <- event
+	})
+
+	// Start initialization and file watchers
+	r.team.InitializeRAG(ctx)
+	r.team.StartRAGFileWatchers(ctx)
+}
+
 // forwardRAGEvents forwards RAG manager events to the given callback
 // Consolidates duplicated event forwarding logic
 func (r *LocalRuntime) forwardRAGEvents(ctx context.Context, ragManagers map[string]*rag.Manager, sendEvent func(Event)) {
@@ -305,33 +333,6 @@ func (r *LocalRuntime) forwardRAGEvents(ctx context.Context, ragManagers map[str
 			}
 		}(mgr)
 	}
-}
-
-// InitializeRAG is called within RunStream as a fallback when background init wasn't used
-// (e.g., for exec command or API mode where there's no App)
-func (r *LocalRuntime) InitializeRAG(ctx context.Context, events chan Event) {
-	// If already initialized via StartBackgroundRAGInit, skip entirely
-	// Event forwarding was already set up there
-	if r.ragInitialized.Swap(true) {
-		slog.Debug("RAG already initialized, event forwarding already active", "manager_count", len(r.team.RAGManagers()))
-		return
-	}
-
-	ragManagers := r.team.RAGManagers()
-	if len(ragManagers) == 0 {
-		return
-	}
-
-	slog.Debug("Setting up RAG initialization (fallback path for non-TUI)", "manager_count", len(ragManagers))
-
-	// Set up event forwarding BEFORE starting initialization
-	r.forwardRAGEvents(ctx, ragManagers, func(event Event) {
-		events <- event
-	})
-
-	// Start initialization and file watchers
-	r.team.InitializeRAG(ctx)
-	r.team.StartRAGFileWatchers(ctx)
 }
 
 func (r *LocalRuntime) CurrentAgentName() string {
