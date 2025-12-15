@@ -100,8 +100,6 @@ type editor struct {
 	// pendingFileRef tracks the current @word being typed (for manual file ref detection).
 	// Only set when cursor is in a word starting with @, cleared when cursor leaves.
 	pendingFileRef string
-	// banner renders pending attachments so the user can see what's queued.
-	banner *attachmentBanner
 	// attachments tracks all file attachments (pastes and file refs).
 	attachments []attachment
 	// pasteCounter tracks the next paste number for display purposes.
@@ -126,7 +124,6 @@ func New(a *app.App, hist *history.History) Editor {
 		completions: completions.Completions(a),
 		// Default to no keyboard enhancements; ctrl+j will be used until we know otherwise
 		keyboardEnhancementsSupported: false,
-		banner:                        newAttachmentBanner(),
 	}
 
 	// Configure initial keybinding (ctrl+j for legacy terminals)
@@ -280,10 +277,190 @@ func (e *editor) configureNewlineKeybinding() {
 	}
 }
 
+// findAttachmentAtCursor returns the attachment placeholder that the cursor is inside of or at the boundary of.
+// Returns the start and end byte positions, and whether one was found.
+func (e *editor) findAttachmentAtCursor() (int, int, bool) {
+	value := e.textarea.Value()
+	cursorPos := e.getCursorBytePos()
+
+	for i := range e.attachments {
+		att := &e.attachments[i]
+		// Find all occurrences of this placeholder
+		searchStart := 0
+		for {
+			idx := strings.Index(value[searchStart:], att.placeholder)
+			if idx == -1 {
+				break
+			}
+			start := searchStart + idx
+			end := start + len(att.placeholder)
+
+			// Check if cursor is at start, inside, or at end of this placeholder
+			if cursorPos >= start && cursorPos <= end {
+				return start, end, true
+			}
+			searchStart = end
+		}
+	}
+	return 0, 0, false
+}
+
+// getCursorBytePos returns the cursor position in bytes.
+func (e *editor) getCursorBytePos() int {
+	info := e.textarea.LineInfo()
+	value := e.textarea.Value()
+	lines := strings.Split(value, "\n")
+
+	pos := 0
+	for i := 0; i < e.textarea.Line() && i < len(lines); i++ {
+		pos += len(lines[i]) + 1 // +1 for newline
+	}
+
+	// Add column offset (in runes, need to convert to bytes)
+	if e.textarea.Line() < len(lines) {
+		line := lines[e.textarea.Line()]
+		runes := []rune(line)
+		for i := 0; i < info.ColumnOffset && i < len(runes); i++ {
+			pos += len(string(runes[i]))
+		}
+	}
+
+	return pos
+}
+
+// handleAttachmentNavigation handles left/right arrow keys to skip over attachments atomically.
+// Returns true if the key was handled, false otherwise.
+func (e *editor) handleAttachmentNavigation(keyStr string) bool {
+	start, end, found := e.findAttachmentAtCursor()
+	if !found {
+		return false
+	}
+
+	cursorPos := e.getCursorBytePos()
+
+	switch keyStr {
+	case "left":
+		// If cursor is at start, inside, or at end of attachment, jump to before it
+		// We need to move one position before start
+		if cursorPos >= start && cursorPos <= end {
+			if start > 0 {
+				// Move to position before the attachment
+				e.setCursorToBytePos(start - 1)
+			} else {
+				// Attachment is at the beginning, just go to start
+				e.setCursorToBytePos(0)
+			}
+			return true
+		}
+	case "right":
+		// If cursor is at start or inside attachment, jump to after it
+		if cursorPos >= start && cursorPos < end {
+			e.setCursorToBytePos(end)
+			return true
+		}
+	}
+
+	return false
+}
+
+// handleAttachmentDeletion handles backspace/delete to remove attachments atomically.
+// Returns true if the key was handled, false otherwise.
+func (e *editor) handleAttachmentDeletion(keyStr string) bool {
+	value := e.textarea.Value()
+	cursorPos := e.getCursorBytePos()
+
+	isBackspace := keyStr == "backspace" || keyStr == "ctrl+h"
+	isDelete := keyStr == "delete" || keyStr == "ctrl+d"
+
+	if isBackspace {
+		// Check if cursor is inside or right after an attachment
+		for i := range e.attachments {
+			att := &e.attachments[i]
+			idx := strings.Index(value, att.placeholder)
+			if idx == -1 {
+				continue
+			}
+			end := idx + len(att.placeholder)
+			// If cursor is inside or right after the attachment
+			if cursorPos > idx && cursorPos <= end {
+				newValue := value[:idx] + value[end:]
+				e.textarea.SetValue(newValue)
+				e.setCursorToBytePos(idx)
+				e.removeAttachment(i)
+				return true
+			}
+		}
+	}
+
+	if isDelete {
+		// Check if cursor is at or inside an attachment
+		for i := range e.attachments {
+			att := &e.attachments[i]
+			idx := strings.Index(value, att.placeholder)
+			if idx == -1 {
+				continue
+			}
+			end := idx + len(att.placeholder)
+			// If cursor is at start or inside the attachment
+			if cursorPos >= idx && cursorPos < end {
+				newValue := value[:idx] + value[end:]
+				e.textarea.SetValue(newValue)
+				e.setCursorToBytePos(idx)
+				e.removeAttachment(i)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// setCursorToBytePos sets the cursor to the given byte position.
+func (e *editor) setCursorToBytePos(bytePos int) {
+	value := e.textarea.Value()
+	lines := strings.Split(value, "\n")
+
+	targetLine := 0
+	targetCol := 0
+	currentPos := 0
+
+	for i, line := range lines {
+		lineLen := len(line)
+		if currentPos+lineLen >= bytePos {
+			targetLine = i
+			// Convert byte offset within line to rune offset
+			lineBytes := bytePos - currentPos
+			targetCol = len([]rune(line[:lineBytes]))
+			break
+		}
+		currentPos += lineLen + 1 // +1 for newline
+		targetLine = i + 1
+	}
+
+	// Reset cursor position
+	e.textarea.SetValue(value)
+	e.textarea.MoveToBegin()
+	for range targetLine {
+		e.textarea.CursorDown()
+	}
+	e.textarea.CursorStart()
+	e.textarea.SetCursorColumn(targetCol)
+}
+
+// removeAttachment removes an attachment by index and cleans up temp files.
+func (e *editor) removeAttachment(idx int) {
+	if idx < 0 || idx >= len(e.attachments) {
+		return
+	}
+	att := e.attachments[idx]
+	if att.isTemp {
+		_ = os.Remove(att.path)
+	}
+	e.attachments = append(e.attachments[:idx], e.attachments[idx+1:]...)
+}
+
 // Update handles messages and updates the component state
 func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
-	defer e.updateAttachmentBanner()
-
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
@@ -305,10 +482,8 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		// This bypasses history navigation and allows viewport scrolling
 		switch msg.Button.String() {
 		case "wheelup":
-			// Move cursor up (scrolls viewport if needed)
 			e.textarea.CursorUp()
 		case "wheeldown":
-			// Move cursor down (scrolls viewport if needed)
 			e.textarea.CursorDown()
 		}
 		return e, nil
@@ -316,7 +491,6 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		var cmd tea.Cmd
 		e.textarea, cmd = e.textarea.Update(msg)
-		// Give focus to editor on click
 		if _, ok := msg.(tea.MouseClickMsg); ok {
 			return e, tea.Batch(cmd, e.Focus())
 		}
@@ -336,15 +510,19 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			}
 		} else {
 			if lastIdx >= 0 {
-				newValue := currentValue[:lastIdx-1] + msg.Value + currentValue[lastIdx+len(e.completionWord):]
+				// Remove the @ and completion word, insert the selected value
+				beforeTrigger := currentValue[:lastIdx-1]
+				afterWord := currentValue[lastIdx+len(e.completionWord):]
+
+				newValue := beforeTrigger + msg.Value + afterWord
 				e.textarea.SetValue(newValue)
 				e.textarea.MoveToEnd()
+
+				// Add as attachment if it's a file reference
+				if e.currentCompletion != nil && e.currentCompletion.Trigger() == "@" {
+					e.addFileAttachment(msg.Value)
+				}
 			}
-			// Track file references when using @ completion (but not paste placeholders)
-			if e.currentCompletion != nil && e.currentCompletion.Trigger() == "@" && !strings.HasPrefix(msg.Value, "@paste-") {
-				e.addFileAttachment(msg.Value)
-			}
-			// Clear history suggestion after selecting a completion
 			e.clearSuggestion()
 			return e, nil
 		}
@@ -357,32 +535,41 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			return e.handleClipboardPaste()
 		}
 
-		switch msg.String() {
-		// Handle send/newline keys:
-		// - Enter: submit current input (if textarea inserted a newline, submit previous buffer).
-		// - Shift+Enter: insert newline when keyboard enhancements are supported.
-		// - Ctrl+J: fallback to insert '\n' when keyboard enhancements are not supported.
+		keyStr := msg.String()
 
+		// Handle attachment-aware navigation
+		if keyStr == "left" || keyStr == "right" {
+			if e.handleAttachmentNavigation(keyStr) {
+				return e, nil
+			}
+		}
+
+		// Handle attachment-aware deletion
+		if keyStr == "backspace" || keyStr == "ctrl+h" || keyStr == "delete" || keyStr == "ctrl+d" {
+			if e.handleAttachmentDeletion(keyStr) {
+				e.refreshSuggestion()
+				return e, nil
+			}
+		}
+
+		switch keyStr {
 		case "enter", "shift+enter", "ctrl+j":
 			if !e.textarea.Focused() {
 				return e, nil
 			}
 
-			// Let textarea process the key - it handles newlines via InsertNewline binding
 			prev := e.textarea.Value()
 			e.textarea, _ = e.textarea.Update(msg)
 			value := e.textarea.Value()
 
-			// If textarea inserted a newline (shift+enter or ctrl+j), just refresh and return
-			if value != prev && msg.String() != "enter" {
+			if value != prev && keyStr != "enter" {
 				e.refreshSuggestion()
 				return e, nil
 			}
 
-			// If plain enter and textarea inserted a newline, submit the previous value
-			if value != prev && msg.String() == "enter" {
+			if value != prev && keyStr == "enter" {
 				if prev != "" && !e.working {
-					e.tryAddFileRef(e.pendingFileRef) // Add any pending @filepath before send
+					e.tryAddFileRef(e.pendingFileRef)
 					e.pendingFileRef = ""
 					attachments := e.collectAttachments(prev)
 					e.textarea.SetValue(prev)
@@ -395,10 +582,9 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 				return e, nil
 			}
 
-			// Normal enter submit: send current value
 			if value != "" && !e.working {
 				slog.Debug(value)
-				e.tryAddFileRef(e.pendingFileRef) // Add any pending @filepath before send
+				e.tryAddFileRef(e.pendingFileRef)
 				e.pendingFileRef = ""
 				attachments := e.collectAttachments(value)
 				e.textarea.Reset()
@@ -411,26 +597,22 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		case "ctrl+c":
 			return e, tea.Quit
 		case "up":
-			// Only navigate history if the user hasn't manually typed content
 			if !e.userTyped {
 				e.textarea.SetValue(e.hist.Previous())
 				e.textarea.MoveToEnd()
 				e.refreshSuggestion()
 				return e, nil
 			}
-			// Otherwise, let the textarea handle cursor navigation
 		case "down":
-			// Only navigate history if the user hasn't manually typed content
 			if !e.userTyped {
 				e.textarea.SetValue(e.hist.Next())
 				e.textarea.MoveToEnd()
 				e.refreshSuggestion()
 				return e, nil
 			}
-			// Otherwise, let the textarea handle cursor navigation
 		default:
 			for _, completion := range e.completions {
-				if msg.String() == completion.Trigger() {
+				if keyStr == completion.Trigger() {
 					if completion.RequiresEmptyEditor() && e.textarea.Value() != "" {
 						continue
 					}
@@ -445,31 +627,24 @@ func (e *editor) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	e.textarea, cmd = e.textarea.Update(msg)
 	cmds = append(cmds, cmd)
 
-	// If the value changed due to user input (not history navigation), mark as user typed
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		// Check if content changed and it wasn't a history navigation key
 		if e.textarea.Value() != prevValue && keyMsg.String() != "up" && keyMsg.String() != "down" {
 			e.userTyped = true
 		}
 
-		// Also check if textarea became empty - reset userTyped flag
 		if e.textarea.Value() == "" {
 			e.userTyped = false
 		}
 
 		currentWord := e.textarea.Word()
 
-		// Track manual @filepath refs - only runs when we're in/leaving an @ word
 		if e.pendingFileRef != "" && currentWord != e.pendingFileRef {
-			// Left the @ word - try to add it as file ref
 			e.tryAddFileRef(e.pendingFileRef)
 			e.pendingFileRef = ""
 		}
 		if e.pendingFileRef == "" && strings.HasPrefix(currentWord, "@") && len(currentWord) > 1 {
-			// Entered an @ word - start tracking
 			e.pendingFileRef = currentWord
 		} else if e.pendingFileRef != "" && strings.HasPrefix(currentWord, "@") {
-			// Still in @ word but it changed (user typing more) - update tracking
 			e.pendingFileRef = currentWord
 		}
 
@@ -500,8 +675,6 @@ func (e *editor) handleClipboardPaste() (layout.Model, tea.Cmd) {
 		return e, nil
 	}
 
-	// handlePaste returns true if content was buffered to disk (large paste),
-	// false if it's small enough for inline insertion.
 	if !e.handlePaste(content) {
 		e.textarea.InsertString(content)
 	}
@@ -512,7 +685,6 @@ func (e *editor) startCompletion(c completions.Completion) tea.Cmd {
 	e.currentCompletion = c
 	items := c.Items()
 
-	// Prepend paste placeholders for @ trigger so users can easily reference them
 	if c.Trigger() == "@" {
 		pasteItems := e.getPasteCompletionItems()
 		if len(pasteItems) > 0 {
@@ -525,12 +697,11 @@ func (e *editor) startCompletion(c completions.Completion) tea.Cmd {
 	})
 }
 
-// getPasteCompletionItems returns completion items for paste attachments only.
 func (e *editor) getPasteCompletionItems() []completion.Item {
 	var items []completion.Item
 	for _, att := range e.attachments {
 		if !att.isTemp {
-			continue // Only show pastes, not file refs
+			continue
 		}
 		name := strings.TrimPrefix(att.placeholder, "@")
 		items = append(items, completion.Item{
@@ -543,21 +714,40 @@ func (e *editor) getPasteCompletionItems() []completion.Item {
 	return items
 }
 
-// View renders the component
+// View renders the component with highlighted attachments
 func (e *editor) View() string {
 	view := e.textarea.View()
+
+	// Apply attachment highlighting
+	view = e.applyAttachmentHighlighting(view)
 
 	if e.hasSuggestion && e.suggestion != "" {
 		view = e.applySuggestionOverlay(view)
 	}
 
-	bannerView := e.banner.View()
-	if bannerView != "" {
-		// Banner is shown - no extra top padding needed
-		view = lipgloss.JoinVertical(lipgloss.Left, bannerView, view)
+	return styles.EditorStyle.Render(view)
+}
+
+// applyAttachmentHighlighting replaces attachment placeholders with styled versions in the view.
+// This handles the case where the cursor might be inside an attachment by working on plain text.
+func (e *editor) applyAttachmentHighlighting(view string) string {
+	if len(e.attachments) == 0 {
+		return view
 	}
 
-	return styles.EditorStyle.Render(view)
+	// The view contains ANSI codes for cursor positioning etc.
+	// We need to replace attachments carefully.
+	// The textarea renders the value with the cursor embedded in it.
+	// We'll replace each attachment placeholder with a styled version,
+	// but we need to handle the case where cursor codes might be embedded.
+
+	for _, att := range e.attachments {
+		// Simple replacement works when cursor is not inside the attachment
+		styled := styles.HighlightStyle.Render(att.placeholder)
+		view = strings.ReplaceAll(view, att.placeholder, styled)
+	}
+
+	return view
 }
 
 // SetSize sets the dimensions of the component
@@ -566,30 +756,14 @@ func (e *editor) SetSize(width, height int) tea.Cmd {
 	e.height = max(height, 1)
 
 	e.textarea.SetWidth(max(width, 10))
-	e.updateTextareaHeight()
+	e.textarea.SetHeight(e.height)
 
 	return nil
 }
 
-func (e *editor) updateTextareaHeight() {
-	available := e.height
-	if e.banner != nil {
-		available -= e.banner.Height()
-	}
-
-	if available < 1 {
-		available = 1
-	}
-
-	e.textarea.SetHeight(available)
-}
-
-// BannerHeight returns the current height of the attachment banner (0 if hidden)
+// BannerHeight returns 0 since we no longer use the banner.
 func (e *editor) BannerHeight() int {
-	if e.banner == nil {
-		return 0
-	}
-	return e.banner.Height()
+	return 0
 }
 
 // GetSize returns the rendered dimensions including EditorStyle padding.
@@ -598,34 +772,8 @@ func (e *editor) GetSize() (width, height int) {
 		e.height + styles.EditorStyle.GetVerticalFrameSize()
 }
 
-// AttachmentAt returns preview information for the attachment rendered at the given X position.
+// AttachmentAt is no longer used since we don't have a banner.
 func (e *editor) AttachmentAt(x int) (AttachmentPreview, bool) {
-	if e.banner == nil || e.banner.Height() == 0 {
-		return AttachmentPreview{}, false
-	}
-
-	item, ok := e.banner.HitTest(x)
-	if !ok {
-		return AttachmentPreview{}, false
-	}
-
-	for _, att := range e.attachments {
-		if att.placeholder != item.placeholder {
-			continue
-		}
-
-		data, err := os.ReadFile(att.path)
-		if err != nil {
-			slog.Warn("failed to read attachment preview", "path", att.path, "error", err)
-			return AttachmentPreview{}, false
-		}
-
-		return AttachmentPreview{
-			Title:   item.label,
-			Content: string(data),
-		}, true
-	}
-
 	return AttachmentPreview{}, false
 }
 
@@ -645,7 +793,7 @@ func (e *editor) SetWorking(working bool) tea.Cmd {
 	return nil
 }
 
-// Value returns the current editor content
+// Value returns the current editor content.
 func (e *editor) Value() string {
 	return e.textarea.Value()
 }
@@ -659,21 +807,18 @@ func (e *editor) SetValue(content string) {
 }
 
 // tryAddFileRef checks if word is a valid @filepath and adds it as attachment.
-// Called when cursor leaves a word to detect manually-typed file references.
 func (e *editor) tryAddFileRef(word string) {
-	// Must start with @ and look like a path (contains / or .)
 	if !strings.HasPrefix(word, "@") || len(word) < 2 {
 		return
 	}
 
-	// Don't track paste placeholders as file refs
 	if strings.HasPrefix(word, "@paste-") {
 		return
 	}
 
-	path := word[1:] // strip @
+	path := word[1:]
 	if !strings.ContainsAny(path, "/.") {
-		return // not a path-like reference (e.g., @username)
+		return
 	}
 
 	e.addFileAttachment(word)
@@ -683,7 +828,6 @@ func (e *editor) tryAddFileRef(word string) {
 func (e *editor) addFileAttachment(placeholder string) {
 	path := strings.TrimPrefix(placeholder, "@")
 
-	// Check if it's an existing file (not directory)
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return
@@ -705,8 +849,7 @@ func (e *editor) addFileAttachment(placeholder string) {
 	})
 }
 
-// collectAttachments returns a map of placeholder to file content for all attachments
-// referenced in content. Unreferenced attachments are cleaned up.
+// collectAttachments returns a map of placeholder to file content for all attachments.
 func (e *editor) collectAttachments(content string) map[string]string {
 	if len(e.attachments) == 0 {
 		return nil
@@ -752,13 +895,11 @@ func (e *editor) Cleanup() {
 }
 
 func (e *editor) handlePaste(content string) bool {
-	// Count lines (newlines + 1 for content without trailing newline)
 	lines := strings.Count(content, "\n") + 1
 	if strings.HasSuffix(content, "\n") {
-		lines-- // Don't count trailing newline as extra line
+		lines--
 	}
 
-	// Allow inline if within both limits
 	if lines <= maxInlinePasteLines && len(content) <= maxInlinePasteChars {
 		return false
 	}
@@ -767,8 +908,6 @@ func (e *editor) handlePaste(content string) bool {
 	att, err := createPasteAttachment(content, e.pasteCounter)
 	if err != nil {
 		slog.Warn("failed to buffer paste", "error", err)
-		// Still return true to prevent the large paste from falling through
-		// to textarea.Update(), which would block the UI for seconds.
 		return true
 	}
 
@@ -776,27 +915,6 @@ func (e *editor) handlePaste(content string) bool {
 	e.attachments = append(e.attachments, att)
 
 	return true
-}
-
-func (e *editor) updateAttachmentBanner() {
-	if e.banner == nil {
-		return
-	}
-
-	value := e.textarea.Value()
-	var items []bannerItem
-
-	for _, att := range e.attachments {
-		if strings.Contains(value, att.placeholder) {
-			items = append(items, bannerItem{
-				label:       att.label,
-				placeholder: att.placeholder,
-			})
-		}
-	}
-
-	e.banner.SetItems(items)
-	e.updateTextareaHeight()
 }
 
 func createPasteAttachment(content string, num int) (attachment, error) {
