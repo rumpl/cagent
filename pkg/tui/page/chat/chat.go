@@ -705,18 +705,6 @@ func (p *chatPage) routeMouseEvent(msg tea.Msg, y int) tea.Cmd {
 		return cmd
 	}
 
-	// Check for banner clicks to open attachment preview
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
-		editorTopPadding := styles.EditorStyle.GetPaddingTop()
-		localY := y - editorTop - editorTopPadding
-		if localY >= 0 && localY < p.editor.BannerHeight() {
-			localX := max(0, click.X-styles.AppPaddingLeft)
-			if preview, ok := p.editor.AttachmentAt(localX); ok {
-				return p.openAttachmentPreview(preview)
-			}
-		}
-	}
-
 	model, cmd := p.editor.Update(msg)
 	p.editor = model.(editor.Editor)
 	return cmd
@@ -774,12 +762,6 @@ func (p *chatPage) renderResizeHandle(width int) string {
 	}
 	// Simple thin line when not hovered
 	return styles.ResizeHandleStyle.Render(strings.Repeat("─", width))
-}
-
-func (p *chatPage) openAttachmentPreview(preview editor.AttachmentPreview) tea.Cmd {
-	return core.CmdHandler(dialog.OpenDialogMsg{
-		Model: dialog.NewAttachmentPreviewDialog(preview),
-	})
 }
 
 // See: https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC

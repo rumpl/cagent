@@ -47,12 +47,6 @@ type attachment struct {
 	isTemp      bool // True for paste temp files that need cleanup
 }
 
-// AttachmentPreview describes an attachment and its contents for dialog display.
-type AttachmentPreview struct {
-	Title   string
-	Content string
-}
-
 // SendMsg represents a message to send
 type SendMsg struct {
 	Content     string            // Full content sent to the agent (with file contents expanded)
@@ -72,8 +66,6 @@ type Editor interface {
 	SetValue(content string)
 	Cleanup()
 	GetSize() (width, height int)
-	BannerHeight() int
-	AttachmentAt(x int) (AttachmentPreview, bool)
 }
 
 // editor implements [Editor]
@@ -307,7 +299,7 @@ func (e *editor) findAttachmentAtCursor() (int, int, bool) {
 
 // getCursorBytePos returns the cursor position in bytes.
 func (e *editor) getCursorBytePos() int {
-	info := e.textarea.LineInfo()
+	columnOffset := e.textarea.LineInfo().ColumnOffset
 	value := e.textarea.Value()
 	lines := strings.Split(value, "\n")
 
@@ -320,7 +312,7 @@ func (e *editor) getCursorBytePos() int {
 	if e.textarea.Line() < len(lines) {
 		line := lines[e.textarea.Line()]
 		runes := []rune(line)
-		for i := 0; i < info.ColumnOffset && i < len(runes); i++ {
+		for i := 0; i < columnOffset && i < len(runes); i++ {
 			pos += len(string(runes[i]))
 		}
 	}
@@ -371,44 +363,27 @@ func (e *editor) handleAttachmentDeletion(keyStr string) bool {
 
 	isBackspace := keyStr == "backspace" || keyStr == "ctrl+h"
 	isDelete := keyStr == "delete" || keyStr == "ctrl+d"
-
-	if isBackspace {
-		// Check if cursor is inside or right after an attachment
-		for i := range e.attachments {
-			att := &e.attachments[i]
-			idx := strings.Index(value, att.placeholder)
-			if idx == -1 {
-				continue
-			}
-			end := idx + len(att.placeholder)
-			// If cursor is inside or right after the attachment
-			if cursorPos > idx && cursorPos <= end {
-				newValue := value[:idx] + value[end:]
-				e.textarea.SetValue(newValue)
-				e.setCursorToBytePos(idx)
-				e.removeAttachment(i)
-				return true
-			}
-		}
+	if !isBackspace && !isDelete {
+		return false
 	}
 
-	if isDelete {
-		// Check if cursor is at or inside an attachment
-		for i := range e.attachments {
-			att := &e.attachments[i]
-			idx := strings.Index(value, att.placeholder)
-			if idx == -1 {
-				continue
-			}
-			end := idx + len(att.placeholder)
-			// If cursor is at start or inside the attachment
-			if cursorPos >= idx && cursorPos < end {
-				newValue := value[:idx] + value[end:]
-				e.textarea.SetValue(newValue)
-				e.setCursorToBytePos(idx)
-				e.removeAttachment(i)
-				return true
-			}
+	for i := range e.attachments {
+		att := &e.attachments[i]
+		idx := strings.Index(value, att.placeholder)
+		if idx == -1 {
+			continue
+		}
+		end := idx + len(att.placeholder)
+
+		// Backspace: cursor inside or right after; Delete: cursor at start or inside
+		inRange := (isBackspace && cursorPos > idx && cursorPos <= end) ||
+			(isDelete && cursorPos >= idx && cursorPos < end)
+		if inRange {
+			newValue := value[:idx] + value[end:]
+			e.textarea.SetValue(newValue)
+			e.setCursorToBytePos(idx)
+			e.removeAttachment(i)
+			return true
 		}
 	}
 
@@ -718,7 +693,6 @@ func (e *editor) getPasteCompletionItems() []completion.Item {
 func (e *editor) View() string {
 	view := e.textarea.View()
 
-	// Apply attachment highlighting
 	view = e.applyAttachmentHighlighting(view)
 
 	if e.hasSuggestion && e.suggestion != "" {
@@ -728,21 +702,12 @@ func (e *editor) View() string {
 	return styles.EditorStyle.Render(view)
 }
 
-// applyAttachmentHighlighting replaces attachment placeholders with styled versions in the view.
-// This handles the case where the cursor might be inside an attachment by working on plain text.
 func (e *editor) applyAttachmentHighlighting(view string) string {
 	if len(e.attachments) == 0 {
 		return view
 	}
 
-	// The view contains ANSI codes for cursor positioning etc.
-	// We need to replace attachments carefully.
-	// The textarea renders the value with the cursor embedded in it.
-	// We'll replace each attachment placeholder with a styled version,
-	// but we need to handle the case where cursor codes might be embedded.
-
 	for _, att := range e.attachments {
-		// Simple replacement works when cursor is not inside the attachment
 		styled := styles.HighlightStyle.Render(att.placeholder)
 		view = strings.ReplaceAll(view, att.placeholder, styled)
 	}
@@ -761,20 +726,10 @@ func (e *editor) SetSize(width, height int) tea.Cmd {
 	return nil
 }
 
-// BannerHeight returns 0 since we no longer use the banner.
-func (e *editor) BannerHeight() int {
-	return 0
-}
-
 // GetSize returns the rendered dimensions including EditorStyle padding.
 func (e *editor) GetSize() (width, height int) {
 	return e.width + styles.EditorStyle.GetHorizontalFrameSize(),
 		e.height + styles.EditorStyle.GetVerticalFrameSize()
-}
-
-// AttachmentAt is no longer used since we don't have a banner.
-func (e *editor) AttachmentAt(x int) (AttachmentPreview, bool) {
-	return AttachmentPreview{}, false
 }
 
 // Focus gives focus to the component
