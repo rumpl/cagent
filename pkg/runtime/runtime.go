@@ -23,8 +23,6 @@ import (
 	"github.com/docker/cagent/pkg/chat"
 	"github.com/docker/cagent/pkg/config/types"
 	"github.com/docker/cagent/pkg/hooks"
-	"github.com/docker/cagent/pkg/model/provider"
-	"github.com/docker/cagent/pkg/model/provider/options"
 	"github.com/docker/cagent/pkg/modelsdev"
 	"github.com/docker/cagent/pkg/permissions"
 	"github.com/docker/cagent/pkg/rag"
@@ -145,6 +143,7 @@ type LocalRuntime struct {
 	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
 	ragInitialized              atomic.Bool
 	titleGen                    *titleGenerator
+	sessionCompactor            *sessionCompactor
 	sessionStore                session.Store
 	workingDir                  string   // Working directory for hooks execution
 	env                         []string // Environment variables for hooks execution
@@ -247,6 +246,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	}
 
 	r.titleGen = newTitleGenerator(model)
+	r.sessionCompactor = newSessionCompactor(model, r.sessionStore)
 
 	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
 
@@ -1541,72 +1541,7 @@ func (r *LocalRuntime) handleHandoff(_ context.Context, _ *session.Session, tool
 // The additionalPrompt parameter allows users to provide additional instructions
 // for the summarization (e.g., "focus on code changes" or "include action items").
 func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event) {
-	slog.Debug("Generating summary for session", "session_id", sess.ID)
-
-	events <- SessionCompaction(sess.ID, "started", r.currentAgent)
-	defer func() {
-		events <- SessionCompaction(sess.ID, "completed", r.currentAgent)
-	}()
-
-	// Create conversation history for summarization
-	var conversationHistory strings.Builder
-	messages := sess.GetAllMessages()
-
-	// Check if session is empty
-	if len(messages) == 0 {
-		events <- &WarningEvent{Message: "Session is empty. Start a conversation before compacting."}
-		return
-	}
-	for i := range messages {
-		role := "Unknown"
-		switch messages[i].Message.Role {
-		case "user":
-			role = "User"
-		case "assistant":
-			role = "Assistant"
-		case "system":
-			continue // Skip system messages for summarization
-		}
-		fmt.Fprintf(&conversationHistory, "\n%s: %s", role, messages[i].Message.Content)
-	}
-
-	// Create a new session for summary generation
-	systemPrompt := "You are a helpful AI assistant that creates comprehensive summaries of conversations. You will be given a conversation history and asked to create a concise yet thorough summary that captures the key points, decisions made, and outcomes."
-	userPrompt := fmt.Sprintf("Based on the following conversation between a user and an AI assistant, create a comprehensive summary that captures:\n- The main topics discussed\n- Key information exchanged\n- Decisions made or conclusions reached\n- Important outcomes or results\n\nProvide a well-structured summary (2-4 paragraphs) that someone could read to understand what happened in this conversation. Return ONLY the summary text, nothing else.\n\nConversation history:%s\n\nGenerate a summary for this conversation:", conversationHistory.String())
-	if additionalPrompt != "" {
-		userPrompt += fmt.Sprintf("\n\nAdditional instructions from user: %s", additionalPrompt)
-	}
-	newModel := provider.CloneWithOptions(ctx, r.CurrentAgent().Model(), options.WithStructuredOutput(nil))
-	newTeam := team.New(
-		team.WithAgents(agent.New("root", systemPrompt, agent.WithModel(newModel))),
-	)
-
-	summarySession := session.New(session.WithSystemMessage(systemPrompt))
-	summarySession.AddMessage(session.UserMessage(userPrompt))
-	summarySession.Title = "Generating summary..."
-
-	summaryRuntime, err := New(newTeam, WithSessionCompaction(false))
-	if err != nil {
-		slog.Error("Failed to create summary generator runtime", "error", err)
-		return
-	}
-
-	// Run the summary generation
-	_, err = summaryRuntime.Run(ctx, summarySession)
-	if err != nil {
-		slog.Error("Failed to generate session summary", "session_id", sess.ID, "error", err)
-		return
-	}
-
-	summary := summarySession.GetLastAssistantMessageContent()
-	if summary == "" {
-		return
-	}
-	// Add the summary to the session as a summary item
-	sess.Messages = append(sess.Messages, session.Item{Summary: summary})
-	_ = r.sessionStore.UpdateSession(ctx, sess)
-	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
-	events <- SessionSummary(sess.ID, summary, r.currentAgent)
+	r.sessionCompactor.Compact(ctx, sess, additionalPrompt, events, r.currentAgent)
 }
 
 // setElicitationEventsChannel sets the current events channel for elicitation requests
