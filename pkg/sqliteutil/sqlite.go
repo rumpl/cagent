@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"modernc.org/sqlite"
+	// _ "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 

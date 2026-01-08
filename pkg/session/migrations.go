@@ -62,48 +62,43 @@ func (m *MigrationManager) RunPendingMigrations(ctx context.Context) error {
 	migrations := getAllMigrations()
 
 	for _, migration := range migrations {
-		applied, err := m.isMigrationApplied(ctx, migration.Name)
+		err := m.applyMigration(ctx, &migration)
 		if err != nil {
-			return fmt.Errorf("failed to check if migration %s is applied: %w", migration.Name, err)
-		}
-
-		if !applied {
-			err = m.applyMigration(ctx, &migration)
-			if err != nil {
-				return fmt.Errorf("failed to apply migration %s: %w", migration.Name, err)
-			}
+			return fmt.Errorf("failed to apply migration %s: %w", migration.Name, err)
 		}
 	}
 
 	return nil
 }
 
-// isMigrationApplied checks if a migration has already been applied
-func (m *MigrationManager) isMigrationApplied(ctx context.Context, name string) (bool, error) {
-	var count int
-	err := m.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", name).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// applyMigration applies a single migration
+// applyMigration applies a single migration within an IMMEDIATE transaction.
+// IMMEDIATE acquires a write lock at the start, preventing concurrent migrations.
 func (m *MigrationManager) applyMigration(ctx context.Context, migration *Migration) error {
-	tx, err := m.db.BeginTx(ctx, nil)
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return err
 	}
 	defer func() {
-		// TODO: handle error
 		_ = tx.Rollback()
 	}()
 
+	// Check if migration is already applied (within the transaction)
+	var count int
+	err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", migration.Name).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check migration status: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	// Run the migration SQL
 	_, err = tx.ExecContext(ctx, migration.UpSQL)
 	if err != nil {
 		return fmt.Errorf("failed to execute migration SQL: %w", err)
 	}
 
+	// Record the migration
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO migrations (id, name, description, applied_at) VALUES (?, ?, ?, ?)",
 		migration.ID, migration.Name, migration.Description, time.Now().Format(time.RFC3339))
@@ -111,12 +106,7 @@ func (m *MigrationManager) applyMigration(ctx context.Context, migration *Migrat
 		return fmt.Errorf("failed to record migration: %w", err)
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("failed to commit migration transaction: %w", err)
-	}
-
-	return nil
+	return tx.Commit()
 }
 
 // GetAppliedMigrations returns a list of applied migrations
