@@ -18,6 +18,7 @@ import (
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/httpclient"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 	"github.com/docker/cagent/pkg/model/provider/base"
 	"github.com/docker/cagent/pkg/model/provider/options"
 	"github.com/docker/cagent/pkg/tools"
@@ -27,7 +28,7 @@ import (
 // It holds the anthropic client and model config
 type Client struct {
 	base.Config
-	clientFn func(context.Context) (anthropic.Client, error)
+	auth auth.Provider
 }
 
 // adjustMaxTokensForThinking checks if max_tokens needs adjustment for thinking_budget.
@@ -93,7 +94,7 @@ func (c *Client) interleavedThinkingEnabled() bool {
 }
 
 // NewClient creates a new Anthropic client from the provided configuration
-func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (*Client, error) {
+func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, authProvider auth.Provider, opts ...options.Opt) (*Client, error) {
 	if cfg == nil {
 		slog.Error("Anthropic client creation failed", "error", "model configuration is required")
 		return nil, errors.New("model configuration is required")
@@ -116,65 +117,15 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		}
 	}
 
-	var clientFn func(context.Context) (anthropic.Client, error)
-	if gateway := globalOptions.Gateway(); gateway == "" {
-		authToken, _ := env.Get(ctx, "ANTHROPIC_API_KEY")
-		if authToken == "" {
-			return nil, errors.New("ANTHROPIC_API_KEY environment variable is required")
-		}
+	if authProvider == nil {
+		return nil, errors.New("auth provider is required")
+	}
 
-		slog.Debug("Anthropic API key found, creating client")
-		requestOptions := []option.RequestOption{
-			option.WithAPIKey(authToken),
-			option.WithHTTPClient(httpclient.NewHTTPClient()),
-		}
-		if cfg.BaseURL != "" {
-			requestOptions = append(requestOptions, option.WithBaseURL(cfg.BaseURL))
-		}
-		client := anthropic.NewClient(requestOptions...)
-		clientFn = func(context.Context) (anthropic.Client, error) {
-			return client, nil
-		}
-	} else {
-		// Fail fast if Docker Desktop's auth token isn't available
-		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
-			slog.Error("Anthropic client creation failed", "error", "failed to get Docker Desktop's authentication token")
-			return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
-		}
-
-		// When using a Gateway, tokens are short-lived.
-		clientFn = func(ctx context.Context) (anthropic.Client, error) {
-			// Query a fresh auth token each time the client is used
-			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-			if authToken == "" {
-				return anthropic.Client{}, errors.New("failed to get Docker Desktop token for Gateway")
-			}
-
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return anthropic.Client{}, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/", url.Scheme, url.Host, url.Path)
-
-			// Configure a custom HTTP client to inject headers and query params used by the Gateway.
-			httpOptions := []httpclient.Opt{
-				httpclient.WithProxiedBaseURL(cmp.Or(cfg.BaseURL, "https://api.anthropic.com/")),
-				httpclient.WithProvider(cfg.Provider),
-				httpclient.WithModel(cfg.Model),
-				httpclient.WithQuery(url.Query()),
-			}
-			if globalOptions.GeneratingTitle() {
-				httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
-			}
-
-			client := anthropic.NewClient(
-				option.WithAuthToken(authToken),
-				option.WithAPIKey(authToken),
-				option.WithBaseURL(baseURL),
-				option.WithHTTPClient(httpclient.NewHTTPClient(httpOptions...)),
-			)
-
-			return client, nil
+	// Fail fast on startup for gateway mode.
+	if gateway := globalOptions.Gateway(); gateway != "" {
+		if _, err := authProvider.Token(ctx, env); err != nil {
+			slog.Error("Anthropic client creation failed", "error", "failed to get authentication token")
+			return nil, err
 		}
 	}
 
@@ -186,8 +137,55 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn: clientFn,
+		auth: authProvider,
 	}, nil
+}
+
+func (c *Client) newClient(ctx context.Context) (anthropic.Client, error) {
+	gateway := c.ModelOptions.Gateway()
+	if gateway == "" {
+		authToken, err := c.auth.Token(ctx, c.Env)
+		if err != nil {
+			return anthropic.Client{}, err
+		}
+
+		requestOptions := []option.RequestOption{
+			option.WithAPIKey(authToken),
+			option.WithHTTPClient(httpclient.NewHTTPClient()),
+		}
+		if c.ModelConfig.BaseURL != "" {
+			requestOptions = append(requestOptions, option.WithBaseURL(c.ModelConfig.BaseURL))
+		}
+		return anthropic.NewClient(requestOptions...), nil
+	}
+
+	authToken, err := c.auth.Token(ctx, c.Env)
+	if err != nil {
+		return anthropic.Client{}, err
+	}
+
+	u, err := url.Parse(gateway)
+	if err != nil {
+		return anthropic.Client{}, fmt.Errorf("invalid gateway URL: %w", err)
+	}
+	baseURL := fmt.Sprintf("%s://%s%s/", u.Scheme, u.Host, u.Path)
+
+	httpOptions := []httpclient.Opt{
+		httpclient.WithProxiedBaseURL(cmp.Or(c.ModelConfig.BaseURL, "https://api.anthropic.com/")),
+		httpclient.WithProvider(c.ModelConfig.Provider),
+		httpclient.WithModel(c.ModelConfig.Model),
+		httpclient.WithQuery(u.Query()),
+	}
+	if c.ModelOptions.GeneratingTitle() {
+		httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
+	}
+
+	return anthropic.NewClient(
+		option.WithAuthToken(authToken),
+		option.WithAPIKey(authToken),
+		option.WithBaseURL(baseURL),
+		option.WithHTTPClient(httpclient.NewHTTPClient(httpOptions...)),
+	), nil
 }
 
 // CreateChatCompletionStream creates a streaming chat completion request
@@ -212,7 +210,7 @@ func (c *Client) CreateChatCompletionStream(
 		return nil, err
 	}
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create Anthropic client", "error", err)
 		return nil, err

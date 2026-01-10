@@ -10,6 +10,7 @@ import (
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/model/provider/anthropic"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 	"github.com/docker/cagent/pkg/model/provider/base"
 	"github.com/docker/cagent/pkg/model/provider/bedrock"
 	"github.com/docker/cagent/pkg/model/provider/dmr"
@@ -168,6 +169,16 @@ func createDirectProvider(ctx context.Context, cfg *latest.ModelConfig, env envi
 	// Apply defaults from custom providers (from config) or built-in aliases
 	enhancedCfg := applyProviderDefaults(cfg, globalOptions.Providers())
 
+	// Fail fast when token_key is explicitly set for custom providers.
+	// When running through a models gateway, defer checks to runtime (e2e uses a gateway proxy).
+	if enhancedCfg.TokenKey != "" && globalOptions.Gateway() == "" {
+		if _, isCustom := globalOptions.Providers()[enhancedCfg.Provider]; isCustom {
+			if _, err := auth.NewEnvTokenProvider(enhancedCfg.TokenKey).Token(ctx, env); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	// Resolve the provider type with priority:
 	// 1. cfg.ProviderOpts["api_type"] (from custom provider or model override)
 	// 2. built-in alias APIType
@@ -176,13 +187,13 @@ func createDirectProvider(ctx context.Context, cfg *latest.ModelConfig, env envi
 
 	switch providerType {
 	case "openai", "openai_chatcompletions", "openai_responses":
-		return openai.NewClient(ctx, enhancedCfg, env, opts...)
+		return openai.NewClient(ctx, enhancedCfg, env, auth.ProviderFor(ctx, enhancedCfg, env, globalOptions), opts...)
 
 	case "anthropic":
-		return anthropic.NewClient(ctx, enhancedCfg, env, opts...)
+		return anthropic.NewClient(ctx, enhancedCfg, env, auth.ProviderFor(ctx, enhancedCfg, env, globalOptions), opts...)
 
 	case "google":
-		return gemini.NewClient(ctx, enhancedCfg, env, opts...)
+		return gemini.NewClient(ctx, enhancedCfg, env, auth.ProviderFor(ctx, enhancedCfg, env, globalOptions), opts...)
 
 	case "dmr":
 		return dmr.NewClient(ctx, enhancedCfg, opts...)
@@ -201,6 +212,7 @@ func createDirectProvider(ctx context.Context, cfg *latest.ModelConfig, env envi
 // 1. cfg.ProviderOpts["api_type"] (from custom provider or model-level override)
 // 2. built-in alias APIType (e.g., "mistral" -> "openai")
 // 3. provider name itself (e.g., "openai", "anthropic")
+
 func resolveProviderTypeFromConfig(cfg *latest.ModelConfig) string {
 	// Check for api_type in ProviderOpts (set by custom providers or model override)
 	if cfg.ProviderOpts != nil {

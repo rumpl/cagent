@@ -288,7 +288,7 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []types.Doc
 		"num_documents", len(documents),
 		"has_criteria", criteria != "")
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create Anthropic client for reranking", "error", err)
 		return nil, err

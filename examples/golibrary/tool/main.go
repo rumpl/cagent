@@ -11,7 +11,9 @@ import (
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 	"github.com/docker/cagent/pkg/model/provider/openai"
+	"github.com/docker/cagent/pkg/model/provider/options"
 	"github.com/docker/cagent/pkg/runtime"
 	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/team"
@@ -44,14 +46,13 @@ func addNumbers(_ context.Context, toolCall tools.ToolCall) (*tools.ToolCallResu
 }
 
 func run(ctx context.Context) error {
-	llm, err := openai.NewClient(
-		ctx,
-		&latest.ModelConfig{
-			Provider: "openai",
-			Model:    "gpt-4o",
-		},
-		environment.NewDefaultProvider(),
-	)
+	cfg := &latest.ModelConfig{
+		Provider: "openai",
+		Model:    "gpt-4o",
+		TokenKey: "OPENAI_API_KEY",
+	}
+	env := environment.NewDefaultProvider()
+	llm, err := openai.NewClient(ctx, cfg, env, auth.ProviderFor(ctx, cfg, env, options.ModelOptions{}))
 	if err != nil {
 		return err
 	}

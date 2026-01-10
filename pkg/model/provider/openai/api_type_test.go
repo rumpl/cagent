@@ -14,6 +14,7 @@ import (
 	"github.com/docker/cagent/pkg/chat"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 )
 
 // mockEnvProvider is a simple env provider for testing
@@ -187,7 +188,7 @@ func TestCustomProvider_WithTokenKey(t *testing.T) {
 		"MY_CUSTOM_TOKEN": "secret-token-123",
 	})
 
-	client, err := NewClient(t.Context(), cfg, env)
+	client, err := NewClient(t.Context(), cfg, env, auth.NewEnvTokenProvider("MY_CUSTOM_TOKEN"))
 	require.NoError(t, err)
 
 	stream, err := client.CreateChatCompletionStream(t.Context(), []chat.Message{{Role: chat.MessageRoleUser, Content: "hi"}}, nil)
@@ -236,7 +237,7 @@ func TestCustomProvider_WithoutTokenKey(t *testing.T) {
 
 	env := newMockEnvProvider(map[string]string{})
 
-	client, err := NewClient(t.Context(), cfg, env)
+	client, err := NewClient(t.Context(), cfg, env, auth.NewNoopProvider())
 	require.NoError(t, err)
 
 	stream, err := client.CreateChatCompletionStream(t.Context(), []chat.Message{{Role: chat.MessageRoleUser, Content: "hi"}}, nil)

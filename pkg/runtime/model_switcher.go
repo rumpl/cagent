@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/docker/cagent/pkg/config"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/model/provider"
@@ -279,7 +280,7 @@ func (r *LocalRuntime) AvailableModels(_ context.Context) []ModelChoice {
 // createProviderFromConfig creates a provider from a ModelConfig using the runtime's configuration.
 func (r *LocalRuntime) createProviderFromConfig(ctx context.Context, cfg *latest.ModelConfig) (provider.Provider, error) {
 	opts := []options.Opt{
-		options.WithGateway(r.modelSwitcherCfg.ModelsGateway),
+		options.WithGateway(config.ResolveModelsGateway(&latest.Config{Providers: r.modelSwitcherCfg.Providers}, r.modelSwitcherCfg.ModelsGateway)),
 		options.WithProviders(r.modelSwitcherCfg.Providers),
 	}
 

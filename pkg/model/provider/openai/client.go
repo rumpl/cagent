@@ -20,6 +20,7 @@ import (
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/httpclient"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 	"github.com/docker/cagent/pkg/model/provider/base"
 	"github.com/docker/cagent/pkg/model/provider/oaistream"
 	"github.com/docker/cagent/pkg/model/provider/options"
@@ -32,11 +33,11 @@ import (
 // It implements the provider.Provider interface
 type Client struct {
 	base.Config
-	clientFn func(context.Context) (*openai.Client, error)
+	auth auth.Provider
 }
 
 // NewClient creates a new OpenAI client from the provided configuration
-func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (*Client, error) {
+func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, authProvider auth.Provider, opts ...options.Opt) (*Client, error) {
 	if cfg == nil {
 		slog.Error("OpenAI client creation failed", "error", "model configuration is required")
 		return nil, errors.New("model configuration is required")
@@ -47,91 +48,8 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		opt(&globalOptions)
 	}
 
-	var clientFn func(context.Context) (*openai.Client, error)
-	if gateway := globalOptions.Gateway(); gateway == "" {
-		var clientOptions []option.RequestOption
-
-		if cfg.TokenKey != "" {
-			// Explicit token_key configured - use that env var
-			authToken, _ := env.Get(ctx, cfg.TokenKey)
-			if authToken == "" {
-				return nil, fmt.Errorf("%s environment variable is required", cfg.TokenKey)
-			}
-			clientOptions = append(clientOptions, option.WithAPIKey(authToken))
-		} else if isCustomProvider(cfg) {
-			// Custom provider (has api_type in ProviderOpts) without token_key - no auth
-			slog.Debug("Custom provider with no token_key, sending requests without authentication",
-				"provider", cfg.Provider, "base_url", cfg.BaseURL)
-			clientOptions = append(clientOptions, option.WithAPIKey(""))
-		}
-		// Otherwise let the OpenAI SDK use its default behavior (OPENAI_API_KEY from env)
-
-		if cfg.Provider == "azure" {
-			// Azure configuration
-			if cfg.BaseURL != "" {
-				clientOptions = append(clientOptions, option.WithBaseURL(cfg.BaseURL))
-			}
-
-			// Azure API version from provider opts
-			if cfg.ProviderOpts != nil {
-				if apiVersion, exists := cfg.ProviderOpts["api_version"]; exists {
-					slog.Debug("Setting API version", "api_version", apiVersion)
-					if apiVersionStr, ok := apiVersion.(string); ok {
-						clientOptions = append(clientOptions, option.WithQueryAdd("api-version", apiVersionStr))
-					}
-				}
-			}
-		} else if cfg.BaseURL != "" {
-			clientOptions = append(clientOptions, option.WithBaseURL(cfg.BaseURL))
-		}
-
-		httpClient := httpclient.NewHTTPClient()
-		clientOptions = append(clientOptions, option.WithHTTPClient(httpClient))
-
-		client := openai.NewClient(clientOptions...)
-		clientFn = func(context.Context) (*openai.Client, error) {
-			return &client, nil
-		}
-	} else {
-		// Fail fast if Docker Desktop's auth token isn't available
-		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
-			slog.Error("OpenAI client creation failed", "error", "failed to get Docker Desktop's authentication token")
-			return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
-		}
-
-		// When using a Gateway, tokens are short-lived.
-		clientFn = func(ctx context.Context) (*openai.Client, error) {
-			// Query a fresh auth token each time the client is used
-			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-			if authToken == "" {
-				return nil, errors.New("failed to get Docker Desktop token for Gateway")
-			}
-
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return nil, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/v1/", url.Scheme, url.Host, url.Path)
-
-			// Configure a custom HTTP client to inject headers and query params used by the Gateway.
-			httpOptions := []httpclient.Opt{
-				httpclient.WithProxiedBaseURL(cmp.Or(cfg.BaseURL, "https://api.openai.com/v1")),
-				httpclient.WithProvider(cfg.Provider),
-				httpclient.WithModel(cfg.Model),
-				httpclient.WithQuery(url.Query()),
-			}
-			if globalOptions.GeneratingTitle() {
-				httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
-			}
-
-			client := openai.NewClient(
-				option.WithAPIKey(authToken),
-				option.WithBaseURL(baseURL),
-				option.WithHTTPClient(httpclient.NewHTTPClient(httpOptions...)),
-			)
-
-			return &client, nil
-		}
+	if authProvider == nil {
+		return nil, errors.New("auth provider is required")
 	}
 
 	slog.Debug("OpenAI client created successfully", "model", cfg.Model)
@@ -142,8 +60,83 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn: clientFn,
+		auth: authProvider,
 	}, nil
+}
+
+// convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
+// using the shared oaistream implementation.
+func (c *Client) newClient(ctx context.Context) (*openai.Client, error) {
+	gateway := c.ModelOptions.Gateway()
+	if gateway == "" {
+		var clientOptions []option.RequestOption
+
+		if c.ModelConfig.TokenKey != "" {
+			authToken, err := c.auth.Token(ctx, c.Env)
+			if err != nil {
+				return nil, err
+			}
+			clientOptions = append(clientOptions, option.WithAPIKey(authToken))
+		} else if isCustomProvider(&c.ModelConfig) {
+			// Custom provider (has api_type in ProviderOpts) without token_key - no auth
+			slog.Debug("Custom provider with no token_key, sending requests without authentication",
+				"provider", c.ModelConfig.Provider, "base_url", c.ModelConfig.BaseURL)
+			clientOptions = append(clientOptions, option.WithAPIKey(""))
+		}
+		// Otherwise let the OpenAI SDK use its default behavior (OPENAI_API_KEY from env)
+
+		if c.ModelConfig.Provider == "azure" {
+			if c.ModelConfig.BaseURL != "" {
+				clientOptions = append(clientOptions, option.WithBaseURL(c.ModelConfig.BaseURL))
+			}
+			if c.ModelConfig.ProviderOpts != nil {
+				if apiVersion, exists := c.ModelConfig.ProviderOpts["api_version"]; exists {
+					slog.Debug("Setting API version", "api_version", apiVersion)
+					if apiVersionStr, ok := apiVersion.(string); ok {
+						clientOptions = append(clientOptions, option.WithQueryAdd("api-version", apiVersionStr))
+					}
+				}
+			}
+		} else if c.ModelConfig.BaseURL != "" {
+			clientOptions = append(clientOptions, option.WithBaseURL(c.ModelConfig.BaseURL))
+		}
+
+		clientOptions = append(clientOptions, option.WithHTTPClient(httpclient.NewHTTPClient()))
+		client := openai.NewClient(clientOptions...)
+		return &client, nil
+	}
+
+	authToken, err := c.auth.Token(ctx, c.Env)
+	if err != nil {
+		// Some call sites (e2e with proxy gateway) don't need a real token.
+		if c.ModelOptions.Gateway() == "" {
+			return nil, err
+		}
+		authToken = ""
+	}
+
+	u, err := url.Parse(gateway)
+	if err != nil {
+		return nil, fmt.Errorf("invalid gateway URL: %w", err)
+	}
+	baseURL := fmt.Sprintf("%s://%s%s/v1/", u.Scheme, u.Host, u.Path)
+
+	httpOptions := []httpclient.Opt{
+		httpclient.WithProxiedBaseURL(cmp.Or(c.ModelConfig.BaseURL, "https://api.openai.com/v1")),
+		httpclient.WithProvider(c.ModelConfig.Provider),
+		httpclient.WithModel(c.ModelConfig.Model),
+		httpclient.WithQuery(u.Query()),
+	}
+	if c.ModelOptions.GeneratingTitle() {
+		httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
+	}
+
+	client := openai.NewClient(
+		option.WithAPIKey(authToken),
+		option.WithBaseURL(baseURL),
+		option.WithHTTPClient(httpclient.NewHTTPClient(httpOptions...)),
+	)
+	return &client, nil
 }
 
 // convertMessages converts chat.Message to openai.ChatCompletionMessageParamUnion
@@ -280,7 +273,7 @@ func (c *Client) CreateChatCompletionStream(
 		slog.Error("Failed to marshal OpenAI request to JSON", "error", err)
 	}
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create OpenAI client", "error", err)
 		return nil, err
@@ -304,7 +297,7 @@ func (c *Client) CreateResponseStream(
 		return nil, errors.New("at least one message is required")
 	}
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create OpenAI client", "error", err)
 		return nil, err
@@ -560,7 +553,7 @@ func (c *Client) CreateBatchEmbedding(ctx context.Context, texts []string) (*bas
 
 	slog.Debug("Creating OpenAI batch embeddings", "model", c.ModelConfig.Model, "batch_size", len(texts))
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create OpenAI client for batch embedding", "error", err)
 		return nil, err
@@ -628,7 +621,7 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []types.Doc
 		"num_documents", len(documents),
 		"has_criteria", criteria != "")
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create OpenAI client for reranking", "error", err)
 		return nil, err

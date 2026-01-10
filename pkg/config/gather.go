@@ -21,7 +21,13 @@ func gatherMissingEnvVars(ctx context.Context, cfg *latest.Config, modelsGateway
 	requiredEnv := map[string]bool{}
 
 	// Models
-	if modelsGateway == "" {
+	// When a models gateway is configured, requests are routed through the gateway and
+	// provider-specific API keys (OPENAI_API_KEY, MISTRAL_API_KEY, etc.) are not required.
+	//
+	// In e2e we don't set RuntimeConfig.ModelsGateway, but we do inject a provider config
+	// entry named "gateway" with a base_url pointing at the proxy.
+	hasGatewayProvider := cfg.Providers != nil && cfg.Providers["gateway"].BaseURL != ""
+	if modelsGateway == "" && !hasGatewayProvider {
 		names := GatherEnvVarsForModels(cfg)
 		for _, e := range names {
 			requiredEnv[e] = true

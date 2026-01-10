@@ -320,7 +320,11 @@ func TestCustomProvider_MissingAPIKey(t *testing.T) {
 
 	env := newMockEnvProvider(map[string]string{}) // Empty - key not set
 
-	_, err := New(t.Context(), modelCfg, env)
+	provider, err := New(t.Context(), modelCfg, env)
+	require.NoError(t, err)
+
+	// token_key enforcement happens when the provider actually needs to send a request.
+	_, err = provider.CreateChatCompletionStream(t.Context(), []chat.Message{{Role: chat.MessageRoleUser, Content: "Hi"}}, []tools.Tool{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MISSING_API_KEY", "Error should mention the missing env var")
 }

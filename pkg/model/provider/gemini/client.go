@@ -18,6 +18,7 @@ import (
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/httpclient"
+	"github.com/docker/cagent/pkg/model/provider/auth"
 	"github.com/docker/cagent/pkg/model/provider/base"
 	"github.com/docker/cagent/pkg/model/provider/options"
 	"github.com/docker/cagent/pkg/rag/prompts"
@@ -29,11 +30,11 @@ import (
 // It implements the provider.Provider interface
 type Client struct {
 	base.Config
-	clientFn func(context.Context) (*genai.Client, error)
+	auth auth.Provider
 }
 
 // NewClient creates a new Gemini client from the provided configuration
-func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (*Client, error) {
+func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, authProvider auth.Provider, opts ...options.Opt) (*Client, error) {
 	if cfg == nil {
 		return nil, errors.New("model configuration is required")
 	}
@@ -47,14 +48,10 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		opt(&globalOptions)
 	}
 
-	var clientFn func(context.Context) (*genai.Client, error)
 	if gateway := globalOptions.Gateway(); gateway == "" {
 		var (
-			httpClient *http.Client
-			backend    genai.Backend
-			apiKey     string
-			project    string
-			location   string
+			project  string
+			location string
 		)
 		// project/location take priority over API key, like in the genai client.
 		if cfg.ProviderOpts["project"] != nil || cfg.ProviderOpts["location"] != nil {
@@ -76,78 +73,18 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 				return nil, errors.New("location must be set")
 			}
 
-			backend = genai.BackendVertexAI
-			httpClient = nil // Use default client
+			// Using Vertex AI credentials from the environment (ADC)
 		} else {
-			apiKey, _ = env.Get(ctx, "GOOGLE_API_KEY")
-			if apiKey == "" {
-				return nil, errors.New("GOOGLE_API_KEY environment variable is required")
+			if authProvider == nil {
+				return nil, errors.New("auth provider is required")
+			}
+			if _, err := authProvider.Token(ctx, env); err != nil {
+				return nil, err
 			}
 
-			backend = genai.BackendGeminiAPI
-			httpClient = httpclient.NewHTTPClient()
 		}
 
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:     apiKey,
-			Project:    project,
-			Location:   location,
-			Backend:    backend,
-			HTTPClient: httpClient,
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: cfg.BaseURL,
-			},
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		clientFn = func(context.Context) (*genai.Client, error) {
-			return client, nil
-		}
-	} else {
-		// Fail fast if Docker Desktop's auth token isn't available
-		if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
-			slog.Error("Gemini client creation failed", "error", "failed to get Docker Desktop's authentication token")
-			return nil, errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
-		}
-
-		// When using a Gateway, tokens are short-lived.
-		clientFn = func(ctx context.Context) (*genai.Client, error) {
-			// Query a fresh auth token each time the client is used
-			authToken, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-			if authToken == "" {
-				return nil, errors.New("failed to get Docker Desktop token for Gateway")
-			}
-
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return nil, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/", url.Scheme, url.Host, url.Path)
-
-			httpOptions := []httpclient.Opt{
-				httpclient.WithProxiedBaseURL(cmp.Or(cfg.BaseURL, "https://generativelanguage.googleapis.com/")),
-				httpclient.WithProvider(cfg.Provider),
-				httpclient.WithModel(cfg.Model),
-				httpclient.WithQuery(url.Query()),
-			}
-			if globalOptions.GeneratingTitle() {
-				httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
-			}
-
-			return genai.NewClient(ctx, &genai.ClientConfig{
-				APIKey:     authToken,
-				Backend:    genai.BackendGeminiAPI,
-				HTTPClient: httpclient.NewHTTPClient(httpOptions...),
-				HTTPOptions: genai.HTTPOptions{
-					BaseURL: baseURL,
-					Headers: http.Header{
-						"Authorization": []string{"Bearer " + authToken},
-					},
-				},
-			})
-		}
+		// no-op: client created per request in newClient
 	}
 
 	slog.Debug("Gemini client created successfully", "model", cfg.Model)
@@ -158,8 +95,89 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			ModelOptions: globalOptions,
 			Env:          env,
 		},
-		clientFn: clientFn,
+		auth: authProvider,
 	}, nil
+}
+
+func (c *Client) newClient(ctx context.Context) (*genai.Client, error) {
+	gateway := c.ModelOptions.Gateway()
+	if gateway == "" {
+		// project/location take priority over API key, like in the genai client.
+		if c.ModelConfig.ProviderOpts["project"] != nil || c.ModelConfig.ProviderOpts["location"] != nil {
+			project, err := environment.Expand(ctx, providerOption(&c.ModelConfig, "project"), c.Env)
+			if err != nil {
+				return nil, fmt.Errorf("expanding project: %w", err)
+			}
+			if project == "" {
+				return nil, errors.New("project must be set")
+			}
+
+			location, err := environment.Expand(ctx, providerOption(&c.ModelConfig, "location"), c.Env)
+			if err != nil {
+				return nil, fmt.Errorf("expanding location: %w", err)
+			}
+			if location == "" {
+				return nil, errors.New("location must be set")
+			}
+
+			return genai.NewClient(ctx, &genai.ClientConfig{
+				Project:    project,
+				Location:   location,
+				Backend:    genai.BackendVertexAI,
+				HTTPClient: nil,
+				HTTPOptions: genai.HTTPOptions{
+					BaseURL: c.ModelConfig.BaseURL,
+				},
+			})
+		}
+
+		authToken, err := c.auth.Token(ctx, c.Env)
+		if err != nil {
+			return nil, err
+		}
+
+		return genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:     authToken,
+			Backend:    genai.BackendGeminiAPI,
+			HTTPClient: httpclient.NewHTTPClient(),
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: c.ModelConfig.BaseURL,
+			},
+		})
+	}
+
+	authToken, err := c.auth.Token(ctx, c.Env)
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse(gateway)
+	if err != nil {
+		return nil, fmt.Errorf("invalid gateway URL: %w", err)
+	}
+	baseURL := fmt.Sprintf("%s://%s%s/", u.Scheme, u.Host, u.Path)
+
+	httpOptions := []httpclient.Opt{
+		httpclient.WithProxiedBaseURL(cmp.Or(c.ModelConfig.BaseURL, "https://generativelanguage.googleapis.com/")),
+		httpclient.WithProvider(c.ModelConfig.Provider),
+		httpclient.WithModel(c.ModelConfig.Model),
+		httpclient.WithQuery(u.Query()),
+	}
+	if c.ModelOptions.GeneratingTitle() {
+		httpOptions = append(httpOptions, httpclient.WithHeader("X-Cagent-GeneratingTitle", "1"))
+	}
+
+	return genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:     authToken,
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: httpclient.NewHTTPClient(httpOptions...),
+		HTTPOptions: genai.HTTPOptions{
+			BaseURL: baseURL,
+			Headers: http.Header{
+				"Authorization": []string{"Bearer " + authToken},
+			},
+		},
+	})
 }
 
 // convertMessagesToGemini converts chat.Messages into Gemini Contents
@@ -421,7 +439,7 @@ func (c *Client) CreateChatCompletionStream(
 		slog.Debug("Message", "index", i, "role", content.Role)
 	}
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create Gemini client", "error", err)
 		return nil, err
@@ -449,7 +467,7 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []types.Doc
 		"num_documents", len(documents),
 		"has_criteria", criteria != "")
 
-	client, err := c.clientFn(ctx)
+	client, err := c.newClient(ctx)
 	if err != nil {
 		slog.Error("Failed to create Gemini client for reranking", "error", err)
 		return nil, err

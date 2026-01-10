@@ -93,9 +93,11 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		return nil, err
 	}
 
+	resolvedGateway := config.ResolveModelsGateway(cfg, runConfig.ModelsGateway)
+
 	// Early check for required env vars before loading models and tools.
 	env := runConfig.EnvProvider()
-	if err := config.CheckRequiredEnvVars(ctx, cfg, runConfig.ModelsGateway, env); err != nil {
+	if err := config.CheckRequiredEnvVars(ctx, cfg, resolvedGateway, env); err != nil {
 		return nil, err
 	}
 
@@ -103,7 +105,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	parentDir := cmp.Or(agentSource.ParentDir(), runConfig.WorkingDir)
 	ragManagers, err := rag.NewManagers(ctx, cfg, rag.ManagersBuildConfig{
 		ParentDir:     parentDir,
-		ModelsGateway: runConfig.ModelsGateway,
+		ModelsGateway: resolvedGateway,
 		Env:           env,
 		Models:        cfg.Models,
 	})
@@ -116,7 +118,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	agentsByName := make(map[string]*agent.Agent)
 
 	autoModel := sync.OnceValue(func() latest.ModelConfig {
-		return config.AutoModelConfig(ctx, runConfig.ModelsGateway, env)
+		return config.AutoModelConfig(ctx, resolvedGateway, env)
 	})
 
 	expander := js.NewJsExpander(env)
@@ -141,7 +143,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 			agent.WithHooks(agentConfig.Hooks),
 		}
 
-		models, err := getModelsForAgent(ctx, cfg, &agentConfig, autoModel, runConfig)
+		models, err := getModelsForAgent(ctx, cfg, &agentConfig, autoModel, runConfig, resolvedGateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get models: %w", err)
 		}
@@ -217,7 +219,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 	}, nil
 }
 
-func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentConfig, autoModelFn func() latest.ModelConfig, runConfig *config.RuntimeConfig) ([]provider.Provider, error) {
+func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentConfig, autoModelFn func() latest.ModelConfig, runConfig *config.RuntimeConfig, resolvedGateway string) ([]provider.Provider, error) {
 	var models []provider.Provider
 
 	for name := range strings.SplitSeq(a.Model, ",") {
@@ -231,7 +233,7 @@ func getModelsForAgent(ctx context.Context, cfg *latest.Config, a *latest.AgentC
 		}
 
 		opts := []options.Opt{
-			options.WithGateway(runConfig.ModelsGateway),
+			options.WithGateway(resolvedGateway),
 			options.WithStructuredOutput(a.StructuredOutput),
 			options.WithProviders(cfg.Providers),
 		}
