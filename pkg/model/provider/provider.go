@@ -191,7 +191,6 @@ func createDirectProvider(ctx context.Context, cfg *latest.ModelConfig, env envi
 		return bedrock.NewClient(ctx, enhancedCfg, env, opts...)
 
 	default:
-		slog.Error("Unknown provider type", "type", providerType)
 		return nil, fmt.Errorf("unknown provider type: %s", providerType)
 	}
 }

@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os/signal"
-	"syscall"
 
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/config/latest"
@@ -16,15 +14,7 @@ import (
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	if err := run(ctx); err != nil {
-		log.Println(err)
-	}
-}
-
-func run(ctx context.Context) error {
+	ctx := context.Background()
 	llm, err := openai.NewClient(
 		ctx,
 		&latest.ModelConfig{
@@ -34,7 +24,7 @@ func run(ctx context.Context) error {
 		environment.NewDefaultProvider(),
 	)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
 	human := agent.New(
@@ -48,7 +38,7 @@ func run(ctx context.Context) error {
 
 	rt, err := runtime.New(humanTeam)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
 	sess := session.New(session.WithUserMessage("How are you doing?"))
@@ -71,6 +61,4 @@ func run(ctx context.Context) error {
 			// etc...
 		}
 	}
-
-	return nil
 }

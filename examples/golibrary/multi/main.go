@@ -4,38 +4,28 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/signal"
-	"syscall"
 
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/model/provider/openai"
-	"github.com/docker/cagent/pkg/runtime"
-	"github.com/docker/cagent/pkg/session"
+	"github.com/docker/cagent/pkg/run"
 	"github.com/docker/cagent/pkg/team"
 	"github.com/docker/cagent/pkg/tools/builtin"
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	if err := run(ctx); err != nil {
-		log.Println(err)
-	}
-}
-
-func run(ctx context.Context) error {
+	ctx := context.Background()
 	llm, err := openai.NewClient(
 		ctx,
 		&latest.ModelConfig{
 			Provider: "openai",
 			Model:    "gpt-4o",
 		},
-		environment.NewDefaultProvider())
+		environment.NewDefaultProvider(),
+	)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
 	child := agent.New(
@@ -44,6 +34,7 @@ func run(ctx context.Context) error {
 		agent.WithModel(llm),
 		agent.WithDescription("A child."),
 	)
+
 	root := agent.New(
 		"root",
 		"You are a human, with feelings and emotions.",
@@ -51,18 +42,13 @@ func run(ctx context.Context) error {
 		agent.WithSubAgents(child),
 		agent.WithToolSets(builtin.NewTransferTaskTool()),
 	)
-	rt, err := runtime.New(team.New(team.WithAgents(root, child)))
+
+	t := team.New(team.WithAgents(root, child))
+
+	response, err := run.Team(ctx, t, "Ask your child how they are doing and tell me what they said")
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
-	sess := session.New(session.WithUserMessage("Ask your child how they are doing and tell me what they said"))
-
-	messages, err := rt.Run(ctx, sess)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(messages[len(messages)-1].Message.Content)
-	return nil
+	fmt.Println(response)
 }

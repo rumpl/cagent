@@ -4,61 +4,38 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/signal"
-	"syscall"
 
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/model/provider/openai"
-	"github.com/docker/cagent/pkg/runtime"
-	"github.com/docker/cagent/pkg/session"
-	"github.com/docker/cagent/pkg/team"
+	"github.com/docker/cagent/pkg/run"
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx := context.Background()
 
-	if err := run(ctx); err != nil {
-		log.Println(err)
-	}
-}
-
-func run(ctx context.Context) error {
 	llm, err := openai.NewClient(
 		ctx,
 		&latest.ModelConfig{
-			Provider: "openai",
-			Model:    "gpt-4o",
+			Model: "gpt-4o",
 		},
 		environment.NewDefaultProvider(),
 	)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
 	human := agent.New(
 		"root",
 		"You are a human, with feelings and emotions.",
 		agent.WithModel(llm),
-		agent.WithDescription("A human."),
 	)
 
-	humanTeam := team.New(team.WithAgents(human))
-
-	rt, err := runtime.New(humanTeam)
+	response, err := run.Agent(ctx, human, "How are you doing?")
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
-	sess := session.New(session.WithUserMessage("How are you doing?"))
-
-	messages, err := rt.Run(ctx, sess)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(messages[len(messages)-1].Message.Content)
-	return nil
+	fmt.Println(response)
 }

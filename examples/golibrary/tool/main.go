@@ -5,27 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os/signal"
-	"syscall"
 
 	"github.com/docker/cagent/pkg/agent"
 	"github.com/docker/cagent/pkg/config/latest"
 	"github.com/docker/cagent/pkg/environment"
 	"github.com/docker/cagent/pkg/model/provider/openai"
-	"github.com/docker/cagent/pkg/runtime"
-	"github.com/docker/cagent/pkg/session"
-	"github.com/docker/cagent/pkg/team"
+	"github.com/docker/cagent/pkg/run"
 	"github.com/docker/cagent/pkg/tools"
 )
-
-func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	if err := run(ctx); err != nil {
-		log.Println(err)
-	}
-}
 
 type AddNumbersArgs struct {
 	A int `json:"a"`
@@ -43,7 +30,8 @@ func addNumbers(_ context.Context, toolCall tools.ToolCall) (*tools.ToolCallResu
 	return tools.ResultSuccess(fmt.Sprintf("%d", p.A+p.B)), nil
 }
 
-func run(ctx context.Context) error {
+func main() {
+	ctx := context.Background()
 	llm, err := openai.NewClient(
 		ctx,
 		&latest.ModelConfig{
@@ -53,7 +41,7 @@ func run(ctx context.Context) error {
 		environment.NewDefaultProvider(),
 	)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
 	toolAddNumbers := tools.Tool{
@@ -66,25 +54,15 @@ func run(ctx context.Context) error {
 
 	calculator := agent.New(
 		"root",
-		"You are a human, with feelings and emotions.",
+		"You are a calculator.",
 		agent.WithModel(llm),
 		agent.WithTools(toolAddNumbers),
 	)
 
-	calculatorTeam := team.New(team.WithAgents(calculator))
-
-	rt, err := runtime.New(calculatorTeam)
+	response, err := run.Agent(ctx, calculator, "What is 1 + 2?")
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
 
-	sess := session.New(session.WithUserMessage("What is 1 + 2?"))
-
-	messages, err := rt.Run(ctx, sess)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(messages[len(messages)-1].Message.Content)
-	return nil
+	fmt.Println(response)
 }
