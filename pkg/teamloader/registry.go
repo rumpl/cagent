@@ -174,6 +174,11 @@ func createFilesystemTool(_ context.Context, toolset latest.Toolset, _ string, r
 	}
 	opts = append(opts, builtin.WithIgnoreVCS(ignoreVCS))
 
+	// Handle git-ai integration
+	if toolset.GitAI != nil && *toolset.GitAI {
+		opts = append(opts, builtin.WithGitAI(true))
+	}
+
 	// Handle post-edit commands
 	if len(toolset.PostEdit) > 0 {
 		postEditConfigs := make([]builtin.PostEditConfig, len(toolset.PostEdit))

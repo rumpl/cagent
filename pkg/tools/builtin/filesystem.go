@@ -39,6 +39,8 @@ type FilesystemTool struct {
 	postEditCommands []PostEditConfig
 	ignoreVCS        bool
 	repoMatcher      *fsx.VCSMatcher
+	gitAIEnabled     bool
+	gitAIPath        string // cached path to git-ai binary, empty if not found
 }
 
 var _ tools.ToolSet = (*FilesystemTool)(nil)
@@ -57,6 +59,12 @@ func WithIgnoreVCS(ignoreVCS bool) FileSystemOpt {
 	}
 }
 
+func WithGitAI(enabled bool) FileSystemOpt {
+	return func(t *FilesystemTool) {
+		t.gitAIEnabled = enabled
+	}
+}
+
 func NewFilesystemTool(workingDir string, opts ...FileSystemOpt) *FilesystemTool {
 	t := &FilesystemTool{
 		workingDir: workingDir,
@@ -67,6 +75,10 @@ func NewFilesystemTool(workingDir string, opts ...FileSystemOpt) *FilesystemTool
 
 	if t.ignoreVCS {
 		t.initGitignoreMatcher()
+	}
+
+	if t.gitAIEnabled {
+		t.initGitAI()
 	}
 
 	return t
@@ -327,6 +339,106 @@ func (t *FilesystemTool) initGitignoreMatcher() {
 	t.repoMatcher = matcher
 }
 
+const gitAIAgentName = "cagent"
+
+// initGitAI checks if git-ai is installed and caches the path
+func (t *FilesystemTool) initGitAI() {
+	// First try PATH
+	path, err := exec.LookPath("git-ai")
+	if err == nil {
+		t.gitAIPath = path
+		slog.Debug("git-ai found in PATH", "path", path)
+		return
+	}
+
+	// Check common installation locations
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Debug("git-ai not found in PATH and cannot get home directory", "error", err)
+		return
+	}
+
+	commonPaths := []string{
+		filepath.Join(homeDir, ".git-ai", "bin", "git-ai"),
+		filepath.Join(homeDir, ".local", "bin", "git-ai"),
+		"/usr/local/bin/git-ai",
+	}
+
+	for _, p := range commonPaths {
+		if _, err := os.Stat(p); err == nil {
+			t.gitAIPath = p
+			slog.Debug("git-ai found at common location", "path", p)
+			return
+		}
+	}
+
+	slog.Debug("git-ai not found, git-ai integration disabled")
+}
+
+// gitAICheckpointHuman runs git-ai checkpoint to mark pending changes as human-authored.
+// This should be called before the agent makes any file edits.
+func (t *FilesystemTool) gitAICheckpointHuman(ctx context.Context, filePath string) {
+	if t.gitAIPath == "" {
+		return
+	}
+
+	input := map[string]any{
+		"type":                "human",
+		"repo_working_dir":    t.workingDir,
+		"will_edit_filepaths": []string{filePath},
+	}
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to marshal git-ai input", "error", err)
+		return
+	}
+
+	cmd := exec.CommandContext(ctx, t.gitAIPath, "checkpoint", "agent-v1", "--hook-input", "stdin")
+	cmd.Dir = t.workingDir
+	cmd.Stdin = strings.NewReader(string(inputJSON))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		slog.DebugContext(ctx, "git-ai checkpoint (human) failed", "error", err, "output", string(output))
+	}
+}
+
+// gitAICheckpointAI runs git-ai checkpoint to mark the file edit as AI-authored.
+// This should be called after the agent makes file edits.
+func (t *FilesystemTool) gitAICheckpointAI(ctx context.Context, filePath string) {
+	if t.gitAIPath == "" {
+		return
+	}
+
+	input := map[string]any{
+		"type":             "ai_agent",
+		"repo_working_dir": t.workingDir,
+		"agent_name":       gitAIAgentName,
+		"edited_filepaths": []string{filePath},
+		"model":            "unknown",
+		"conversation_id":  "cagent-session",
+		"transcript": map[string]any{
+			"messages": []map[string]any{},
+		},
+	}
+
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to marshal git-ai input", "error", err)
+		return
+	}
+
+	cmd := exec.CommandContext(ctx, t.gitAIPath, "checkpoint", "agent-v1", "--hook-input", "stdin")
+	cmd.Dir = t.workingDir
+	cmd.Stdin = strings.NewReader(string(inputJSON))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		slog.DebugContext(ctx, "git-ai checkpoint (ai_agent) failed", "error", err, "output", string(output))
+	}
+}
+
 // shouldIgnorePath checks if a path should be ignored based on VCS rules
 func (t *FilesystemTool) shouldIgnorePath(path string) bool {
 	if !t.ignoreVCS {
@@ -416,9 +528,13 @@ func (t *FilesystemTool) handleEditFile(ctx context.Context, args EditFileArgs) 
 		changes = append(changes, fmt.Sprintf("Edit %d: Replaced %d characters", i+1, len(edit.OldText)))
 	}
 
+	t.gitAICheckpointHuman(ctx, resolvedPath)
+
 	if err := os.WriteFile(resolvedPath, []byte(modifiedContent), 0o644); err != nil {
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
+
+	t.gitAICheckpointAI(ctx, resolvedPath)
 
 	if err := t.executePostEditCommands(ctx, resolvedPath); err != nil {
 		return tools.ResultError(fmt.Sprintf("File edited successfully but post-edit command failed: %s", err)), nil
@@ -679,9 +795,13 @@ func (t *FilesystemTool) handleWriteFile(ctx context.Context, args WriteFileArgs
 		return tools.ResultError(fmt.Sprintf("Error creating directory structure: %s", err)), nil
 	}
 
+	t.gitAICheckpointHuman(ctx, resolvedPath)
+
 	if err := os.WriteFile(resolvedPath, []byte(args.Content), 0o644); err != nil {
 		return tools.ResultError(fmt.Sprintf("Error writing file: %s", err)), nil
 	}
+
+	t.gitAICheckpointAI(ctx, resolvedPath)
 
 	if err := t.executePostEditCommands(ctx, resolvedPath); err != nil {
 		return tools.ResultError(fmt.Sprintf("File written successfully but post-edit command failed: %s", err)), nil

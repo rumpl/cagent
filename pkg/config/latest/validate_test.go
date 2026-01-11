@@ -189,3 +189,81 @@ agents:
 		})
 	}
 }
+
+func TestToolset_Validate_GitAI(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "valid filesystem with gitai enabled",
+			config: `
+version: "3"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: filesystem
+        gitai: true
+`,
+			wantErr: "",
+		},
+		{
+			name: "valid filesystem with gitai disabled",
+			config: `
+version: "3"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: filesystem
+        gitai: false
+`,
+			wantErr: "",
+		},
+		{
+			name: "gitai on non-filesystem toolset",
+			config: `
+version: "3"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: shell
+        gitai: true
+`,
+			wantErr: "gitai can only be used with type 'filesystem'",
+		},
+		{
+			name: "filesystem without gitai is valid",
+			config: `
+version: "3"
+agents:
+  root:
+    model: "openai/gpt-4"
+    toolsets:
+      - type: filesystem
+`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg Config
+			err := yaml.Unmarshal([]byte(tt.config), &cfg)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

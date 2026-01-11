@@ -47,6 +47,9 @@ func (t *Toolset) validate() error {
 	if t.IgnoreVCS != nil && t.Type != "filesystem" {
 		return errors.New("ignore_vcs can only be used with type 'filesystem'")
 	}
+	if t.GitAI != nil && t.Type != "filesystem" {
+		return errors.New("gitai can only be used with type 'filesystem'")
+	}
 	if len(t.Env) > 0 && (t.Type != "shell" && t.Type != "script" && t.Type != "mcp" && t.Type != "lsp") {
 		return errors.New("env can only be used with type 'shell', 'script', 'mcp' or 'lsp'")
 	}

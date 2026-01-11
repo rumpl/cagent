@@ -601,3 +601,22 @@ func TestFilesystemTool_EmptyWorkingDir(t *testing.T) {
 	resolvedPath = tool.resolvePath("/etc/hosts")
 	assert.Equal(t, "/etc/hosts", resolvedPath)
 }
+
+func TestFilesystemTool_GitAI_Disabled(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	// Create tool without git-ai enabled
+	tool := NewFilesystemTool(tmpDir)
+	assert.False(t, tool.gitAIEnabled)
+	assert.Empty(t, tool.gitAIPath)
+}
+
+func TestFilesystemTool_GitAI_Enabled(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	tool := NewFilesystemTool(tmpDir, WithGitAI(true))
+	assert.True(t, tool.gitAIEnabled)
+	// gitAIPath will be empty unless git-ai is installed on the system
+}
