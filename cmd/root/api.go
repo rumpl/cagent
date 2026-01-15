@@ -14,6 +14,7 @@ import (
 	"github.com/docker/cagent/pkg/connectrpc"
 	"github.com/docker/cagent/pkg/server"
 	"github.com/docker/cagent/pkg/session"
+	"github.com/docker/cagent/pkg/session/storev2"
 	"github.com/docker/cagent/pkg/telemetry"
 )
 
@@ -132,7 +133,12 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) error {
 
 	slog.Debug("Starting server", "agents", agentsPath, "addr", ln.Addr().String())
 
-	sessionStore, err := session.NewSQLiteSessionStore(f.sessionDB)
+	var sessionStore session.Store
+	if os.Getenv("CAGENT_SESSIONS_STORE_V2") != "" {
+		sessionStore, err = storev2.NewWithAutoMigration(ctx, f.sessionDB)
+	} else {
+		sessionStore, err = session.NewSQLiteSessionStore(f.sessionDB)
+	}
 	if err != nil {
 		return fmt.Errorf("creating session store: %w", err)
 	}

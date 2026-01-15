@@ -44,6 +44,12 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 	UpdateSession(ctx context.Context, session *Session) error
 	SetSessionStarred(ctx context.Context, id string, starred bool) error
+
+	// CreateMessage persists a new message at the given item order.
+	// Implementations may lazily create the session row if needed.
+	CreateMessage(ctx context.Context, sess *Session, itemOrder int, msg *Message) error
+	// UpdateMessage updates an existing message at the given item order.
+	UpdateMessage(ctx context.Context, sess *Session, itemOrder int, msg *Message) error
 }
 
 type InMemorySessionStore struct {
@@ -118,6 +124,14 @@ func (s *InMemorySessionStore) UpdateSession(_ context.Context, session *Session
 	}
 	s.sessions.Store(session.ID, session)
 	return nil
+}
+
+func (s *InMemorySessionStore) CreateMessage(ctx context.Context, sess *Session, _ int, _ *Message) error {
+	return s.UpdateSession(ctx, sess)
+}
+
+func (s *InMemorySessionStore) UpdateMessage(ctx context.Context, sess *Session, _ int, _ *Message) error {
+	return s.UpdateSession(ctx, sess)
 }
 
 // SetSessionStarred sets the starred status of a session.
@@ -507,6 +521,14 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
 		session.CreatedAt.Format(time.RFC3339), session.Starred, permissionsJSON, agentModelOverridesJSON, customModelsUsedJSON, session.Thinking)
 	return err
+}
+
+func (s *SQLiteSessionStore) CreateMessage(ctx context.Context, sess *Session, _ int, _ *Message) error {
+	return s.UpdateSession(ctx, sess)
+}
+
+func (s *SQLiteSessionStore) UpdateMessage(ctx context.Context, sess *Session, _ int, _ *Message) error {
+	return s.UpdateSession(ctx, sess)
 }
 
 // SetSessionStarred sets the starred status of a session.

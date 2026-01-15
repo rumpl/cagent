@@ -20,6 +20,7 @@ import (
 	"github.com/docker/cagent/pkg/paths"
 	"github.com/docker/cagent/pkg/runtime"
 	"github.com/docker/cagent/pkg/session"
+	"github.com/docker/cagent/pkg/session/storev2"
 	"github.com/docker/cagent/pkg/teamloader"
 	"github.com/docker/cagent/pkg/telemetry"
 )
@@ -313,7 +314,12 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, err
 	}
 
-	sessStore, err := session.NewSQLiteSessionStore(f.sessionDB)
+	var sessStore session.Store
+	if os.Getenv("CAGENT_SESSIONS_STORE_V2") != "" {
+		sessStore, err = storev2.NewWithAutoMigration(ctx, f.sessionDB)
+	} else {
+		sessStore, err = session.NewSQLiteSessionStore(f.sessionDB)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}

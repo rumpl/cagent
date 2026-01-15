@@ -191,6 +191,9 @@ type streamResult struct {
 	Stopped           bool
 	ActualModel       string      // The actual model used (may differ from configured model with routing)
 	Usage             *chat.Usage // Token usage for this stream
+
+	Message      *session.Message
+	MessageOrder int
 }
 
 type Opt func(*LocalRuntime)
@@ -782,9 +785,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 							),
 							CreatedAt: time.Now().Format(time.RFC3339),
 						}
-
-						sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-						r.saveSession(ctx, sess)
+						msg := session.NewAgentMessage(a, &assistantMessage)
+						r.appendMessage(ctx, sess, msg)
 						return
 					}
 
@@ -891,10 +893,10 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			streamSpan.End()
 			slog.Debug("Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped)
 
-			// Add assistant message to conversation history, but skip empty assistant messages
-			// Providers reject assistant messages that have neither content nor tool calls.
+			// handleStream appends an assistant message lazily when it sees output.
+			// If nothing was produced, skip adding any message (providers reject empty assistant messages).
 			var msgUsage *MessageUsage
-			if strings.TrimSpace(res.Content) != "" || len(res.Calls) > 0 {
+			if res.Message != nil {
 				// Build tool definitions for the tool calls
 				var toolDefs []tools.Tool
 				if len(res.Calls) > 0 {
@@ -924,19 +926,15 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					messageModel = res.ActualModel
 				}
 
-				assistantMessage := chat.Message{
-					Role:              chat.MessageRoleAssistant,
-					Content:           res.Content,
-					ReasoningContent:  res.ReasoningContent,
-					ThinkingSignature: res.ThinkingSignature,
-					ThoughtSignature:  res.ThoughtSignature,
-					ToolCalls:         res.Calls,
-					ToolDefinitions:   toolDefs,
-					CreatedAt:         time.Now().Format(time.RFC3339),
-					Usage:             res.Usage,
-					Model:             messageModel,
-					Cost:              messageCost,
-				}
+				res.Message.Message.Content = res.Content
+				res.Message.Message.ReasoningContent = res.ReasoningContent
+				res.Message.Message.ThinkingSignature = res.ThinkingSignature
+				res.Message.Message.ThoughtSignature = res.ThoughtSignature
+				res.Message.Message.ToolCalls = res.Calls
+				res.Message.Message.ToolDefinitions = toolDefs
+				res.Message.Message.Usage = res.Usage
+				res.Message.Message.Model = messageModel
+				res.Message.Message.Cost = messageCost
 
 				// Build per-message usage for the event
 				if res.Usage != nil {
@@ -947,9 +945,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					}
 				}
 
-				sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-				r.saveSession(ctx, sess)
-				slog.Debug("Added assistant message to session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
+				r.updateMessage(ctx, sess, res.MessageOrder, res.Message)
+				slog.Debug("Updated assistant message in session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
 			} else {
 				slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
 			}
@@ -1128,6 +1125,9 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 		toolDefMap[t.Name] = t
 	}
 
+	var persistedMessage *session.Message
+	persistedMessageOrder := -1
+
 	for {
 		response, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -1164,8 +1164,27 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 		}
 		choice := response.Choices[0]
 
+		if persistedMessage == nil {
+			hasOutput := choice.Delta.Content != "" ||
+				choice.Delta.ReasoningContent != "" ||
+				choice.Delta.ThinkingSignature != "" ||
+				len(choice.Delta.ToolCalls) > 0 ||
+				len(choice.Delta.ThoughtSignature) > 0
+			if hasOutput {
+				assistantMessage := chat.Message{
+					Role:      chat.MessageRoleAssistant,
+					CreatedAt: time.Now().Format(time.RFC3339),
+				}
+				persistedMessage = session.NewAgentMessage(a, &assistantMessage)
+				persistedMessageOrder = r.appendMessage(ctx, sess, persistedMessage)
+			}
+		}
+
 		if len(choice.Delta.ThoughtSignature) > 0 {
 			thoughtSignature = choice.Delta.ThoughtSignature
+			if persistedMessage != nil {
+				persistedMessage.Message.ThoughtSignature = thoughtSignature
+			}
 		}
 
 		// Capture the actual model from the stream response (useful for model routing)
@@ -1195,6 +1214,8 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 				Stopped:           true,
 				ActualModel:       actualModel,
 				Usage:             messageUsage,
+				Message:           persistedMessage,
+				MessageOrder:      persistedMessageOrder,
 			}, nil
 		}
 
@@ -1236,22 +1257,34 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 					}
 				}
 			}
+			if persistedMessage != nil {
+				persistedMessage.Message.ToolCalls = toolCalls
+			}
 			continue
 		}
 
 		if choice.Delta.ReasoningContent != "" {
 			events <- AgentChoiceReasoning(a.Name(), choice.Delta.ReasoningContent)
 			fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
+			if persistedMessage != nil {
+				persistedMessage.Message.ReasoningContent += choice.Delta.ReasoningContent
+			}
 		}
 
 		// Capture thinking signature for Anthropic extended thinking
 		if choice.Delta.ThinkingSignature != "" {
 			thinkingSignature = choice.Delta.ThinkingSignature
+			if persistedMessage != nil {
+				persistedMessage.Message.ThinkingSignature = thinkingSignature
+			}
 		}
 
 		if choice.Delta.Content != "" {
 			events <- AgentChoice(a.Name(), choice.Delta.Content)
 			fullContent.WriteString(choice.Delta.Content)
+			if persistedMessage != nil {
+				persistedMessage.Message.Content += choice.Delta.Content
+			}
 		}
 	}
 
@@ -1267,6 +1300,8 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 		Stopped:           stoppedDueToNoOutput,
 		ActualModel:       actualModel,
 		Usage:             messageUsage,
+		Message:           persistedMessage,
+		MessageOrder:      persistedMessageOrder,
 	}, nil
 }
 
@@ -1553,8 +1588,8 @@ func (r *LocalRuntime) executeToolWithHandler(
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	msg := session.NewAgentMessage(a, &toolResponseMsg)
+	r.appendMessage(ctx, sess, msg)
 }
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
@@ -1615,7 +1650,7 @@ func (r *LocalRuntime) runTool(ctx context.Context, tool tools.Tool, toolCall to
 	}
 }
 
-// parseToolInput parses tool arguments JSON into a map
+// parseToolInput parses tool arguments JSON into a map.
 func parseToolInput(arguments string) map[string]any {
 	var result map[string]any
 	if err := json.Unmarshal([]byte(arguments), &result); err != nil {
@@ -1644,18 +1679,35 @@ func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.S
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	msg := session.NewAgentMessage(a, &toolResponseMsg)
+	r.appendMessage(ctx, sess, msg)
 }
 
-// saveSession persists the session to the store, but only for root sessions.
-// Sub-sessions (those with a ParentID) are not persisted as standalone entries;
-// they are embedded within the parent session's Messages array.
-func (r *LocalRuntime) saveSession(ctx context.Context, sess *session.Session) {
+func (r *LocalRuntime) appendMessage(ctx context.Context, sess *session.Session, msg *session.Message) int {
+	itemOrder := len(sess.Messages)
+	sess.AddMessage(msg)
+
+	if sess.IsSubSession() {
+		return itemOrder
+	}
+
+	if err := r.sessionStore.CreateMessage(ctx, sess, itemOrder, msg); err != nil {
+		// Best-effort fallback to full session write.
+		_ = r.sessionStore.UpdateSession(ctx, sess)
+	}
+
+	return itemOrder
+}
+
+func (r *LocalRuntime) updateMessage(ctx context.Context, sess *session.Session, itemOrder int, msg *session.Message) {
 	if sess.IsSubSession() {
 		return
 	}
-	_ = r.sessionStore.UpdateSession(ctx, sess)
+
+	if err := r.sessionStore.UpdateMessage(ctx, sess, itemOrder, msg); err != nil {
+		// Best-effort fallback to full session write.
+		_ = r.sessionStore.UpdateSession(ctx, sess)
+	}
 }
 
 // startSpan wraps tracer.Start, returning a no-op span if the tracer is nil.
