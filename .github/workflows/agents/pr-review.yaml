@@ -11,14 +11,7 @@ agents:
       3. Make sure to get the overall picture about the changes, read the files from the current directory as needed
       4. Review the code changes in detail
       5. Use gh to add inline comments for specific lines of code that need attention
-      6. Post the review to GitHub using gh CLI:
-         a. Create a JSON payload for the review with inline comments
-         b. Use shell tool to execute:
-            ```
-            echo '{"body":"OVERALL_SUMMARY","event":"COMMENT","comments":[{"path":"FILE","line":LINE,"body":"COMMENT"},...]}' | \
-            gh api repos/{owner}/{repo}/pulls/{pr}/reviews --input -
-            ```
-         c. Map your verdict to event: "APPROVE", "REQUEST_CHANGES", or "COMMENT"
+      6. Post your review
 
       ## Review Focus
       **Code Quality:** Readability, naming, structure, DRY
@@ -51,8 +44,53 @@ agents:
     toolsets:
       - type: filesystem
         tools: [read_file, read_multiple_files, list_directory, directory_tree]
-      - type: shell
-
-permissions:
-  allow:
-     - shell:cmd=gh *
+      - type: script
+        shell:
+          gh:
+            cmd: gh $arguments
+            description: GitHub CLI
+            required: ["arguments"]
+            args:
+              "arguments":
+                description: Arguments to pass to the gh command
+                type: array
+          add_inline_comment:
+            cmd: |
+              gh api repos/$repo/pulls/$pr_number/comments \
+              -f body="$body" \
+              -f commit_id=$(gh pr view $pr_number --repo $repo --json headRefOid -q .headRefOid) \
+              -f path="$path" \
+              -F line=$line
+            description: Add an inline comment to a GitHub PR
+            required: ["repo", "pr_number", "body", "path", "line"]
+            args:
+              repo:
+                description: GitHub repository in the format "owner/repo"
+                type: string
+              pr_number:
+                description: Pull request number
+                type: integer
+              body:
+                description: Comment body
+                type: string
+              path:
+                description: File path in the repository
+                type: string
+              line:
+                description: Line number in the file to comment on
+                type: integer
+          add_comment: 
+            cmd: |
+              gh pr review $pr_number --repo $repo --body "$body"
+            description: Add a general review comment to a GitHub PR
+            required: ["repo", "pr_number", "body"]
+            args:
+              repo:
+                description: GitHub repository in the format "owner/repo"
+                type: string
+              pr_number:
+                description: Pull request number
+                type: integer
+              body:
+                description: Comment body
+                type: string
