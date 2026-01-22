@@ -25,6 +25,8 @@ const (
 
 // Item represents either a message or a sub-session
 type Item struct {
+	ID string `json:"id"`
+
 	// Message holds a regular conversation message
 	Message *Message `json:"message,omitempty"`
 
@@ -48,7 +50,7 @@ func (si *Item) IsSubSession() bool {
 // Session represents the agent's state including conversation history and variables
 type Session struct {
 	// ID is the unique identifier for the session
-	ID string `json:"id"`
+	ID string `json:"id"` // TODO: uuid
 
 	// Title is the title of the session, set by the runtime
 	Title string `json:"title"`
@@ -193,6 +195,7 @@ func (p *PermissionsConfig) GetToolMode(toolName string) string {
 
 // Message is a message from an agent
 type Message struct {
+	ID        string       `json:"id"`
 	AgentName string       `json:"agentName"` // TODO: rename to agent_name
 	Message   chat.Message `json:"message"`
 	// Implicit is an optional field to indicate if the message shouldn't be shown to the user. It's needed for special  situations

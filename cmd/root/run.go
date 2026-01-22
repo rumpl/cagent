@@ -20,6 +20,7 @@ import (
 	"github.com/docker/cagent/pkg/paths"
 	"github.com/docker/cagent/pkg/runtime"
 	"github.com/docker/cagent/pkg/session"
+	"github.com/docker/cagent/pkg/session/store"
 	"github.com/docker/cagent/pkg/teamloader"
 	"github.com/docker/cagent/pkg/telemetry"
 )
@@ -324,10 +325,15 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, err
 	}
 
-	sessStore, err := session.NewSQLiteSessionStore(f.sessionDB)
+	sessStore, err := store.New(f.sessionDB)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}
+
+	// sessStore, err := session.NewSQLiteSessionStore(f.sessionDB)
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("creating session store: %w", err)
+	// }
 
 	// Create model switcher config for runtime model switching support
 	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
