@@ -33,10 +33,11 @@ func OpenDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Configure connection pool to serialize writes (SQLite limitation)
-	// This prevents "database is locked" errors from concurrent writes
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// Configure connection pool for concurrent reads with serialized writes.
+	// WAL mode (enabled above) allows multiple concurrent readers.
+	// We use a small pool to allow nested queries during iteration.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(0)
 
 	// Verify connection works (this will trigger file creation/open)

@@ -44,6 +44,12 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 	UpdateSession(ctx context.Context, session *Session) error
 	SetSessionStarred(ctx context.Context, id string, starred bool) error
+
+	AddSummary(ctx context.Context, summary *string) error
+	AddSubSession(ctx context.Context, parent, child *Session) error
+
+	CreateMessage(ctx context.Context, sess *Session, msg *Message) error
+	UpdateMessage(ctx context.Context, sess *Session, msg *Message) error
 }
 
 type InMemorySessionStore struct {
@@ -131,6 +137,22 @@ func (s *InMemorySessionStore) SetSessionStarred(_ context.Context, id string, s
 	}
 	session.Starred = starred
 	s.sessions.Store(id, session)
+	return nil
+}
+
+func (s *InMemorySessionStore) CreateMessage(ctx context.Context, sess *Session, msg *Message) error {
+	return nil
+}
+
+func (s *InMemorySessionStore) UpdateMessage(ctx context.Context, sess *Session, msg *Message) error {
+	return nil
+}
+
+func (s *InMemorySessionStore) AddSummary(ctx context.Context, summary *string) error {
+	return nil
+}
+
+func (s *InMemorySessionStore) AddSubSession(ctx context.Context, parent, child *Session) error {
 	return nil
 }
 
@@ -530,6 +552,50 @@ func (s *SQLiteSessionStore) SetSessionStarred(ctx context.Context, id string, s
 	}
 
 	return nil
+}
+
+func (s *SQLiteSessionStore) AddSummary(ctx context.Context, summary *string) error {
+	return nil
+}
+
+func (s *SQLiteSessionStore) AddSubSession(ctx context.Context, parent, child *Session) error {
+	return nil
+}
+
+func (s *SQLiteSessionStore) CreateMessage(ctx context.Context, sess *Session, msg *Message) error {
+	if sess.ID == "" {
+		return ErrEmptyID
+	}
+
+	dbSession, err := s.GetSession(ctx, sess.ID)
+	if err != nil {
+		return err
+	}
+
+	dbSession.Messages = append(dbSession.Messages, NewMessageItem(msg))
+
+	return s.UpdateSession(ctx, dbSession)
+}
+
+func (s *SQLiteSessionStore) UpdateMessage(ctx context.Context, sess *Session, msg *Message) error {
+	return nil
+	// if sess.ID == "" {
+	// 	return ErrEmptyID
+	// }
+
+	// dbSession, err := s.GetSession(ctx, sess.ID)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// for i, item := range dbSession.Messages {
+	// 	if item.ID == msg.ID {
+	// 		dbSession.Messages[i] = NewMessageItem(msg)
+	// 		break
+	// 	}
+	// }
+
+	// return s.UpdateSession(ctx, dbSession)
 }
 
 // Close closes the database connection

@@ -783,8 +783,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 							CreatedAt: time.Now().Format(time.RFC3339),
 						}
 
-						sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-						r.saveSession(ctx, sess)
+						r.createMessage(ctx, sess, session.NewAgentMessage(a, &assistantMessage))
 						return
 					}
 
@@ -947,8 +946,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					}
 				}
 
-				sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-				r.saveSession(ctx, sess)
+				r.createMessage(ctx, sess, session.NewAgentMessage(a, &assistantMessage))
 				slog.Debug("Added assistant message to session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
 			} else {
 				slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
@@ -1553,8 +1551,7 @@ func (r *LocalRuntime) executeToolWithHandler(
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	r.createMessage(ctx, sess, session.NewAgentMessage(a, &toolResponseMsg))
 }
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
@@ -1644,8 +1641,7 @@ func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.S
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	r.createMessage(ctx, sess, session.NewAgentMessage(a, &toolResponseMsg))
 }
 
 // saveSession persists the session to the store, but only for root sessions.
@@ -1656,6 +1652,30 @@ func (r *LocalRuntime) saveSession(ctx context.Context, sess *session.Session) {
 		return
 	}
 	_ = r.sessionStore.UpdateSession(ctx, sess)
+}
+
+// createMessage creates a new message in the session and persists it to the store.
+// It adds the message to the in-memory session and calls CreateMessage on the store
+// to persist it individually. For sub-sessions, only the in-memory update is performed.
+// It also calls saveSession to persist session-level changes (tokens, cost, title, etc.).
+func (r *LocalRuntime) createMessage(ctx context.Context, sess *session.Session, msg *session.Message) {
+	sess.AddMessage(msg)
+	if sess.IsSubSession() {
+		return
+	}
+	_ = r.sessionStore.CreateMessage(ctx, sess, msg)
+	// Also update session-level fields (tokens, cost, title, etc.)
+	r.saveSession(ctx, sess)
+}
+
+// updateMessage updates an existing message in the session store.
+// This is used when a message's content needs to be modified after creation,
+// such as when streaming content is finalized.
+func (r *LocalRuntime) updateMessage(ctx context.Context, sess *session.Session, msg *session.Message) {
+	if sess.IsSubSession() {
+		return
+	}
+	_ = r.sessionStore.UpdateMessage(ctx, sess, msg)
 }
 
 // startSpan wraps tracer.Start, returning a no-op span if the tracer is nil.

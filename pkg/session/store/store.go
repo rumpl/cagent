@@ -734,7 +734,7 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 		return err
 	}
 	if rowsAffected == 0 {
-		return session.ErrNotFound
+		return s.AddSession(ctx, sess)
 	}
 
 	return nil
