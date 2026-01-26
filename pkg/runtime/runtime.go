@@ -287,7 +287,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("agent %s has no valid model", defaultAgent.Name())
 	}
 
-	r.titleGen = newTitleGenerator(model)
+	r.titleGen = newTitleGenerator(model, r.sessionStore)
 	r.sessionCompactor = newSessionCompactor(model, r.sessionStore)
 
 	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
@@ -733,6 +733,13 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 
 		r.registerDefaultTools()
 
+		// Attach store to session for automatic persistence
+		if !sess.IsSubSession() {
+			sess.SetStore(r.sessionStore)
+			// Persist any initial messages (e.g., user message) that were added before store was attached
+			r.persistInitialMessages(ctx, sess)
+		}
+
 		if sess.Title == "" {
 			userMessage := sess.GetLastUserMessageContent()
 			r.titleGen.Generate(ctx, sess, userMessage, events)
@@ -785,7 +792,6 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 						}
 
 						sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-						r.saveSession(ctx, sess)
 						return
 					}
 
@@ -867,7 +873,46 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			}
 
 			slog.Debug("Processing stream", "agent", a.Name())
-			res, err := r.handleStream(ctx, stream, a, agentTools, sess, m, events)
+
+			// Create a streaming assistant message and add it to the session
+			// This will be updated as content streams in
+			streamingMessage := session.NewAgentMessage(a, &chat.Message{
+				Role:      chat.MessageRoleAssistant,
+				CreatedAt: time.Now().Format(time.RFC3339),
+			})
+			streamingItem := sess.AddItem(&session.Item{Message: streamingMessage})
+
+			// Build tool definition map for lookup
+			toolDefMap := make(map[string]tools.Tool, len(agentTools))
+			for _, t := range agentTools {
+				toolDefMap[t.Name] = t
+			}
+
+			// Create update callback that persists streaming content
+			onUpdate := func(content, reasoningContent string, calls []tools.ToolCall) {
+				if streamingItem.Message == nil {
+					return
+				}
+
+				// Build tool definitions for the tool calls
+				var toolDefs []tools.Tool
+				for _, call := range calls {
+					if def, ok := toolDefMap[call.Function.Name]; ok {
+						toolDefs = append(toolDefs, def)
+					}
+				}
+
+				// Update message content
+				streamingItem.Message.Message.Content = content
+				streamingItem.Message.Message.ReasoningContent = reasoningContent
+				streamingItem.Message.Message.ToolCalls = calls
+				streamingItem.Message.Message.ToolDefinitions = toolDefs
+
+				// Persist to store
+				sess.UpdateItem(streamingItem)
+			}
+
+			res, err := r.handleStream(ctx, stream, a, agentTools, sess, m, events, onUpdate)
 			if err != nil {
 				// Treat context cancellation as a graceful stop
 				if errors.Is(err, context.Canceled) {
@@ -892,21 +937,14 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 			streamSpan.End()
 			slog.Debug("Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped)
 
-			// Add assistant message to conversation history, but skip empty assistant messages
-			// Providers reject assistant messages that have neither content nor tool calls.
+			// Update the streaming message with final content
 			var msgUsage *MessageUsage
 			if strings.TrimSpace(res.Content) != "" || len(res.Calls) > 0 {
 				// Build tool definitions for the tool calls
 				var toolDefs []tools.Tool
-				if len(res.Calls) > 0 {
-					toolMap := make(map[string]tools.Tool, len(agentTools))
-					for _, t := range agentTools {
-						toolMap[t.Name] = t
-					}
-					for _, call := range res.Calls {
-						if def, ok := toolMap[call.Function.Name]; ok {
-							toolDefs = append(toolDefs, def)
-						}
+				for _, call := range res.Calls {
+					if def, ok := toolDefMap[call.Function.Name]; ok {
+						toolDefs = append(toolDefs, def)
 					}
 				}
 
@@ -925,18 +963,20 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					messageModel = res.ActualModel
 				}
 
-				assistantMessage := chat.Message{
-					Role:              chat.MessageRoleAssistant,
-					Content:           res.Content,
-					ReasoningContent:  res.ReasoningContent,
-					ThinkingSignature: res.ThinkingSignature,
-					ThoughtSignature:  res.ThoughtSignature,
-					ToolCalls:         res.Calls,
-					ToolDefinitions:   toolDefs,
-					CreatedAt:         time.Now().Format(time.RFC3339),
-					Usage:             res.Usage,
-					Model:             messageModel,
-					Cost:              messageCost,
+				// Update the streaming message with final data
+				if streamingItem.Message != nil {
+					streamingItem.Message.Message.Content = res.Content
+					streamingItem.Message.Message.ReasoningContent = res.ReasoningContent
+					streamingItem.Message.Message.ThinkingSignature = res.ThinkingSignature
+					streamingItem.Message.Message.ThoughtSignature = res.ThoughtSignature
+					streamingItem.Message.Message.ToolCalls = res.Calls
+					streamingItem.Message.Message.ToolDefinitions = toolDefs
+					streamingItem.Message.Message.Usage = res.Usage
+					streamingItem.Message.Message.Model = messageModel
+					streamingItem.Message.Message.Cost = messageCost
+
+					// Final persist
+					sess.UpdateItem(streamingItem)
 				}
 
 				// Build per-message usage for the event
@@ -951,11 +991,11 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					msgUsage.RateLimit = *res.RateLimit
 				}
 
-				sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-				r.saveSession(ctx, sess)
-				slog.Debug("Added assistant message to session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
+				slog.Debug("Updated assistant message in session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
 			} else {
-				slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
+				// Remove the empty streaming message
+				sess.RemoveItem(streamingItem.ID)
+				slog.Debug("Removed empty assistant message (no content and no tool calls)", "agent", a.Name())
 			}
 
 			events <- TokenUsageWithMessage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost, msgUsage)
@@ -1112,7 +1152,10 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 	return sess.GetAllMessages(), nil
 }
 
-func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, events chan Event) (streamResult, error) {
+// streamingMessageUpdater is called periodically during streaming to persist the current message state.
+type streamingMessageUpdater func(content, reasoningContent string, toolCalls []tools.ToolCall)
+
+func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, m *modelsdev.Model, events chan Event, onUpdate streamingMessageUpdater) (streamResult, error) {
 	defer stream.Close()
 
 	var fullContent strings.Builder
@@ -1131,6 +1174,13 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 	toolDefMap := make(map[string]tools.Tool, len(agentTools))
 	for _, t := range agentTools {
 		toolDefMap[t.Name] = t
+	}
+
+	// Update callback for persisting streaming content
+	doUpdate := func() {
+		if onUpdate != nil {
+			onUpdate(fullContent.String(), fullReasoningContent.String(), toolCalls)
+		}
 	}
 
 	for {
@@ -1261,8 +1311,12 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 		if choice.Delta.Content != "" {
 			events <- AgentChoice(a.Name(), choice.Delta.Content)
 			fullContent.WriteString(choice.Delta.Content)
+			doUpdate()
 		}
 	}
+
+	// Final update to ensure all content is persisted
+	doUpdate()
 
 	// If the stream completed without producing any content or tool calls, likely because of a token limit, stop to avoid breaking the request loop
 	// NOTE(krissetto): this can likely be removed once compaction works properly with all providers (aka dmr)
@@ -1512,7 +1566,6 @@ func (r *LocalRuntime) executeToolWithHandler(
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
 	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
 }
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
@@ -1593,7 +1646,7 @@ func (r *LocalRuntime) runAgentTool(ctx context.Context, handler ToolHandlerFunc
 
 // addToolErrorResponse adds a tool error response to the session and emits the event.
 // This consolidates the common pattern used by validation, rejection, and cancellation responses.
-func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
+func (r *LocalRuntime) addToolErrorResponse(_ context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
 	events <- ToolCallResponse(toolCall, tool, tools.ResultError(errorMsg), errorMsg, a.Name())
 
 	toolResponseMsg := chat.Message{
@@ -1603,17 +1656,25 @@ func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.S
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
 	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
 }
 
-// saveSession persists the session to the store, but only for root sessions.
-// Sub-sessions (those with a ParentID) are not persisted as standalone entries;
-// they are embedded within the parent session's Messages array.
-func (r *LocalRuntime) saveSession(ctx context.Context, sess *session.Session) {
-	if sess.IsSubSession() {
-		return
+// persistInitialMessages persists any messages that were added to the session before the store was attached.
+// This ensures user messages and other initial content are stored and have IDs.
+func (r *LocalRuntime) persistInitialMessages(ctx context.Context, sess *session.Session) {
+	// Check if there are messages that haven't been persisted yet (no ID set)
+	for i := range sess.Messages {
+		item := &sess.Messages[i]
+		if item.ID != "" {
+			continue
+		}
+
+		itemID, err := r.sessionStore.AddItem(ctx, sess.ID, item)
+		if err != nil {
+			continue
+		}
+		item.ID = itemID
+		item.Position = i
 	}
-	_ = r.sessionStore.UpdateSession(ctx, sess)
 }
 
 // startSpan wraps tracer.Start, returning a no-op span if the tracer is nil.

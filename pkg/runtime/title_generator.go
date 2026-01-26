@@ -20,13 +20,15 @@ const (
 )
 
 type titleGenerator struct {
-	wg    sync.WaitGroup
-	model provider.Provider
+	wg           sync.WaitGroup
+	model        provider.Provider
+	sessionStore session.Store
 }
 
-func newTitleGenerator(model provider.Provider) *titleGenerator {
+func newTitleGenerator(model provider.Provider, sessionStore session.Store) *titleGenerator {
 	return &titleGenerator{
-		model: model,
+		model:        model,
+		sessionStore: sessionStore,
 	}
 }
 
@@ -91,6 +93,9 @@ func (t *titleGenerator) generate(ctx context.Context, sess *session.Session, fi
 
 	sess.Title = title
 	slog.Debug("Generated session title", "session_id", sess.ID, "title", title)
+
+	_ = t.sessionStore.UpdateSession(ctx, sess)
+
 	events <- SessionTitle(sess.ID, title)
 }
 

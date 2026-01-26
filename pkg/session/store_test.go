@@ -24,18 +24,7 @@ func TestStoreAgentName(t *testing.T) {
 	testAgent2 := agent.New("test-agent-2", "test prompt 2")
 
 	session := &Session{
-		ID: "test-session",
-		Messages: []Item{
-			NewMessageItem(UserMessage("Hello")),
-			NewMessageItem(NewAgentMessage(testAgent1, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Hello from test-agent-1",
-			})),
-			NewMessageItem(NewAgentMessage(testAgent2, &chat.Message{
-				Role:    chat.MessageRoleUser,
-				Content: "Another message from test-agent-2",
-			})),
-		},
+		ID:           "test-session",
 		InputTokens:  100,
 		OutputTokens: 200,
 		CreatedAt:    time.Now(),
@@ -43,6 +32,25 @@ func TestStoreAgentName(t *testing.T) {
 
 	// Store the session
 	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add messages using AddItem
+	item1 := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddItem(t.Context(), session.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent1, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hello from test-agent-1",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item2)
+	require.NoError(t, err)
+
+	item3 := NewMessageItem(NewAgentMessage(testAgent2, &chat.Message{
+		Role:    chat.MessageRoleUser,
+		Content: "Another message from test-agent-2",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item3)
 	require.NoError(t, err)
 
 	// Retrieve the session
@@ -78,21 +86,29 @@ func TestStoreMultipleAgents(t *testing.T) {
 	session := &Session{
 		ID:        "multi-agent-session",
 		CreatedAt: time.Now(),
-		Messages: []Item{
-			NewMessageItem(UserMessage("Start conversation")),
-			NewMessageItem(NewAgentMessage(agent1, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Response from agent 1",
-			})),
-			NewMessageItem(NewAgentMessage(agent2, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Response from agent 2",
-			})),
-		},
 	}
 
 	// Store the session
 	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add messages using AddItem
+	item1 := NewMessageItem(UserMessage("Start conversation"))
+	_, err = store.AddItem(t.Context(), session.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(agent1, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Response from agent 1",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item2)
+	require.NoError(t, err)
+
+	item3 := NewMessageItem(NewAgentMessage(agent2, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Response from agent 2",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item3)
 	require.NoError(t, err)
 
 	// Retrieve the session
@@ -124,24 +140,12 @@ func TestGetSessions(t *testing.T) {
 	testAgent := agent.New("test-agent", "test prompt")
 
 	session1 := &Session{
-		ID: "session-1",
-		Messages: []Item{
-			NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Message from session 1",
-			})),
-		},
+		ID:        "session-1",
 		CreatedAt: time.Now().Add(-1 * time.Hour),
 	}
 
 	session2 := &Session{
-		ID: "session-2",
-		Messages: []Item{
-			NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Message from session 2",
-			})),
-		},
+		ID:        "session-2",
 		CreatedAt: time.Now(),
 	}
 
@@ -149,6 +153,21 @@ func TestGetSessions(t *testing.T) {
 	err = store.AddSession(t.Context(), session1)
 	require.NoError(t, err)
 	err = store.AddSession(t.Context(), session2)
+	require.NoError(t, err)
+
+	// Add messages using AddItem
+	item1 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Message from session 1",
+	}))
+	_, err = store.AddItem(t.Context(), session1.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Message from session 2",
+	}))
+	_, err = store.AddItem(t.Context(), session2.ID, &item2)
 	require.NoError(t, err)
 
 	// Retrieve all sessions
@@ -230,23 +249,31 @@ func TestStoreAgentNameJSON(t *testing.T) {
 	agent2 := agent.New("another-agent", "another prompt")
 
 	session := &Session{
-		ID: "json-test-session",
-		Messages: []Item{
-			NewMessageItem(UserMessage("User input")),
-			NewMessageItem(NewAgentMessage(agent1, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Response from my-agent",
-			})),
-			NewMessageItem(NewAgentMessage(agent2, &chat.Message{
-				Role:    chat.MessageRoleAssistant,
-				Content: "Response from another-agent",
-			})),
-		},
+		ID:        "json-test-session",
 		CreatedAt: time.Now(),
 	}
 
 	// Store the session
 	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add messages using AddItem
+	item1 := NewMessageItem(UserMessage("User input"))
+	_, err = store.AddItem(t.Context(), session.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(agent1, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Response from my-agent",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item2)
+	require.NoError(t, err)
+
+	item3 := NewMessageItem(NewAgentMessage(agent2, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Response from another-agent",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item3)
 	require.NoError(t, err)
 
 	// Retrieve the session
@@ -290,19 +317,23 @@ func TestUpdateSession_LazyCreation(t *testing.T) {
 	_, err = store.GetSession(t.Context(), "lazy-session")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// Now update the session with content - this should create it (upsert)
-	session.Messages = []Item{
-		NewMessageItem(UserMessage("Hello")),
-		NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-			Role:    chat.MessageRoleAssistant,
-			Content: "Hi there!",
-		})),
-	}
-
+	// UpdateSession should create the session (upsert behavior)
 	err = store.UpdateSession(t.Context(), session)
 	require.NoError(t, err)
 
-	// Now the session should exist
+	// Now add messages via AddItem
+	item1 := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddItem(t.Context(), session.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item2)
+	require.NoError(t, err)
+
+	// Now the session should exist with messages
 	retrieved, err := store.GetSession(t.Context(), "lazy-session")
 	require.NoError(t, err)
 	assert.Len(t, retrieved.Messages, 2)
@@ -325,19 +356,23 @@ func TestUpdateSession_LazyCreation_InMemory(t *testing.T) {
 	_, err := store.GetSession(t.Context(), "lazy-session")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// Update with content - should create it
-	session.Messages = []Item{
-		NewMessageItem(UserMessage("Hello")),
-		NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-			Role:    chat.MessageRoleAssistant,
-			Content: "Hi there!",
-		})),
-	}
-
+	// UpdateSession should create it (upsert)
 	err = store.UpdateSession(t.Context(), session)
 	require.NoError(t, err)
 
-	// Now the session should exist
+	// Add messages via AddItem
+	item1 := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddItem(t.Context(), session.ID, &item1)
+	require.NoError(t, err)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	_, err = store.AddItem(t.Context(), session.ID, &item2)
+	require.NoError(t, err)
+
+	// Now the session should exist with messages
 	retrieved, err := store.GetSession(t.Context(), "lazy-session")
 	require.NoError(t, err)
 	assert.Len(t, retrieved.Messages, 2)
@@ -607,4 +642,294 @@ func TestThinking_Persistence(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, retrieved.Thinking)
 	})
+}
+
+func TestAddItem_Message(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SQLite", func(t *testing.T) {
+		t.Parallel()
+
+		store, err := NewSQLiteSessionStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		defer store.(*SQLiteSessionStore).Close()
+
+		testAddItemMessage(t, store)
+	})
+
+	t.Run("InMemory", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewInMemorySessionStore()
+		testAddItemMessage(t, store)
+	})
+}
+
+func testAddItemMessage(t *testing.T, store Store) {
+	t.Helper()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session first
+	sess := &Session{
+		ID:        "item-test-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), sess)
+	require.NoError(t, err)
+
+	// Add a message item
+	msg := NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hello, I am a test message",
+	})
+	item := NewMessageItem(msg)
+
+	itemID, err := store.AddItem(t.Context(), sess.ID, &item)
+	require.NoError(t, err)
+	assert.NotEmpty(t, itemID)
+
+	// Retrieve items
+	items, err := store.GetItems(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.Len(t, items, 1)
+
+	assert.Equal(t, itemID, items[0].ID)
+	assert.Equal(t, 0, items[0].Position)
+	assert.NotNil(t, items[0].Message)
+	assert.Equal(t, "test-agent", items[0].Message.AgentName)
+	assert.Equal(t, "Hello, I am a test message", items[0].Message.Message.Content)
+}
+
+func TestAddItem_Summary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SQLite", func(t *testing.T) {
+		t.Parallel()
+
+		store, err := NewSQLiteSessionStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		defer store.(*SQLiteSessionStore).Close()
+
+		testAddItemSummary(t, store)
+	})
+
+	t.Run("InMemory", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewInMemorySessionStore()
+		testAddItemSummary(t, store)
+	})
+}
+
+func testAddItemSummary(t *testing.T, store Store) {
+	t.Helper()
+
+	// Create a session first
+	sess := &Session{
+		ID:        "summary-test-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), sess)
+	require.NoError(t, err)
+
+	// Add a summary item
+	item := Item{Summary: "This is a test summary of the conversation"}
+
+	itemID, err := store.AddItem(t.Context(), sess.ID, &item)
+	require.NoError(t, err)
+	assert.NotEmpty(t, itemID)
+
+	// Retrieve items
+	items, err := store.GetItems(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.Len(t, items, 1)
+
+	assert.Equal(t, itemID, items[0].ID)
+	assert.Equal(t, "This is a test summary of the conversation", items[0].Summary)
+}
+
+func TestUpdateItem(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SQLite", func(t *testing.T) {
+		t.Parallel()
+
+		store, err := NewSQLiteSessionStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		defer store.(*SQLiteSessionStore).Close()
+
+		testUpdateItem(t, store)
+	})
+
+	t.Run("InMemory", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewInMemorySessionStore()
+		testUpdateItem(t, store)
+	})
+}
+
+func testUpdateItem(t *testing.T, store Store) {
+	t.Helper()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session first
+	sess := &Session{
+		ID:        "update-item-test-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), sess)
+	require.NoError(t, err)
+
+	// Add a message item
+	msg := NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Original content",
+	})
+	item := NewMessageItem(msg)
+
+	itemID, err := store.AddItem(t.Context(), sess.ID, &item)
+	require.NoError(t, err)
+
+	// Update the item
+	updatedMsg := NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Updated content",
+	})
+	updatedItem := NewMessageItem(updatedMsg)
+
+	err = store.UpdateItem(t.Context(), itemID, &updatedItem)
+	require.NoError(t, err)
+
+	// Retrieve and verify
+	items, err := store.GetItems(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.Len(t, items, 1)
+
+	assert.Equal(t, "Updated content", items[0].Message.Message.Content)
+}
+
+func TestAddSubSession(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SQLite", func(t *testing.T) {
+		t.Parallel()
+
+		store, err := NewSQLiteSessionStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		defer store.(*SQLiteSessionStore).Close()
+
+		testAddSubSession(t, store)
+	})
+
+	t.Run("InMemory", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewInMemorySessionStore()
+		testAddSubSession(t, store)
+	})
+}
+
+func testAddSubSession(t *testing.T, store Store) {
+	t.Helper()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a parent session
+	parentSess := &Session{
+		ID:        "parent-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), parentSess)
+	require.NoError(t, err)
+
+	// Create a sub-session
+	subSess := &Session{
+		Title:     "Sub-session for task",
+		CreatedAt: time.Now(),
+		Messages: []Item{
+			NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+				Role:    chat.MessageRoleAssistant,
+				Content: "Sub-session message",
+			})),
+		},
+	}
+
+	// Add the sub-session
+	subSessID, err := store.AddSubSession(t.Context(), parentSess.ID, subSess)
+	require.NoError(t, err)
+	assert.NotEmpty(t, subSessID)
+
+	// Verify the sub-session was stored with parent_id
+	retrievedSubSess, err := store.GetSession(t.Context(), subSessID)
+	require.NoError(t, err)
+	assert.Equal(t, "Sub-session for task", retrievedSubSess.Title)
+	assert.Equal(t, parentSess.ID, retrievedSubSess.ParentID)
+
+	// Verify the parent session has a reference item
+	items, err := store.GetItems(t.Context(), parentSess.ID)
+	require.NoError(t, err)
+	assert.Len(t, items, 1)
+
+	assert.Equal(t, subSessID, items[0].SubSessionID)
+	assert.NotNil(t, items[0].SubSession)
+	assert.Equal(t, "Sub-session for task", items[0].SubSession.Title)
+}
+
+func TestGetItems_Ordering(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SQLite", func(t *testing.T) {
+		t.Parallel()
+
+		store, err := NewSQLiteSessionStore(filepath.Join(t.TempDir(), "test.db"))
+		require.NoError(t, err)
+		defer store.(*SQLiteSessionStore).Close()
+
+		testGetItemsOrdering(t, store)
+	})
+
+	t.Run("InMemory", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewInMemorySessionStore()
+		testGetItemsOrdering(t, store)
+	})
+}
+
+func testGetItemsOrdering(t *testing.T, store Store) {
+	t.Helper()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session
+	sess := &Session{
+		ID:        "ordering-test-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), sess)
+	require.NoError(t, err)
+
+	// Add multiple items
+	for i := range 5 {
+		msg := NewAgentMessage(testAgent, &chat.Message{
+			Role:    chat.MessageRoleAssistant,
+			Content: "Message " + string(rune('A'+i)),
+		})
+		item := NewMessageItem(msg)
+		_, err := store.AddItem(t.Context(), sess.ID, &item)
+		require.NoError(t, err)
+	}
+
+	// Retrieve and verify order
+	items, err := store.GetItems(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.Len(t, items, 5)
+
+	for i := range 5 {
+		assert.Equal(t, i, items[i].Position)
+		assert.Equal(t, "Message "+string(rune('A'+i)), items[i].Message.Message.Content)
+	}
 }

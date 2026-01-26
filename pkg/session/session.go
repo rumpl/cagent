@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strings"
@@ -25,11 +26,20 @@ const (
 
 // Item represents either a message or a sub-session
 type Item struct {
+	// ID is the unique identifier for this item in the store
+	ID string `json:"id,omitempty"`
+
+	// Position is the order of this item within the session
+	Position int `json:"position,omitempty"`
+
 	// Message holds a regular conversation message
 	Message *Message `json:"message,omitempty"`
 
 	// SubSession holds a complete sub-session from task transfers
 	SubSession *Session `json:"sub_session,omitempty"`
+
+	// SubSessionID is the ID of the sub-session (used when SubSession is not fully loaded)
+	SubSessionID string `json:"sub_session_id,omitempty"`
 
 	// Summary is a summary of the session up until this point
 	Summary string `json:"summary,omitempty"`
@@ -45,7 +55,8 @@ func (si *Item) IsSubSession() bool {
 	return si.SubSession != nil
 }
 
-// Session represents the agent's state including conversation history and variables
+// Session represents the agent's state including conversation history and variables.
+// When a store is attached, all message operations are persisted automatically.
 type Session struct {
 	// ID is the unique identifier for the session
 	ID string `json:"id"`
@@ -53,11 +64,16 @@ type Session struct {
 	// Title is the title of the session, set by the runtime
 	Title string `json:"title"`
 
-	// Messages holds the conversation history (messages and sub-sessions)
+	// Messages holds the conversation history (messages and sub-sessions).
+	// When a store is attached, this is kept in sync with the store.
 	Messages []Item `json:"messages"`
 
 	// CreatedAt is the time the session was created
 	CreatedAt time.Time `json:"created_at"`
+
+	// store is the backing store for persistence. When set, all message
+	// operations are automatically persisted. This is not serialized.
+	store Store `json:"-"`
 
 	// ToolsApproved is a flag to indicate if the tools have been approved
 	ToolsApproved bool `json:"tools_approved"`
@@ -102,9 +118,10 @@ type Session struct {
 	CustomModelsUsed []string `json:"custom_models_used,omitempty"`
 
 	// ParentID indicates this is a sub-session created by task transfer.
-	// Sub-sessions are not persisted as standalone entries; they are embedded
-	// within the parent session's Messages array.
-	ParentID string `json:"-"`
+	// Sub-sessions are persisted as standalone sessions with this field linking
+	// to the parent. The parent session has a sub_session item in session_items
+	// that references this sub-session's ID.
+	ParentID string `json:"parent_id,omitempty"`
 
 	// MessageUsageHistory stores per-message usage data for remote mode.
 	// In remote mode, messages are managed server-side, so we track usage separately.
@@ -188,13 +205,73 @@ func NewSubSessionItem(subSession *Session) Item {
 
 // Session helper methods
 
-// AddMessage adds a message to the session
-func (s *Session) AddMessage(msg *Message) {
-	s.Messages = append(s.Messages, NewMessageItem(msg))
+// SetStore attaches a store to the session for automatic persistence.
+// When a store is attached, all message operations are persisted automatically.
+func (s *Session) SetStore(store Store) {
+	s.store = store
 }
 
-// AddSubSession adds a sub-session to the session
+// Store returns the attached store, or nil if none is attached.
+func (s *Session) Store() Store {
+	return s.store
+}
+
+// AddMessage adds a message to the session.
+// If a store is attached, the message is persisted automatically.
+func (s *Session) AddMessage(msg *Message) *Item {
+	item := NewMessageItem(msg)
+	return s.AddItem(&item)
+}
+
+// AddItem adds an item to the session.
+// If a store is attached, the item is persisted automatically.
+func (s *Session) AddItem(item *Item) *Item {
+	if s.store != nil && !s.IsSubSession() {
+		itemID, err := s.store.AddItem(context.Background(), s.ID, item)
+		if err != nil {
+			slog.Error("Failed to add item to store", "session_id", s.ID, "error", err)
+		} else {
+			item.ID = itemID
+			item.Position = len(s.Messages)
+		}
+	}
+	s.Messages = append(s.Messages, *item)
+	return &s.Messages[len(s.Messages)-1]
+}
+
+// UpdateItem updates an item in the session.
+// If a store is attached, the update is persisted automatically.
+func (s *Session) UpdateItem(item *Item) {
+	if s.store != nil && !s.IsSubSession() && item.ID != "" {
+		if err := s.store.UpdateItem(context.Background(), item.ID, item); err != nil {
+			slog.Error("Failed to update item in store", "item_id", item.ID, "error", err)
+		}
+	}
+}
+
+// RemoveItem removes an item from the session by ID.
+// Note: Currently only removes from memory; store deletion is not implemented.
+func (s *Session) RemoveItem(itemID string) {
+	if itemID == "" {
+		return
+	}
+	for i, item := range s.Messages {
+		if item.ID == itemID {
+			s.Messages = append(s.Messages[:i], s.Messages[i+1:]...)
+			return
+		}
+	}
+}
+
+// AddSubSession adds a sub-session to the session.
+// If a store is attached, the sub-session is persisted automatically.
 func (s *Session) AddSubSession(subSession *Session) {
+	if s.store != nil && !s.IsSubSession() {
+		_, err := s.store.AddSubSession(context.Background(), s.ID, subSession)
+		if err != nil {
+			slog.Error("Failed to add sub-session to store", "parent_id", s.ID, "sub_id", subSession.ID, "error", err)
+		}
+	}
 	s.Messages = append(s.Messages, NewSubSessionItem(subSession))
 }
 
@@ -361,6 +438,13 @@ func WithPermissions(perms *PermissionsConfig) Opt {
 func WithParentID(parentID string) Opt {
 	return func(s *Session) {
 		s.ParentID = parentID
+	}
+}
+
+// WithStore attaches a store to the session for automatic persistence.
+func WithStore(store Store) Opt {
+	return func(s *Session) {
+		s.store = store
 	}
 }
 

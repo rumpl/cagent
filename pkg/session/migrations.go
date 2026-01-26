@@ -3,9 +3,14 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
+
+// MigrationFunc is a custom migration function for complex migrations
+type MigrationFunc func(ctx context.Context, tx *sql.Tx) error
 
 // Migration represents a database migration
 type Migration struct {
@@ -14,6 +19,7 @@ type Migration struct {
 	Description string
 	UpSQL       string
 	DownSQL     string
+	UpFunc      MigrationFunc // Custom function for complex migrations (runs after UpSQL if both present)
 	AppliedAt   time.Time
 }
 
@@ -62,7 +68,7 @@ func (m *MigrationManager) RunPendingMigrations(ctx context.Context) error {
 	migrations := getAllMigrations()
 
 	for _, migration := range migrations {
-		applied, err := m.isMigrationApplied(ctx, migration.Name)
+		applied, err := m.isMigrationApplied(ctx, migration.ID, migration.Name)
 		if err != nil {
 			return fmt.Errorf("failed to check if migration %s is applied: %w", migration.Name, err)
 		}
@@ -78,10 +84,10 @@ func (m *MigrationManager) RunPendingMigrations(ctx context.Context) error {
 	return nil
 }
 
-// isMigrationApplied checks if a migration has already been applied
-func (m *MigrationManager) isMigrationApplied(ctx context.Context, name string) (bool, error) {
+// isMigrationApplied checks if a migration has already been applied (by name or ID)
+func (m *MigrationManager) isMigrationApplied(ctx context.Context, id int, name string) (bool, error) {
 	var count int
-	err := m.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", name).Scan(&count)
+	err := m.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ? OR id = ?", name, id).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -99,9 +105,19 @@ func (m *MigrationManager) applyMigration(ctx context.Context, migration *Migrat
 		_ = tx.Rollback()
 	}()
 
-	_, err = tx.ExecContext(ctx, migration.UpSQL)
-	if err != nil {
-		return fmt.Errorf("failed to execute migration SQL: %w", err)
+	// Execute SQL migration if present
+	if migration.UpSQL != "" {
+		_, err = tx.ExecContext(ctx, migration.UpSQL)
+		if err != nil {
+			return fmt.Errorf("failed to execute migration SQL: %w", err)
+		}
+	}
+
+	// Execute custom function if present
+	if migration.UpFunc != nil {
+		if err = migration.UpFunc(ctx, tx); err != nil {
+			return fmt.Errorf("failed to execute migration function: %w", err)
+		}
 	}
 
 	_, err = tx.ExecContext(ctx,
@@ -242,5 +258,126 @@ func getAllMigrations() []Migration {
 			UpSQL:       `ALTER TABLE sessions ADD COLUMN thinking BOOLEAN DEFAULT 1`,
 			DownSQL:     `ALTER TABLE sessions DROP COLUMN thinking`,
 		},
+		{
+			ID:          14,
+			Name:        "014_create_session_items_table",
+			Description: "Create session_items table for storing messages, sub-sessions, and summaries separately",
+			UpSQL: `CREATE TABLE IF NOT EXISTS session_items (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				position INTEGER NOT NULL,
+				item_type TEXT NOT NULL CHECK (item_type IN ('message', 'sub_session', 'summary')),
+				message_data TEXT,
+				sub_session_id TEXT,
+				summary TEXT,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_session_items_session_id ON session_items(session_id);
+			CREATE INDEX IF NOT EXISTS idx_session_items_position ON session_items(session_id, position);`,
+			DownSQL: `DROP INDEX IF EXISTS idx_session_items_position;
+			DROP INDEX IF EXISTS idx_session_items_session_id;
+			DROP TABLE IF EXISTS session_items;`,
+		},
+		{
+			ID:          15,
+			Name:        "015_migrate_messages_to_session_items",
+			Description: "Migrate data from legacy messages column to session_items table",
+			UpFunc:      migrateMessagesToSessionItems,
+		},
+		{
+			ID:          16,
+			Name:        "016_drop_messages_column",
+			Description: "Drop the legacy messages column from sessions table (data now in session_items)",
+			UpSQL:       `ALTER TABLE sessions DROP COLUMN messages`,
+			DownSQL:     `ALTER TABLE sessions ADD COLUMN messages TEXT DEFAULT '[]'`,
+		},
+		{
+			ID:          17,
+			Name:        "017_add_parent_id_column",
+			Description: "Add parent_id column to sessions table for sub-session hierarchy",
+			UpSQL:       `ALTER TABLE sessions ADD COLUMN parent_id TEXT DEFAULT ''`,
+			DownSQL:     `ALTER TABLE sessions DROP COLUMN parent_id`,
+		},
 	}
+}
+
+// migrateMessagesToSessionItems migrates data from the legacy messages JSON column
+// to the new session_items table for all existing sessions.
+func migrateMessagesToSessionItems(ctx context.Context, tx *sql.Tx) error {
+	// Get all sessions with their messages
+	rows, err := tx.QueryContext(ctx, "SELECT id, messages FROM sessions WHERE messages IS NOT NULL AND messages != '[]'")
+	if err != nil {
+		return fmt.Errorf("querying sessions: %w", err)
+	}
+	defer rows.Close()
+
+	type sessionData struct {
+		id       string
+		messages string
+	}
+	var sessions []sessionData
+
+	for rows.Next() {
+		var sd sessionData
+		if err := rows.Scan(&sd.id, &sd.messages); err != nil {
+			return fmt.Errorf("scanning session: %w", err)
+		}
+		sessions = append(sessions, sd)
+	}
+	rows.Close()
+
+	for _, sd := range sessions {
+		// Check if this session already has items in session_items
+		var count int
+		err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM session_items WHERE session_id = ?", sd.id).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("checking existing items for session %s: %w", sd.id, err)
+		}
+		if count > 0 {
+			// Session already has items, skip
+			slog.Debug("Skipping session migration, already has items", "session_id", sd.id, "item_count", count)
+			continue
+		}
+
+		// Parse the messages JSON - try new Item format first, then legacy Message format
+		var items []Item
+		if err := json.Unmarshal([]byte(sd.messages), &items); err != nil {
+			return fmt.Errorf("parsing messages for session %s: %w", sd.id, err)
+		}
+
+		// Check if this is legacy format (Message structs directly) or new format (Item wrappers)
+		// Legacy format will result in items with nil Message pointers
+		isLegacyFormat := len(items) > 0 && items[0].Message == nil
+		if isLegacyFormat {
+			// Try parsing as legacy Message format
+			var messages []Message
+			if err := json.Unmarshal([]byte(sd.messages), &messages); err != nil {
+				return fmt.Errorf("parsing legacy messages for session %s: %w", sd.id, err)
+			}
+			items = convertMessagesToItems(messages)
+		}
+
+		// Insert items into session_items
+		for i, item := range items {
+			itemID := item.ID
+			if itemID == "" {
+				itemID = generateItemID()
+			}
+
+			itemType, messageData, subSessionID, summary := serializeItem(&item)
+
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO session_items (id, session_id, position, item_type, message_data, sub_session_id, summary, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				itemID, sd.id, i, string(itemType), messageData, subSessionID, summary, time.Now().Format(time.RFC3339))
+			if err != nil {
+				return fmt.Errorf("inserting item for session %s: %w", sd.id, err)
+			}
+		}
+
+		slog.Debug("Migrated session messages to session_items", "session_id", sd.id, "item_count", len(items))
+	}
+
+	return nil
 }
