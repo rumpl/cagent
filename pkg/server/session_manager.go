@@ -175,10 +175,6 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 			}
 			streamChan <- event
 		}
-
-		if err := sm.sessionStore.UpdateSession(ctx, sess); err != nil {
-			return
-		}
 	}()
 
 	return streamChan, nil
@@ -281,7 +277,7 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 		runtime.WithManagedOAuth(false),
 		runtime.WithSessionStore(sm.sessionStore),
 	}
-	run, err := runtime.New(t, opts...)
+	run, err := runtime.New(t, sm.sessionStore, opts...)
 	if err != nil {
 		return nil, err
 	}

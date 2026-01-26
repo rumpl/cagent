@@ -16,7 +16,7 @@ import (
 	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/team"
 	"github.com/docker/cagent/pkg/tools"
-	"github.com/docker/cagent/pkg/tools/mcp"
+	mcptools "github.com/docker/cagent/pkg/tools/mcp"
 )
 
 // RemoteRuntime implements the Runtime interface using a remote client.
@@ -232,6 +232,10 @@ func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Mess
 	return messages
 }
 
+func (r *RemoteRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo {
+	return nil
+}
+
 // ResumeElicitation sends an elicitation response back to a waiting elicitation request
 func (r *RemoteRuntime) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
 	slog.Debug("Resuming remote runtime with elicitation response", "agent", r.currentAgent, "action", action, "session_id", r.sessionID)
@@ -271,7 +275,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 		return err
 	}
 
-	var authMetadata mcp.AuthorizationServerMetadata
+	var authMetadata mcptools.AuthorizationServerMetadata
 	metadataBytes, err := json.Marshal(authServerMetadata)
 	if err != nil {
 		slog.Error("Failed to marshal auth_server_metadata", "error", err)
@@ -290,7 +294,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	defer cancel()
 
 	slog.Debug("Creating OAuth callback server")
-	callbackServer, err := mcp.NewCallbackServer()
+	callbackServer, err := mcptools.NewCallbackServer()
 	if err != nil {
 		slog.Error("Failed to create callback server", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil)
@@ -316,7 +320,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	var clientID, clientSecret string
 	if authMetadata.RegistrationEndpoint != "" {
 		slog.Debug("Attempting dynamic client registration")
-		clientID, clientSecret, err = mcp.RegisterClient(oauthCtx, &authMetadata, redirectURI, nil)
+		clientID, clientSecret, err = mcptools.RegisterClient(oauthCtx, &authMetadata, redirectURI, nil)
 		if err != nil {
 			slog.Error("Dynamic client registration failed", "error", err)
 			_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil)
@@ -330,7 +334,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 		return err
 	}
 
-	state, err := mcp.GenerateState()
+	state, err := mcptools.GenerateState()
 	if err != nil {
 		slog.Error("Failed to generate state", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil)
@@ -338,9 +342,9 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	}
 
 	callbackServer.SetExpectedState(state)
-	verifier := mcp.GeneratePKCEVerifier()
+	verifier := mcptools.GeneratePKCEVerifier()
 
-	authURL := mcp.BuildAuthorizationURL(
+	authURL := mcptools.BuildAuthorizationURL(
 		authMetadata.AuthorizationEndpoint,
 		clientID,
 		redirectURI,
@@ -352,7 +356,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 	slog.Debug("Authorization URL built", "url", authURL)
 
 	slog.Debug("Requesting authorization code")
-	code, receivedState, err := mcp.RequestAuthorizationCode(oauthCtx, authURL, callbackServer, state)
+	code, receivedState, err := mcptools.RequestAuthorizationCode(oauthCtx, authURL, callbackServer, state)
 	if err != nil {
 		slog.Error("Failed to get authorization code", "error", err)
 		_ = r.client.ResumeElicitation(ctx, r.sessionID, "decline", nil)
@@ -368,7 +372,7 @@ func (r *RemoteRuntime) handleOAuthElicitation(ctx context.Context, req *Elicita
 
 	slog.Debug("Authorization code received, exchanging for token")
 
-	token, err := mcp.ExchangeCodeForToken(
+	token, err := mcptools.ExchangeCodeForToken(
 		oauthCtx,
 		authMetadata.TokenEndpoint,
 		code,

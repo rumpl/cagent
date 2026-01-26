@@ -51,6 +51,7 @@ func runCAgent(ctx agent.InvocationContext, t *team.Team, agentName string, a *c
 
 		// Create runtime
 		rt, err := runtime.New(t,
+			session.NewInMemorySessionStore(),
 			runtime.WithCurrentAgent(agentName),
 		)
 		if err != nil {

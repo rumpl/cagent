@@ -25,11 +25,19 @@ const (
 
 // Item represents either a message or a sub-session
 type Item struct {
+	// ID is the unique identifier for the item (assigned by the store)
+	ID string `json:"id,omitempty"`
+
 	// Message holds a regular conversation message
 	Message *Message `json:"message,omitempty"`
 
 	// SubSession holds a complete sub-session from task transfers
 	SubSession *Session `json:"sub_session,omitempty"`
+
+	// SubSessionID is a reference to a sub-session stored separately.
+	// Used by the database store to avoid embedding the full sub-session in the messages table.
+	// When loading, this is resolved to SubSession.
+	SubSessionID string `json:"sub_session_id,omitempty"`
 
 	// Summary is a summary of the session up until this point
 	Summary string `json:"summary,omitempty"`
@@ -102,9 +110,10 @@ type Session struct {
 	CustomModelsUsed []string `json:"custom_models_used,omitempty"`
 
 	// ParentID indicates this is a sub-session created by task transfer.
-	// Sub-sessions are not persisted as standalone entries; they are embedded
-	// within the parent session's Messages array.
-	ParentID string `json:"-"`
+	// Sub-sessions are persisted separately in the database with a reference
+	// to their parent session. They are also embedded within the parent
+	// session's Messages array as SubSession items for conversation context.
+	ParentID string `json:"parent_id,omitempty"`
 
 	// MessageUsageHistory stores per-message usage data for remote mode.
 	// In remote mode, messages are managed server-side, so we track usage separately.

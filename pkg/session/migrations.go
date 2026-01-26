@@ -3,8 +3,11 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Migration represents a database migration
@@ -15,6 +18,9 @@ type Migration struct {
 	UpSQL       string
 	DownSQL     string
 	AppliedAt   time.Time
+	// UpFunc is an optional custom migration function for complex migrations.
+	// If set, it's called after UpSQL (if any).
+	UpFunc func(ctx context.Context, db *sql.DB) error
 }
 
 // MigrationManager handles database migrations
@@ -99,9 +105,11 @@ func (m *MigrationManager) applyMigration(ctx context.Context, migration *Migrat
 		_ = tx.Rollback()
 	}()
 
-	_, err = tx.ExecContext(ctx, migration.UpSQL)
-	if err != nil {
-		return fmt.Errorf("failed to execute migration SQL: %w", err)
+	if migration.UpSQL != "" {
+		_, err = tx.ExecContext(ctx, migration.UpSQL)
+		if err != nil {
+			return fmt.Errorf("failed to execute migration SQL: %w", err)
+		}
 	}
 
 	_, err = tx.ExecContext(ctx,
@@ -114,6 +122,13 @@ func (m *MigrationManager) applyMigration(ctx context.Context, migration *Migrat
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("failed to commit migration transaction: %w", err)
+	}
+
+	// Run custom migration function after commit (it may need to use its own transactions)
+	if migration.UpFunc != nil {
+		if err := migration.UpFunc(ctx, m.db); err != nil {
+			return fmt.Errorf("failed to execute migration function: %w", err)
+		}
 	}
 
 	return nil
@@ -146,6 +161,67 @@ func (m *MigrationManager) GetAppliedMigrations(ctx context.Context) ([]Migratio
 	}
 
 	return migrations, nil
+}
+
+// migrateMessagesToTable migrates messages from the sessions.messages JSON column to the messages table
+func migrateMessagesToTable(ctx context.Context, db *sql.DB) error {
+	// Get all sessions with their messages JSON
+	rows, err := db.QueryContext(ctx, "SELECT id, messages FROM sessions WHERE messages IS NOT NULL AND messages != ''")
+	if err != nil {
+		return fmt.Errorf("failed to query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	type sessionData struct {
+		id       string
+		messages string
+	}
+
+	var sessions []sessionData
+	for rows.Next() {
+		var sd sessionData
+		if err := rows.Scan(&sd.id, &sd.messages); err != nil {
+			return fmt.Errorf("failed to scan session: %w", err)
+		}
+		sessions = append(sessions, sd)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating sessions: %w", err)
+	}
+
+	// Process each session
+	for _, sd := range sessions {
+		if sd.messages == "" || sd.messages == "[]" || sd.messages == "null" {
+			continue
+		}
+
+		// Parse as Item array (stored format)
+		var items []Item
+		if err := json.Unmarshal([]byte(sd.messages), &items); err != nil {
+			return fmt.Errorf("failed to unmarshal messages for session %s: %w", sd.id, err)
+		}
+
+		// Insert each item into the messages table
+		for position, item := range items {
+			if item.ID == "" {
+				item.ID = uuid.New().String()
+			}
+
+			itemJSON, err := json.Marshal(item)
+			if err != nil {
+				return fmt.Errorf("failed to marshal item for session %s: %w", sd.id, err)
+			}
+
+			_, err = db.ExecContext(ctx,
+				"INSERT OR IGNORE INTO messages (id, session_id, position, data) VALUES (?, ?, ?, ?)",
+				item.ID, sd.id, position, string(itemJSON))
+			if err != nil {
+				return fmt.Errorf("failed to insert message for session %s: %w", sd.id, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // getAllMigrations returns all available migrations in order
@@ -241,6 +317,35 @@ func getAllMigrations() []Migration {
 			Description: "Add thinking column to sessions table for session-level thinking toggle (default enabled)",
 			UpSQL:       `ALTER TABLE sessions ADD COLUMN thinking BOOLEAN DEFAULT 1`,
 			DownSQL:     `ALTER TABLE sessions DROP COLUMN thinking`,
+		},
+		{
+			ID:          14,
+			Name:        "014_create_messages_table",
+			Description: "Create messages table for normalized message storage",
+			UpSQL: `CREATE TABLE IF NOT EXISTS messages (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				position INTEGER NOT NULL,
+				data TEXT NOT NULL,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+			CREATE INDEX IF NOT EXISTS idx_messages_session_position ON messages(session_id, position);`,
+			DownSQL: `DROP TABLE IF EXISTS messages`,
+		},
+		{
+			ID:          15,
+			Name:        "015_migrate_messages_to_table",
+			Description: "Migrate existing messages from sessions.messages JSON column to messages table",
+			UpFunc:      migrateMessagesToTable,
+		},
+		{
+			ID:          16,
+			Name:        "016_add_parent_id_column",
+			Description: "Add parent_id column to sessions table for sub-session tracking",
+			UpSQL: `ALTER TABLE sessions ADD COLUMN parent_id TEXT DEFAULT NULL;
+			CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id);`,
+			DownSQL: `DROP INDEX IF EXISTS idx_sessions_parent_id; ALTER TABLE sessions DROP COLUMN parent_id`,
 		},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/docker/cagent/pkg/runtime"
 	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/tools"
+	mcptools "github.com/docker/cagent/pkg/tools/mcp"
 )
 
 // mockRuntime is a minimal mock for testing App without a real runtime
@@ -42,6 +43,9 @@ func (m *mockRuntime) SessionStore() session.Store { return nil }
 func (m *mockRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan runtime.Event) {
 }
 func (m *mockRuntime) Stop() {}
+func (m *mockRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo {
+	return nil
+}
 
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)

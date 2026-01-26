@@ -155,18 +155,29 @@ func (a *App) TrackCurrentAgentModel(model string) {
 	a.currentAgentModel = model
 }
 
+// getLocalRuntime returns the underlying LocalRuntime, unwrapping any wrapper runtimes.
+// Returns nil if the runtime is not a LocalRuntime (e.g., remote runtime).
+func (a *App) getLocalRuntime() *runtime.LocalRuntime {
+	rt := a.runtime
+	// Unwrap StorageRuntime if present
+	if sr, ok := rt.(*runtime.StorageRuntime); ok {
+		rt = sr.Unwrap()
+	}
+	if localRuntime, ok := rt.(*runtime.LocalRuntime); ok {
+		return localRuntime
+	}
+	return nil
+}
+
 // CurrentMCPPrompts returns the available MCP prompts for the active agent
 func (a *App) CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo {
-	if localRuntime, ok := a.runtime.(*runtime.LocalRuntime); ok {
-		return localRuntime.CurrentMCPPrompts(ctx)
-	}
-	return make(map[string]mcptools.PromptInfo)
+	return a.runtime.CurrentMCPPrompts(ctx)
 }
 
 // ExecuteMCPPrompt executes an MCP prompt with provided arguments and returns the content
 func (a *App) ExecuteMCPPrompt(ctx context.Context, promptName string, arguments map[string]string) (string, error) {
-	localRuntime, ok := a.runtime.(*runtime.LocalRuntime)
-	if !ok {
+	localRuntime := a.getLocalRuntime()
+	if localRuntime == nil {
 		return "", fmt.Errorf("MCP prompts are only supported with local runtime")
 	}
 
@@ -241,6 +252,7 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 		} else {
 			a.session.AddMessage(session.UserMessage(message))
 		}
+
 		for event := range a.runtime.RunStream(ctx, a.session) {
 			// If context is cancelled, continue draining but don't forward events.
 			// This prevents the runtime from blocking on event sends.
@@ -258,6 +270,7 @@ func (a *App) RunWithMessage(ctx context.Context, cancel context.CancelFunc, msg
 	a.cancel = cancel
 	go func() {
 		a.session.AddMessage(msg)
+
 		for event := range a.runtime.RunStream(ctx, a.session) {
 			// If context is cancelled, continue draining but don't forward events.
 			// This prevents the runtime from blocking on event sends.

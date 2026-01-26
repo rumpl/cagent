@@ -64,6 +64,10 @@ func TestResponseAPIMultipleToolCalls(t *testing.T) {
 
 	// Verify the session has both complete tool calls
 	messages := sess.GetAllMessages()
+	t.Logf("Total messages: %d", len(messages))
+	for i, msg := range messages {
+		t.Logf("Message %d: role=%s, toolCalls=%d", i, msg.Message.Role, len(msg.Message.ToolCalls))
+	}
 	var toolCalls []string
 	for _, msg := range messages {
 		if msg.Message.Role == "assistant" && len(msg.Message.ToolCalls) > 0 {

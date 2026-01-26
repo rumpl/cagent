@@ -141,6 +141,8 @@ type Runtime interface {
 
 	// Summarize generates a summary for the session
 	Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event)
+
+	CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo
 }
 
 type CurrentAgentInfo struct {
@@ -248,7 +250,7 @@ func WithEnv(env []string) Opt {
 }
 
 // New creates a new runtime for an agent and its team
-func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
+func New(agents *team.Team, store session.Store, opts ...Opt) (*LocalRuntime, error) {
 	modelsStore, err := modelsdev.NewStore()
 	if err != nil {
 		return nil, err
@@ -268,7 +270,7 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		modelsStore:          modelsStore,
 		sessionCompaction:    true,
 		managedOAuth:         true,
-		sessionStore:         session.NewInMemorySessionStore(),
+		sessionStore:         store,
 	}
 
 	for _, opt := range opts {
@@ -287,8 +289,8 @@ func New(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("agent %s has no valid model", defaultAgent.Name())
 	}
 
-	r.titleGen = newTitleGenerator(model)
-	r.sessionCompactor = newSessionCompactor(model, r.sessionStore)
+	r.titleGen = newTitleGenerator(model, store)
+	r.sessionCompactor = newSessionCompactor(model)
 
 	slog.Debug("Creating new runtime", "agent", r.currentAgent, "available_agents", agents.Size())
 
@@ -687,6 +689,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	events := make(chan Event, 128)
 
 	go func() {
+		r.sessionStore.UpdateSession(ctx, sess)
 		telemetry.RecordSessionStart(ctx, r.currentAgent, sess.ID)
 
 		ctx, sessionSpan := r.startSpan(ctx, "runtime.session", trace.WithAttributes(
@@ -726,6 +729,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 		if sess.SendUserMessage {
 			events <- UserMessage(messages[len(messages)-1].Content)
 		}
+		r.sessionStore.AddMessage(ctx, sess.ID, &session.Item{Message: &session.Message{Message: messages[len(messages)-1]}})
 
 		events <- StreamStarted(sess.ID, a.Name())
 
@@ -784,8 +788,8 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 							CreatedAt: time.Now().Format(time.RFC3339),
 						}
 
-						sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-						r.saveSession(ctx, sess)
+						msgItem := session.NewMessageItem(session.NewAgentMessage(a, &assistantMessage))
+						sess.Messages = append(sess.Messages, msgItem)
 						return
 					}
 
@@ -890,11 +894,30 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				attribute.Bool("stopped", res.Stopped),
 			)
 			streamSpan.End()
-			slog.Debug("Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped)
+			slog.Debug("Stream processed", "agent", a.Name(), "tool_calls", len(res.Calls), "content_length", len(res.Content), "stopped", res.Stopped, "sess", sess.ID)
 
-			// Add assistant message to conversation history, but skip empty assistant messages
-			// Providers reject assistant messages that have neither content nor tool calls.
+			// Build usage event and final message update
 			var msgUsage *MessageUsage
+			var messageCost float64
+			messageModel := modelID
+			if res.ActualModel != "" {
+				messageModel = res.ActualModel
+			}
+			if res.Usage != nil {
+				if m != nil && m.Cost != nil {
+					messageCost = (float64(res.Usage.InputTokens)*m.Cost.Input +
+						float64(res.Usage.OutputTokens)*m.Cost.Output +
+						float64(res.Usage.CachedInputTokens)*m.Cost.CacheRead +
+						float64(res.Usage.CacheWriteTokens)*m.Cost.CacheWrite) / 1e6
+				}
+				msgUsage = &MessageUsage{
+					Usage: *res.Usage,
+					Cost:  messageCost,
+					Model: messageModel,
+				}
+			}
+
+			// Final update to the streaming message with complete metadata
 			if strings.TrimSpace(res.Content) != "" || len(res.Calls) > 0 {
 				// Build tool definitions for the tool calls
 				var toolDefs []tools.Tool
@@ -910,21 +933,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					}
 				}
 
-				// Calculate per-message cost if usage and pricing info available
-				var messageCost float64
-				if res.Usage != nil && m != nil && m.Cost != nil {
-					messageCost = (float64(res.Usage.InputTokens)*m.Cost.Input +
-						float64(res.Usage.OutputTokens)*m.Cost.Output +
-						float64(res.Usage.CachedInputTokens)*m.Cost.CacheRead +
-						float64(res.Usage.CacheWriteTokens)*m.Cost.CacheWrite) / 1e6
-				}
-
-				// Determine the model name to store
-				messageModel := modelID
-				if res.ActualModel != "" {
-					messageModel = res.ActualModel
-				}
-
+				// Create complete message with all metadata
 				assistantMessage := chat.Message{
 					Role:              chat.MessageRoleAssistant,
 					Content:           res.Content,
@@ -938,24 +947,15 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 					Model:             messageModel,
 					Cost:              messageCost,
 				}
-
-				// Build per-message usage for the event
-				if res.Usage != nil {
-					msgUsage = &MessageUsage{
-						Usage: *res.Usage,
-						Cost:  messageCost,
-						Model: messageModel,
-					}
-				}
 				if res.RateLimit != nil {
 					msgUsage.RateLimit = *res.RateLimit
 				}
 
-				sess.AddMessage(session.NewAgentMessage(a, &assistantMessage))
-				r.saveSession(ctx, sess)
-				slog.Debug("Added assistant message to session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
-			} else {
-				slog.Debug("Skipping empty assistant message (no content and no tool calls)", "agent", a.Name())
+				msgItem := session.NewMessageItem(session.NewAgentMessage(a, &assistantMessage))
+				r.editMessageInSession(ctx, sess, "", &msgItem)
+				r.sessionStore.UpdateSession(ctx, sess)
+				r.sessionStore.EditMessage(ctx, sess.ID, msgItem.ID, &msgItem)
+				slog.Debug("Final update to assistant message", "agent", a.Name())
 			}
 
 			events <- TokenUsageWithMessage(sess.ID, r.currentAgent, sess.InputTokens, sess.OutputTokens, sess.InputTokens+sess.OutputTokens, contextLimit, sess.Cost, msgUsage)
@@ -1126,6 +1126,42 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 	var messageRateLimit *chat.RateLimit
 
 	modelID := getAgentModelID(a)
+
+	msgCreatedAt := time.Now().Format(time.RFC3339)
+
+	// createOrUpdateStreamingMessage updates the current accumulated content in the session.
+	// On first call, it creates the message. On subsequent calls, it updates the existing message.
+	// createOrUpdateStreamingMessage := func() {
+	// 	// Build current message state
+	// 	msg := chat.Message{
+	// 		Role:             chat.MessageRoleAssistant,
+	// 		Content:          fullContent.String(),
+	// 		ReasoningContent: fullReasoningContent.String(),
+	// 		ToolCalls:        toolCalls,
+	// 		CreatedAt:        msgCreatedAt,
+	// 	}
+
+	// 	if !streamingMsgCreated {
+	// 		// First content - create the message
+	// 		sess.Messages = append(sess.Messages, item)
+	// 		streamingMsgCreated = true
+	// 		slog.Debug("Created streaming assistant message", "agent", a.Name())
+	// 	} else {
+	// 		// Update existing message (find last assistant message)
+	// 		r.editMessageInSession(ctx, sess, "", &item)
+	// 	}
+	// }
+	msg := chat.Message{
+		Role:             chat.MessageRoleAssistant,
+		Content:          fullContent.String(),
+		ReasoningContent: fullReasoningContent.String(),
+		ToolCalls:        toolCalls,
+		CreatedAt:        msgCreatedAt,
+	}
+	item := session.NewMessageItem(session.NewAgentMessage(a, &msg))
+	sess.Messages = append(sess.Messages, item)
+	_, _ = r.sessionStore.AddMessage(ctx, sess.ID, &item)
+
 	toolCallIndex := make(map[string]int)   // toolCallID -> index in toolCalls slice
 	emittedPartial := make(map[string]bool) // toolCallID -> whether we've emitted a partial event
 	toolDefMap := make(map[string]tools.Tool, len(agentTools))
@@ -1245,12 +1281,19 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 					}
 				}
 			}
+			// TODO: Update the streaming message with tool call updates
+			item.Message.Message.ToolCalls = toolCalls
+			r.sessionStore.EditMessage(ctx, sess.ID, item.ID, &item)
+			// createOrUpdateStreamingMessage()
 			continue
 		}
 
 		if choice.Delta.ReasoningContent != "" {
 			events <- AgentChoiceReasoning(a.Name(), choice.Delta.ReasoningContent)
 			fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
+			item.Message.Message.ReasoningContent = fullReasoningContent.String()
+			r.sessionStore.EditMessage(ctx, sess.ID, item.ID, &item)
+			// createOrUpdateStreamingMessage()
 		}
 
 		// Capture thinking signature for Anthropic extended thinking
@@ -1261,6 +1304,9 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 		if choice.Delta.Content != "" {
 			events <- AgentChoice(a.Name(), choice.Delta.Content)
 			fullContent.WriteString(choice.Delta.Content)
+			item.Message.Message.Content = fullContent.String()
+			r.sessionStore.EditMessage(ctx, sess.ID, item.ID, &item)
+			// createOrUpdateStreamingMessage()
 		}
 	}
 
@@ -1511,8 +1557,8 @@ func (r *LocalRuntime) executeToolWithHandler(
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	msgItem := session.NewMessageItem(session.NewAgentMessage(a, &toolResponseMsg))
+	sess.Messages = append(sess.Messages, msgItem)
 }
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
@@ -1593,7 +1639,7 @@ func (r *LocalRuntime) runAgentTool(ctx context.Context, handler ToolHandlerFunc
 
 // addToolErrorResponse adds a tool error response to the session and emits the event.
 // This consolidates the common pattern used by validation, rejection, and cancellation responses.
-func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
+func (r *LocalRuntime) addToolErrorResponse(_ context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
 	events <- ToolCallResponse(toolCall, tool, tools.ResultError(errorMsg), errorMsg, a.Name())
 
 	toolResponseMsg := chat.Message{
@@ -1602,18 +1648,31 @@ func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.S
 		ToolCallID: toolCall.ID,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	sess.AddMessage(session.NewAgentMessage(a, &toolResponseMsg))
-	r.saveSession(ctx, sess)
+	msgItem := session.NewMessageItem(session.NewAgentMessage(a, &toolResponseMsg))
+	sess.Messages = append(sess.Messages, msgItem)
 }
 
-// saveSession persists the session to the store, but only for root sessions.
-// Sub-sessions (those with a ParentID) are not persisted as standalone entries;
-// they are embedded within the parent session's Messages array.
-func (r *LocalRuntime) saveSession(ctx context.Context, sess *session.Session) {
-	if sess.IsSubSession() {
+// editMessageInSession updates an existing message in the in-memory session.
+func (r *LocalRuntime) editMessageInSession(_ context.Context, sess *session.Session, messageID string, item *session.Item) {
+	if messageID == "" {
+		// No ID - find last assistant message
+		for i := len(sess.Messages) - 1; i >= 0; i-- {
+			if sess.Messages[i].Message != nil && sess.Messages[i].Message.Message.Role == chat.MessageRoleAssistant {
+				sess.Messages[i] = *item
+				return
+			}
+		}
 		return
 	}
-	_ = r.sessionStore.UpdateSession(ctx, sess)
+	item.ID = messageID
+
+	// Update by ID
+	for i := range sess.Messages {
+		if sess.Messages[i].ID == messageID {
+			sess.Messages[i] = *item
+			return
+		}
+	}
 }
 
 // startSpan wraps tracer.Start, returning a no-op span if the tracer is nil.
@@ -1706,7 +1765,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 	sess.ToolsApproved = s.ToolsApproved
 	sess.Thinking = s.Thinking
 
-	sess.AddSubSession(s)
+	r.sessionStore.AddMessage(ctx, sess.ID, &session.Item{SubSession: s})
 
 	slog.Debug("Task transfer completed", "agent", params.Agent, "task", params.Task)
 

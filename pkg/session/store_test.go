@@ -290,19 +290,23 @@ func TestUpdateSession_LazyCreation(t *testing.T) {
 	_, err = store.GetSession(t.Context(), "lazy-session")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// Now update the session with content - this should create it (upsert)
-	session.Messages = []Item{
-		NewMessageItem(UserMessage("Hello")),
-		NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-			Role:    chat.MessageRoleAssistant,
-			Content: "Hi there!",
-		})),
-	}
-
+	// Now update the session - this should create it (upsert)
 	err = store.UpdateSession(t.Context(), session)
 	require.NoError(t, err)
 
-	// Now the session should exist
+	// Add messages via AddMessage (the new pattern)
+	userMsg := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddMessage(t.Context(), session.ID, &userMsg)
+	require.NoError(t, err)
+
+	assistantMsg := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	_, err = store.AddMessage(t.Context(), session.ID, &assistantMsg)
+	require.NoError(t, err)
+
+	// Now the session should exist with messages
 	retrieved, err := store.GetSession(t.Context(), "lazy-session")
 	require.NoError(t, err)
 	assert.Len(t, retrieved.Messages, 2)
@@ -325,19 +329,23 @@ func TestUpdateSession_LazyCreation_InMemory(t *testing.T) {
 	_, err := store.GetSession(t.Context(), "lazy-session")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// Update with content - should create it
-	session.Messages = []Item{
-		NewMessageItem(UserMessage("Hello")),
-		NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
-			Role:    chat.MessageRoleAssistant,
-			Content: "Hi there!",
-		})),
-	}
-
+	// Update session - should create it
 	err = store.UpdateSession(t.Context(), session)
 	require.NoError(t, err)
 
-	// Now the session should exist
+	// Add messages via AddMessage
+	userMsg := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddMessage(t.Context(), session.ID, &userMsg)
+	require.NoError(t, err)
+
+	assistantMsg := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	_, err = store.AddMessage(t.Context(), session.ID, &assistantMsg)
+	require.NoError(t, err)
+
+	// Now the session should exist with messages
 	retrieved, err := store.GetSession(t.Context(), "lazy-session")
 	require.NoError(t, err)
 	assert.Len(t, retrieved.Messages, 2)
@@ -607,4 +615,405 @@ func TestThinking_Persistence(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, retrieved.Thinking)
 	})
+}
+
+func TestAddMessage_SQLite(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_add_message.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session first
+	session := &Session{
+		ID:        "add-message-session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add messages incrementally
+	item1 := NewMessageItem(UserMessage("Hello"))
+	msgID1, err := store.AddMessage(t.Context(), "add-message-session", &item1)
+	require.NoError(t, err)
+	assert.NotEmpty(t, msgID1)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	msgID2, err := store.AddMessage(t.Context(), "add-message-session", &item2)
+	require.NoError(t, err)
+	assert.NotEmpty(t, msgID2)
+	assert.NotEqual(t, msgID1, msgID2)
+
+	// Retrieve the session and verify messages are in order
+	retrieved, err := store.GetSession(t.Context(), "add-message-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 2)
+
+	assert.Equal(t, "Hello", retrieved.Messages[0].Message.Message.Content)
+	assert.Equal(t, msgID1, retrieved.Messages[0].ID)
+
+	assert.Equal(t, "Hi there!", retrieved.Messages[1].Message.Message.Content)
+	assert.Equal(t, msgID2, retrieved.Messages[1].ID)
+}
+
+func TestAddMessage_NotFoundSession(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_add_message_notfound.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	item := NewMessageItem(UserMessage("Hello"))
+	_, err = store.AddMessage(t.Context(), "nonexistent-session", &item)
+	// FK constraint should fail since the session doesn't exist
+	require.Error(t, err)
+}
+
+func TestEditMessage_SQLite(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_edit_message.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session and add a message
+	session := &Session{
+		ID:        "edit-message-session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	item := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Original content",
+	}))
+	msgID, err := store.AddMessage(t.Context(), "edit-message-session", &item)
+	require.NoError(t, err)
+
+	// Edit the message
+	updatedItem := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Updated content",
+	}))
+	err = store.EditMessage(t.Context(), "edit-message-session", msgID, &updatedItem)
+	require.NoError(t, err)
+
+	// Retrieve and verify the update
+	retrieved, err := store.GetSession(t.Context(), "edit-message-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 1)
+
+	assert.Equal(t, msgID, retrieved.Messages[0].ID)
+	assert.Equal(t, "Updated content", retrieved.Messages[0].Message.Message.Content)
+}
+
+func TestEditMessage_NotFound(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_edit_message_notfound.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a session
+	session := &Session{
+		ID:        "edit-notfound-session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Try to edit a non-existent message
+	item := NewMessageItem(UserMessage("Hello"))
+	err = store.EditMessage(t.Context(), "edit-notfound-session", "nonexistent-msg-id", &item)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestAddMessage_InMemory(t *testing.T) {
+	store := NewInMemorySessionStore()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session first
+	session := &Session{
+		ID:        "add-message-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add messages incrementally
+	item1 := NewMessageItem(UserMessage("Hello"))
+	msgID1, err := store.AddMessage(t.Context(), "add-message-session", &item1)
+	require.NoError(t, err)
+	assert.NotEmpty(t, msgID1)
+
+	item2 := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Hi there!",
+	}))
+	msgID2, err := store.AddMessage(t.Context(), "add-message-session", &item2)
+	require.NoError(t, err)
+	assert.NotEmpty(t, msgID2)
+	assert.NotEqual(t, msgID1, msgID2)
+
+	// Retrieve the session and verify messages
+	retrieved, err := store.GetSession(t.Context(), "add-message-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 2)
+
+	assert.Equal(t, "Hello", retrieved.Messages[0].Message.Message.Content)
+	assert.Equal(t, "Hi there!", retrieved.Messages[1].Message.Message.Content)
+}
+
+func TestEditMessage_InMemory(t *testing.T) {
+	store := NewInMemorySessionStore()
+
+	testAgent := agent.New("test-agent", "test prompt")
+
+	// Create a session and add a message
+	session := &Session{
+		ID:        "edit-message-session",
+		CreatedAt: time.Now(),
+	}
+	err := store.AddSession(t.Context(), session)
+	require.NoError(t, err)
+
+	item := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Original content",
+	}))
+	msgID, err := store.AddMessage(t.Context(), "edit-message-session", &item)
+	require.NoError(t, err)
+
+	// Edit the message
+	updatedItem := NewMessageItem(NewAgentMessage(testAgent, &chat.Message{
+		Role:    chat.MessageRoleAssistant,
+		Content: "Updated content",
+	}))
+	err = store.EditMessage(t.Context(), "edit-message-session", msgID, &updatedItem)
+	require.NoError(t, err)
+
+	// Retrieve and verify the update
+	retrieved, err := store.GetSession(t.Context(), "edit-message-session")
+	require.NoError(t, err)
+	require.Len(t, retrieved.Messages, 1)
+
+	assert.Equal(t, msgID, retrieved.Messages[0].ID)
+	assert.Equal(t, "Updated content", retrieved.Messages[0].Message.Message.Content)
+}
+
+func TestSubSession_Persistence(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_subsession.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a parent session
+	parentSession := &Session{
+		ID:        "parent-session",
+		Title:     "Parent Session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), parentSession)
+	require.NoError(t, err)
+
+	// Create a sub-session with ParentID set
+	subSession := &Session{
+		ID:        "sub-session",
+		Title:     "Sub Session",
+		ParentID:  "parent-session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), subSession)
+	require.NoError(t, err)
+
+	// Retrieve the sub-session and verify ParentID is persisted
+	retrievedSub, err := store.GetSession(t.Context(), "sub-session")
+	require.NoError(t, err)
+	assert.Equal(t, "parent-session", retrievedSub.ParentID)
+
+	// Retrieve the parent session and verify it has no ParentID
+	retrievedParent, err := store.GetSession(t.Context(), "parent-session")
+	require.NoError(t, err)
+	assert.Empty(t, retrievedParent.ParentID)
+}
+
+func TestSubSession_GetSessionsExcludesSubSessions(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_subsession_list.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a parent session
+	parentSession := &Session{
+		ID:        "parent-session",
+		Title:     "Parent Session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), parentSession)
+	require.NoError(t, err)
+
+	// Create another top-level session
+	otherSession := &Session{
+		ID:        "other-session",
+		Title:     "Other Session",
+		CreatedAt: time.Now().Add(time.Second),
+	}
+	err = store.AddSession(t.Context(), otherSession)
+	require.NoError(t, err)
+
+	// Create a sub-session
+	subSession := &Session{
+		ID:        "sub-session",
+		Title:     "Sub Session",
+		ParentID:  "parent-session",
+		CreatedAt: time.Now().Add(2 * time.Second),
+	}
+	err = store.AddSession(t.Context(), subSession)
+	require.NoError(t, err)
+
+	// GetSessions should only return top-level sessions
+	sessions, err := store.GetSessions(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, sessions, 2)
+
+	// Verify sub-session is not in the list
+	for _, s := range sessions {
+		assert.NotEqual(t, "sub-session", s.ID)
+		assert.Empty(t, s.ParentID)
+	}
+}
+
+func TestSubSession_GetSessionSummariesExcludesSubSessions(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_subsession_summaries.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a parent session
+	parentSession := &Session{
+		ID:        "parent-session",
+		Title:     "Parent Session",
+		CreatedAt: time.Now(),
+	}
+	err = store.AddSession(t.Context(), parentSession)
+	require.NoError(t, err)
+
+	// Create a sub-session
+	subSession := &Session{
+		ID:        "sub-session",
+		Title:     "Sub Session",
+		ParentID:  "parent-session",
+		CreatedAt: time.Now().Add(time.Second),
+	}
+	err = store.AddSession(t.Context(), subSession)
+	require.NoError(t, err)
+
+	// GetSessionSummaries should only return top-level sessions
+	summaries, err := store.GetSessionSummaries(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, summaries, 1)
+	assert.Equal(t, "parent-session", summaries[0].ID)
+}
+
+func TestSubSession_UpdatePreservesParentID(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_subsession_update.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a sub-session
+	subSession := &Session{
+		ID:        "sub-session",
+		Title:     "Sub Session",
+		ParentID:  "parent-session",
+		CreatedAt: time.Now(),
+	}
+	err = store.UpdateSession(t.Context(), subSession)
+	require.NoError(t, err)
+
+	// Update the sub-session title
+	subSession.Title = "Updated Sub Session"
+	err = store.UpdateSession(t.Context(), subSession)
+	require.NoError(t, err)
+
+	// Retrieve and verify ParentID is preserved
+	retrieved, err := store.GetSession(t.Context(), "sub-session")
+	require.NoError(t, err)
+	assert.Equal(t, "parent-session", retrieved.ParentID)
+	assert.Equal(t, "Updated Sub Session", retrieved.Title)
+}
+
+func TestSubSession_EmbeddedSubSessionMessagesLoaded(t *testing.T) {
+	tempDB := filepath.Join(t.TempDir(), "test_subsession_embedded.db")
+
+	store, err := NewSQLiteSessionStore(tempDB)
+	require.NoError(t, err)
+	defer store.(*SQLiteSessionStore).Close()
+
+	// Create a parent session with messages
+	parentSession := &Session{
+		ID:        "parent-session",
+		Title:     "Parent Session",
+		CreatedAt: time.Now(),
+		Messages: []Item{
+			NewMessageItem(UserMessage("Hello")),
+		},
+	}
+	err = store.AddSession(t.Context(), parentSession)
+	require.NoError(t, err)
+
+	// Create a sub-session with messages
+	subSession := &Session{
+		ID:        "sub-session",
+		Title:     "Sub Session",
+		ParentID:  "parent-session",
+		CreatedAt: time.Now(),
+		Messages: []Item{
+			NewMessageItem(UserMessage("Sub-task request")),
+			NewMessageItem(&Message{
+				AgentName: "researcher",
+				Message: chat.Message{
+					Role:    chat.MessageRoleAssistant,
+					Content: "Sub-task response",
+				},
+			}),
+		},
+	}
+
+	// Add sub-session item to parent session (simulating what runtime does)
+	subSessionItem := NewSubSessionItem(subSession)
+	_, err = store.AddMessage(t.Context(), parentSession.ID, &subSessionItem)
+	require.NoError(t, err)
+
+	// Now load the parent session
+	loaded, err := store.GetSession(t.Context(), "parent-session")
+	require.NoError(t, err)
+
+	// Verify we have 2 items: the original user message and the sub-session
+	require.Len(t, loaded.Messages, 2)
+
+	// First item should be the user message
+	assert.True(t, loaded.Messages[0].IsMessage())
+	assert.Equal(t, "Hello", loaded.Messages[0].Message.Message.Content)
+
+	// Second item should be the sub-session with its messages
+	assert.True(t, loaded.Messages[1].IsSubSession())
+	require.NotNil(t, loaded.Messages[1].SubSession)
+	assert.Equal(t, "sub-session", loaded.Messages[1].SubSession.ID)
+	assert.Len(t, loaded.Messages[1].SubSession.Messages, 2)
+	assert.Equal(t, "Sub-task request", loaded.Messages[1].SubSession.Messages[0].Message.Message.Content)
+	assert.Equal(t, "Sub-task response", loaded.Messages[1].SubSession.Messages[1].Message.Message.Content)
 }

@@ -50,7 +50,7 @@ func (f *newFlags) runNewCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rt, err := runtime.New(t)
+	rt, err := runtime.New(t, session.NewInMemorySessionStore())
 	if err != nil {
 		return err
 	}

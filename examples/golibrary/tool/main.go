@@ -73,7 +73,9 @@ func run(ctx context.Context) error {
 
 	calculatorTeam := team.New(team.WithAgents(calculator))
 
-	rt, err := runtime.New(calculatorTeam)
+	store := session.NewInMemorySessionStore()
+
+	rt, err := runtime.New(calculatorTeam, store)
 	if err != nil {
 		return err
 	}

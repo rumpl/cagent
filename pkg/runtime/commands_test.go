@@ -9,6 +9,7 @@ import (
 	"github.com/docker/cagent/pkg/config/types"
 	"github.com/docker/cagent/pkg/session"
 	"github.com/docker/cagent/pkg/tools"
+	mcptools "github.com/docker/cagent/pkg/tools/mcp"
 )
 
 // mockRuntime implements Runtime interface for testing
@@ -47,6 +48,10 @@ func (m *mockRuntime) ResumeElicitation(context.Context, tools.ElicitationAction
 }
 func (m *mockRuntime) SessionStore() session.Store { return nil }
 func (m *mockRuntime) Summarize(context.Context, *session.Session, string, chan Event) {
+}
+
+func (m *mockRuntime) CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo {
+	return nil
 }
 
 func TestResolveCommand_SimpleCommand(t *testing.T) {

@@ -117,7 +117,7 @@ func (a *Agent) NewSession(_ context.Context, params acp.NewSessionRequest) (acp
 		slog.Warn("MCP servers provided by client are not yet supported", "count", len(params.McpServers))
 	}
 
-	rt, err := runtime.New(a.team, runtime.WithCurrentAgent("root"))
+	rt, err := runtime.New(a.team, session.NewInMemorySessionStore(), runtime.WithCurrentAgent("root"))
 	if err != nil {
 		return acp.NewSessionResponse{}, fmt.Errorf("failed to create runtime: %w", err)
 	}

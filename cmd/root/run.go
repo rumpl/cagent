@@ -339,7 +339,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 	}
 
 	localRt, err := runtime.New(t,
-		runtime.WithSessionStore(sessStore),
+		sessStore,
 		runtime.WithCurrentAgent(f.agentName),
 		runtime.WithTracer(otel.Tracer(AppName)),
 		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
@@ -359,13 +359,13 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		sess.HideToolResults = f.hideToolResults
 
 		// Apply any stored model overrides from the session
-		if len(sess.AgentModelOverrides) > 0 {
-			for agentName, modelRef := range sess.AgentModelOverrides {
-				if err := localRt.SetAgentModel(ctx, agentName, modelRef); err != nil {
-					slog.Warn("Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
-				}
-			}
-		}
+		// if len(sess.AgentModelOverrides) > 0 {
+		// 	for agentName, modelRef := range sess.AgentModelOverrides {
+		// 		if err := localRt.SetAgentModel(ctx, agentName, modelRef); err != nil {
+		// 			slog.Warn("Failed to apply stored model override", "agent", agentName, "model", modelRef, "error", err)
+		// 		}
+		// 	}
+		// }
 
 		slog.Debug("Loaded existing session", "session_id", f.sessionID, "agent", f.agentName)
 	} else {

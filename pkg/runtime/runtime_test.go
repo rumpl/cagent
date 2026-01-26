@@ -177,7 +177,7 @@ func runSession(t *testing.T, sess *session.Session, stream *mockStream) []Event
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess.Title = "Unit Test"
@@ -352,7 +352,7 @@ func TestErrorEvent(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Hi"))
@@ -388,7 +388,7 @@ func TestContextCancellation(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Hi"))
@@ -615,7 +615,7 @@ func TestCompaction(t *testing.T) {
 	tm := team.New(team.WithAgents(root))
 
 	// Enable compaction and provide a model store with context limit = 100
-	rt, err := New(tm, WithSessionCompaction(true), WithModelStore(mockModelStoreWithLimit{limit: 100}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(true), WithModelStore(mockModelStoreWithLimit{limit: 100}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Start"))
@@ -713,7 +713,7 @@ func TestGetTools_WarningHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := agent.New("root", "test", agent.WithToolSets(tt.toolsets...), agent.WithModel(&mockProvider{}))
 			tm := team.New(team.WithAgents(root))
-			rt, err := New(tm, WithModelStore(mockModelStore{}))
+			rt, err := New(tm, session.NewInMemorySessionStore(), WithModelStore(mockModelStore{}))
 			require.NoError(t, err)
 
 			events := make(chan Event, 10)
@@ -734,7 +734,7 @@ func TestGetTools_WarningHandling(t *testing.T) {
 func TestNewRuntime_NoAgentsError(t *testing.T) {
 	tm := team.New()
 
-	_, err := New(tm, WithModelStore(mockModelStore{}))
+	_, err := New(tm, session.NewInMemorySessionStore(), WithModelStore(mockModelStore{}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no agents loaded")
 }
@@ -744,7 +744,7 @@ func TestNewRuntime_InvalidCurrentAgentError(t *testing.T) {
 	tm := team.New(team.WithAgents(root))
 
 	// Ask for a non-existent current agent
-	_, err := New(tm, WithCurrentAgent("other"), WithModelStore(mockModelStore{}))
+	_, err := New(tm, session.NewInMemorySessionStore(), WithCurrentAgent("other"), WithModelStore(mockModelStore{}))
 	require.Contains(t, err.Error(), "agent not found: other (available agents: root)")
 }
 
@@ -753,7 +753,7 @@ func TestSummarize_EmptySession(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New()
@@ -784,7 +784,7 @@ func TestProcessToolCalls_UnknownTool_NoToolResultMessage(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(&mockProvider{}))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	// Register default tools (contains only transfer_task) to ensure unknown tool isn't matched
@@ -833,7 +833,7 @@ func TestEmitStartupInfo(t *testing.T) {
 	)
 	tm := team.New(team.WithAgents(root, other))
 
-	rt, err := New(tm, WithCurrentAgent("startup-test-agent"), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithCurrentAgent("startup-test-agent"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	// Create a channel to collect events
@@ -888,7 +888,7 @@ func TestPermissions_DenyBlocksToolExecution(t *testing.T) {
 		team.WithPermissions(permChecker),
 	)
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
@@ -952,7 +952,7 @@ func TestPermissions_AllowAutoApprovesTool(t *testing.T) {
 		team.WithPermissions(permChecker),
 	)
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
@@ -987,7 +987,7 @@ func TestPermissions_DenyTakesPriorityOverAllow(t *testing.T) {
 		team.WithPermissions(permChecker),
 	)
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
@@ -1029,7 +1029,7 @@ func TestSessionPermissions_DenyBlocksToolExecution(t *testing.T) {
 	root := agent.New("root", "You are a test agent", agent.WithModel(prov))
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	// Create session with permissions that deny the tool
@@ -1089,7 +1089,7 @@ func TestSessionPermissions_AllowAutoApprovesTool(t *testing.T) {
 	)
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	// Create session with permissions that allow the tool
@@ -1128,7 +1128,7 @@ func TestSessionPermissions_TakePriorityOverTeamPermissions(t *testing.T) {
 		team.WithPermissions(teamPermChecker),
 	)
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	// Session denies the tool (should override team allow)
@@ -1188,7 +1188,7 @@ func TestToolRejectionWithReason(t *testing.T) {
 	)
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
@@ -1244,7 +1244,7 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 	)
 	tm := team.New(team.WithAgents(root))
 
-	rt, err := New(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := New(tm, session.NewInMemorySessionStore(), WithSessionCompaction(false), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))

@@ -164,6 +164,7 @@ func CreateToolHandler(t *team.Team, agentName string) func(context.Context, *mc
 		)
 
 		rt, err := runtime.New(t,
+			session.NewInMemorySessionStore(),
 			runtime.WithCurrentAgent(agentName),
 		)
 		if err != nil {

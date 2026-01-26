@@ -22,11 +22,13 @@ const (
 type titleGenerator struct {
 	wg    sync.WaitGroup
 	model provider.Provider
+	store session.Store
 }
 
-func newTitleGenerator(model provider.Provider) *titleGenerator {
+func newTitleGenerator(model provider.Provider, store session.Store) *titleGenerator {
 	return &titleGenerator{
 		model: model,
+		store: store,
 	}
 }
 
@@ -66,7 +68,7 @@ func (t *titleGenerator) generate(ctx context.Context, sess *session.Session, fi
 		session.WithTitle("Generating title…"),
 	)
 
-	titleRuntime, err := New(newTeam, WithSessionCompaction(false))
+	titleRuntime, err := New(newTeam, session.NewInMemorySessionStore(), WithSessionCompaction(false))
 	if err != nil {
 		slog.Error("Failed to create title generator runtime", "error", err)
 		return
@@ -80,6 +82,7 @@ func (t *titleGenerator) generate(ctx context.Context, sess *session.Session, fi
 
 	title := titleSession.GetLastAssistantMessageContent()
 	if title == "" {
+		slog.Debug("No title generated")
 		return
 	}
 
@@ -90,7 +93,9 @@ func (t *titleGenerator) generate(ctx context.Context, sess *session.Session, fi
 	}
 
 	sess.Title = title
+	_ = t.store.UpdateSession(ctx, sess)
 	slog.Debug("Generated session title", "session_id", sess.ID, "title", title)
+
 	events <- SessionTitle(sess.ID, title)
 }
 

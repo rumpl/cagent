@@ -47,7 +47,9 @@ func run(ctx context.Context) error {
 
 	humanTeam := team.New(team.WithAgents(human))
 
-	rt, err := runtime.New(humanTeam)
+	store := session.NewInMemorySessionStore()
+
+	rt, err := runtime.New(humanTeam, store)
 	if err != nil {
 		return err
 	}

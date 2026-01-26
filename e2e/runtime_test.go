@@ -23,7 +23,7 @@ func TestRuntime_OpenAI_Basic(t *testing.T) {
 	team, err := teamloader.Load(ctx, agentSource, runConfig)
 	require.NoError(t, err)
 
-	rt, err := runtime.New(team)
+	rt, err := runtime.New(team, session.NewInMemorySessionStore())
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("What's 2+2?"))
@@ -46,7 +46,7 @@ func TestRuntime_Mistral_Basic(t *testing.T) {
 	team, err := teamloader.Load(ctx, agentSource, runConfig, teamloader.WithModelOverrides([]string{"mistral/mistral-small"}))
 	require.NoError(t, err)
 
-	rt, err := runtime.New(team)
+	rt, err := runtime.New(team, session.NewInMemorySessionStore())
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("What's 2+2?"))
