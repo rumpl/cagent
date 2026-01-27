@@ -62,8 +62,10 @@ func (c *sessionCompactor) Compact(ctx context.Context, sess *session.Session, a
 		return
 	}
 
-	sess.Messages = append(sess.Messages, session.Item{Summary: summary})
-	_ = c.sessionStore.UpdateSession(ctx, sess)
+	// Add summary to the normalized session_summaries table
+	if err := c.sessionStore.AddSummary(ctx, sess.ID, summary); err != nil {
+		slog.Error("Failed to add session summary", "session_id", sess.ID, "error", err)
+	}
 
 	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
 	events <- SessionSummary(sess.ID, summary, agentName)

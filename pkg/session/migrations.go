@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -71,6 +72,13 @@ func (m *MigrationManager) RunPendingMigrations(ctx context.Context) error {
 			err = m.applyMigration(ctx, &migration)
 			if err != nil {
 				return fmt.Errorf("failed to apply migration %s: %w", migration.Name, err)
+			}
+
+			// Run data migration after the normalized tables migration
+			if migration.Name == "014_create_normalized_session_tables" {
+				if err := migrateSessionData(m.db); err != nil {
+					return fmt.Errorf("failed to migrate session data: %w", err)
+				}
 			}
 		}
 	}
@@ -242,5 +250,218 @@ func getAllMigrations() []Migration {
 			UpSQL:       `ALTER TABLE sessions ADD COLUMN thinking BOOLEAN DEFAULT 1`,
 			DownSQL:     `ALTER TABLE sessions DROP COLUMN thinking`,
 		},
+		{
+			ID:          14,
+			Name:        "014_create_normalized_session_tables",
+			Description: "Create normalized tables for messages, sub-sessions, and summaries",
+			UpSQL: `
+				CREATE TABLE IF NOT EXISTS session_messages (
+					id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					position INTEGER NOT NULL,
+					agent_name TEXT,
+					message TEXT NOT NULL,
+					implicit BOOLEAN DEFAULT 0,
+					created_at TEXT,
+					FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);
+				CREATE INDEX IF NOT EXISTS idx_session_messages_position ON session_messages(session_id, position);
+
+				CREATE TABLE IF NOT EXISTS session_subsessions (
+					id TEXT PRIMARY KEY,
+					parent_session_id TEXT NOT NULL,
+					position INTEGER NOT NULL,
+					created_at TEXT,
+					FOREIGN KEY (parent_session_id) REFERENCES sessions(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_session_subsessions_parent ON session_subsessions(parent_session_id);
+
+				CREATE TABLE IF NOT EXISTS session_summaries (
+					id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					position INTEGER NOT NULL,
+					summary TEXT NOT NULL,
+					created_at TEXT,
+					FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_session_summaries_session ON session_summaries(session_id);
+			`,
+			DownSQL: `
+				DROP TABLE IF EXISTS session_summaries;
+				DROP TABLE IF EXISTS session_subsessions;
+				DROP TABLE IF EXISTS session_messages;
+			`,
+		},
 	}
+}
+
+// migrateSessionData migrates existing session data from JSON blob to normalized tables.
+// This is called after the schema migration creates the new tables.
+func migrateSessionData(db *sql.DB) error {
+	ctx := context.Background()
+
+	// Check if migration is needed by seeing if there are sessions with messages in JSON but not in normalized table
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM sessions s 
+		WHERE s.messages != '[]' AND s.messages != '' AND s.messages IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM session_messages sm WHERE sm.session_id = s.id)
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("checking for sessions to migrate: %w", err)
+	}
+
+	if count == 0 {
+		return nil // No migration needed
+	}
+
+	// Get all sessions that need migration
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, messages FROM sessions 
+		WHERE messages != '[]' AND messages != '' AND messages IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM session_messages sm WHERE sm.session_id = id)
+	`)
+	if err != nil {
+		return fmt.Errorf("querying sessions to migrate: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sessionID, messagesJSON string
+		if err := rows.Scan(&sessionID, &messagesJSON); err != nil {
+			return fmt.Errorf("scanning session row: %w", err)
+		}
+
+		if err := migrateSessionMessages(ctx, db, sessionID, messagesJSON); err != nil {
+			return fmt.Errorf("migrating session %s: %w", sessionID, err)
+		}
+	}
+
+	return rows.Err()
+}
+
+func migrateSessionMessages(ctx context.Context, db *sql.DB, sessionID, messagesJSON string) error {
+	// Parse the messages JSON - handle both legacy and new formats
+	var items []itemForMigration
+	if err := json.Unmarshal([]byte(messagesJSON), &items); err != nil {
+		return fmt.Errorf("parsing messages JSON: %w", err)
+	}
+
+	// Check if this is legacy format (direct Message structs)
+	var legacyMessages []messageForMigration
+	if err := json.Unmarshal([]byte(messagesJSON), &legacyMessages); err == nil {
+		if len(legacyMessages) > 0 && (legacyMessages[0].AgentName != "" || legacyMessages[0].Message.Content != "" || legacyMessages[0].Message.Role != "") {
+			// Convert legacy format to items
+			items = make([]itemForMigration, len(legacyMessages))
+			for i, msg := range legacyMessages {
+				items[i] = itemForMigration{Message: &msg}
+			}
+		}
+	}
+
+	return migrateItems(ctx, db, sessionID, items)
+}
+
+func migrateItems(ctx context.Context, db *sql.DB, sessionID string, items []itemForMigration) error {
+	for position, item := range items {
+		switch {
+		case item.Message != nil:
+			msgJSON, err := json.Marshal(item.Message.Message)
+			if err != nil {
+				return fmt.Errorf("marshaling message: %w", err)
+			}
+
+			msgID := generateMigrationID()
+			_, err = db.ExecContext(ctx, `
+				INSERT INTO session_messages (id, session_id, position, agent_name, message, implicit, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, msgID, sessionID, position, item.Message.AgentName, string(msgJSON), item.Message.Implicit, item.Message.Message.CreatedAt)
+			if err != nil {
+				return fmt.Errorf("inserting message: %w", err)
+			}
+		case item.SubSession != nil:
+			// Create the sub-session record in sessions table first (if it doesn't exist)
+			subSessionJSON, err := json.Marshal(item.SubSession.Messages)
+			if err != nil {
+				return fmt.Errorf("marshaling sub-session messages: %w", err)
+			}
+
+			// Insert sub-session as a session record
+			_, err = db.ExecContext(ctx, `
+				INSERT OR IGNORE INTO sessions (id, messages, created_at, title, tools_approved, thinking, input_tokens, output_tokens, cost, send_user_message, max_iterations, working_dir, starred, permissions, agent_model_overrides, custom_models_used)
+				VALUES (?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '{}', '[]')
+			`, item.SubSession.ID, item.SubSession.CreatedAt.Format(time.RFC3339), item.SubSession.Title, item.SubSession.ToolsApproved, item.SubSession.Thinking, item.SubSession.InputTokens, item.SubSession.OutputTokens, item.SubSession.Cost, item.SubSession.SendUserMessage, item.SubSession.MaxIterations, item.SubSession.WorkingDir, item.SubSession.Starred)
+			if err != nil {
+				return fmt.Errorf("inserting sub-session: %w", err)
+			}
+
+			// Add the sub-session marker
+			_, err = db.ExecContext(ctx, `
+				INSERT INTO session_subsessions (id, parent_session_id, position, created_at)
+				VALUES (?, ?, ?, ?)
+			`, item.SubSession.ID, sessionID, position, item.SubSession.CreatedAt.Format(time.RFC3339))
+			if err != nil {
+				return fmt.Errorf("inserting sub-session marker: %w", err)
+			}
+
+			// Recursively migrate sub-session's messages
+			var subItems []itemForMigration
+			if err := json.Unmarshal(subSessionJSON, &subItems); err != nil {
+				return fmt.Errorf("parsing sub-session messages: %w", err)
+			}
+			if err := migrateItems(ctx, db, item.SubSession.ID, subItems); err != nil {
+				return fmt.Errorf("migrating sub-session messages: %w", err)
+			}
+		case item.Summary != "":
+			summaryID := generateMigrationID()
+			_, err := db.ExecContext(ctx, `
+				INSERT INTO session_summaries (id, session_id, position, summary, created_at)
+				VALUES (?, ?, ?, ?, ?)
+			`, summaryID, sessionID, position, item.Summary, time.Now().Format(time.RFC3339))
+			if err != nil {
+				return fmt.Errorf("inserting summary: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// Types for migration parsing
+type itemForMigration struct {
+	Message    *messageForMigration `json:"message,omitempty"`
+	SubSession *sessionForMigration `json:"sub_session,omitempty"`
+	Summary    string               `json:"summary,omitempty"`
+}
+
+type messageForMigration struct {
+	AgentName string             `json:"agentName"`
+	Message   chatMessageCompact `json:"message"`
+	Implicit  bool               `json:"implicit,omitempty"`
+}
+
+type chatMessageCompact struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+type sessionForMigration struct {
+	ID              string             `json:"id"`
+	Title           string             `json:"title"`
+	Messages        []itemForMigration `json:"messages"`
+	CreatedAt       time.Time          `json:"created_at"`
+	ToolsApproved   bool               `json:"tools_approved"`
+	Thinking        bool               `json:"thinking"`
+	InputTokens     int64              `json:"input_tokens"`
+	OutputTokens    int64              `json:"output_tokens"`
+	Cost            float64            `json:"cost"`
+	SendUserMessage bool               `json:"send_user_message"`
+	MaxIterations   int                `json:"max_iterations"`
+	WorkingDir      string             `json:"working_dir,omitempty"`
+	Starred         bool               `json:"starred"`
+}
+
+func generateMigrationID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
 }

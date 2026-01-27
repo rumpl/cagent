@@ -973,82 +973,101 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 
 	var cmds []tea.Cmd
 
-	// First pass: collect tool results by ToolCallID
+	// collectToolResults recursively collects tool results from a session and its sub-sessions
+	var collectToolResults func(items []session.Item, results map[string]string)
+	collectToolResults = func(items []session.Item, results map[string]string) {
+		for _, item := range items {
+			if item.IsMessage() {
+				smsg := item.Message
+				if smsg.Message.Role == chat.MessageRoleTool && smsg.Message.ToolCallID != "" {
+					results[smsg.Message.ToolCallID] = smsg.Message.Content
+				}
+			} else if item.IsSubSession() && item.SubSession != nil {
+				collectToolResults(item.SubSession.Messages, results)
+			}
+		}
+	}
+
+	// First pass: collect tool results by ToolCallID (including from sub-sessions)
 	toolResults := make(map[string]string)
-	for _, item := range sess.Messages {
-		if !item.IsMessage() {
-			continue
-		}
-		smsg := item.Message
-		if smsg.Message.Role == chat.MessageRoleTool && smsg.Message.ToolCallID != "" {
-			toolResults[smsg.Message.ToolCallID] = smsg.Message.Content
-		}
-	}
+	collectToolResults(sess.Messages, toolResults)
 
-	for _, item := range sess.Messages {
-		if !item.IsMessage() {
-			continue
-		}
-
-		smsg := item.Message
-		if smsg.Implicit {
-			continue
-		}
-
-		switch smsg.Message.Role {
-		case chat.MessageRoleUser:
-			msg := types.User(smsg.Message.Content)
-			appendSessionMessage(msg, m.createMessageView(msg))
-		case chat.MessageRoleAssistant:
-			hasReasoning := smsg.Message.ReasoningContent != ""
-			hasContent := smsg.Message.Content != ""
-			hasToolCalls := len(smsg.Message.ToolCalls) > 0
-			var reasoningBlock *reasoningblock.Model
-
-			// Step 1: Handle reasoning content - only create/extend a reasoning block if there's actual reasoning
-			if hasReasoning {
-				reasoningBlock = getOrCreateReasoningBlock(smsg.AgentName)
-				reasoningBlock.AppendReasoning(smsg.Message.ReasoningContent)
-				// Update the message content for copying
-				lastIdx := len(m.messages) - 1
-				if m.messages[lastIdx].Content != "" {
-					m.messages[lastIdx].Content += "\n\n"
-				}
-				m.messages[lastIdx].Content += smsg.Message.ReasoningContent
+	// processItems recursively processes session items including sub-sessions
+	var processItems func(items []session.Item)
+	processItems = func(items []session.Item) {
+		for _, item := range items {
+			if item.IsSubSession() && item.SubSession != nil {
+				// Recursively process sub-session messages
+				processItems(item.SubSession.Messages)
+				continue
 			}
 
-			// Step 2: Handle assistant content - this breaks the reasoning block chain
-			if hasContent {
-				msg := types.Agent(types.MessageTypeAssistant, smsg.AgentName, smsg.Message.Content)
+			if !item.IsMessage() {
+				continue
+			}
+
+			smsg := item.Message
+			if smsg.Implicit {
+				continue
+			}
+
+			switch smsg.Message.Role {
+			case chat.MessageRoleUser:
+				msg := types.User(smsg.Message.Content)
 				appendSessionMessage(msg, m.createMessageView(msg))
-			}
+			case chat.MessageRoleAssistant:
+				hasReasoning := smsg.Message.ReasoningContent != ""
+				hasContent := smsg.Message.Content != ""
+				hasToolCalls := len(smsg.Message.ToolCalls) > 0
+				var reasoningBlock *reasoningblock.Model
 
-			// Step 3: Handle tool calls
-			// Tool calls go into the reasoning block ONLY if there was reasoning content AND no regular content
-			if hasToolCalls {
-				attachToReasoning := reasoningBlock != nil && !hasContent
-				for i, tc := range smsg.Message.ToolCalls {
-					var toolDef tools.Tool
-					if i < len(smsg.Message.ToolDefinitions) {
-						toolDef = smsg.Message.ToolDefinitions[i]
+				// Step 1: Handle reasoning content - only create/extend a reasoning block if there's actual reasoning
+				if hasReasoning {
+					reasoningBlock = getOrCreateReasoningBlock(smsg.AgentName)
+					reasoningBlock.AppendReasoning(smsg.Message.ReasoningContent)
+					// Update the message content for copying
+					lastIdx := len(m.messages) - 1
+					if m.messages[lastIdx].Content != "" {
+						m.messages[lastIdx].Content += "\n\n"
 					}
-
-					if attachToReasoning {
-						toolMsg := types.ToolCallMessage(smsg.AgentName, tc, toolDef, types.ToolStatusCompleted)
-						reasoningBlock.AddToolCall(toolMsg)
-						if result, ok := toolResults[tc.ID]; ok {
-							reasoningBlock.UpdateToolResult(tc.ID, result, types.ToolStatusCompleted, nil)
-						}
-						continue
-					}
-
-					addStandaloneToolCall(smsg.AgentName, tc, toolDef, toolResults)
+					m.messages[lastIdx].Content += smsg.Message.ReasoningContent
 				}
+
+				// Step 2: Handle assistant content - this breaks the reasoning block chain
+				if hasContent {
+					msg := types.Agent(types.MessageTypeAssistant, smsg.AgentName, smsg.Message.Content)
+					appendSessionMessage(msg, m.createMessageView(msg))
+				}
+
+				// Step 3: Handle tool calls
+				// Tool calls go into the reasoning block ONLY if there was reasoning content AND no regular content
+				if hasToolCalls {
+					attachToReasoning := reasoningBlock != nil && !hasContent
+					for i, tc := range smsg.Message.ToolCalls {
+						var toolDef tools.Tool
+						if i < len(smsg.Message.ToolDefinitions) {
+							toolDef = smsg.Message.ToolDefinitions[i]
+						}
+
+						if attachToReasoning {
+							toolMsg := types.ToolCallMessage(smsg.AgentName, tc, toolDef, types.ToolStatusCompleted)
+							reasoningBlock.AddToolCall(toolMsg)
+							if result, ok := toolResults[tc.ID]; ok {
+								reasoningBlock.UpdateToolResult(tc.ID, result, types.ToolStatusCompleted, nil)
+							}
+							continue
+						}
+
+						addStandaloneToolCall(smsg.AgentName, tc, toolDef, toolResults)
+					}
+				}
+			case chat.MessageRoleTool:
+				continue
 			}
-		case chat.MessageRoleTool:
-			continue
 		}
 	}
+
+	processItems(sess.Messages)
 
 	for _, view := range m.views {
 		cmds = append(cmds, view.Init())

@@ -45,6 +45,11 @@ func (si *Item) IsSubSession() bool {
 	return si.SubSession != nil
 }
 
+// IsSummary returns true if this item contains a summary
+func (si *Item) IsSummary() bool {
+	return si.Summary != ""
+}
+
 // Session represents the agent's state including conversation history and variables
 type Session struct {
 	// ID is the unique identifier for the session
