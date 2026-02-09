@@ -456,6 +456,9 @@ message AgentSwitchingEvent {
   string from_agent = 2;
   string to_agent = 3;
   string agent_name = 4;
+  // session_id is the child sub-session's unique ID, used to correlate
+  // events belonging to this sub-session.
+  string session_id = 5;
 }
 
 // ToolsetInfoEvent is sent when toolset information is available.

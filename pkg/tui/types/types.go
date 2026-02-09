@@ -36,6 +36,14 @@ const (
 	ToolStatusError
 )
 
+// SubSessionToolCall represents a tool call that occurred during a sub-session.
+type SubSessionToolCall struct {
+	ToolCall       tools.ToolCall
+	ToolDefinition tools.Tool
+	Status         ToolStatus
+	Result         *tools.ToolCallResult
+}
+
 // Message represents a single message in the chat
 type Message struct {
 	Type           MessageType
@@ -48,6 +56,14 @@ type Message struct {
 	// SessionPosition is the index of this message in session.Messages (when known).
 	// Used for operations like branching on edits.
 	SessionPosition *int
+
+	// SubSession fields - populated for transfer_task tool calls to track the sub-session activity
+	SubSessionToolCalls []SubSessionToolCall // Tool calls made during the sub-session
+	SubSessionActive    bool                 // True while the sub-session is still running
+
+	// InSubSession marks messages that were created during a sub-session.
+	// These are hidden when tool results are hidden (collapsed mode) and shown normally when expanded.
+	InSubSession bool
 }
 
 func Agent(typ MessageType, agentName, content string) *Message {

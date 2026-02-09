@@ -668,6 +668,7 @@ func runtimeEventToProto(event runtime.Event) *cagentv1.Event {
 					FromAgent: e.FromAgent,
 					ToAgent:   e.ToAgent,
 					AgentName: e.AgentName,
+					SessionId: e.SessionID,
 				},
 			},
 		}

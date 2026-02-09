@@ -464,6 +464,7 @@ func (c *ConnectRPCClient) convertProtoEventToRuntimeEvent(e *cagentv1.Event) Ev
 			Switching:    ev.AgentSwitching.Switching,
 			FromAgent:    ev.AgentSwitching.FromAgent,
 			ToAgent:      ev.AgentSwitching.ToAgent,
+			SessionID:    ev.AgentSwitching.SessionId,
 			AgentContext: AgentContext{AgentName: ev.AgentSwitching.AgentName},
 		}
 

@@ -1806,29 +1806,6 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 	slog.Debug("Transferring task to agent", "from_agent", a.Name(), "to_agent", params.Agent, "task", params.Task)
 
-	ca := r.currentAgent
-
-	// Emit agent switching start event
-	evts <- AgentSwitching(true, ca, params.Agent)
-
-	r.currentAgent = params.Agent
-	defer func() {
-		r.currentAgent = ca
-
-		// Emit agent switching end event
-		evts <- AgentSwitching(false, params.Agent, ca)
-
-		// Restore original agent info in sidebar
-		if originalAgent, err := r.team.Agent(ca); err == nil {
-			evts <- AgentInfo(originalAgent.Name(), getAgentModelID(originalAgent), originalAgent.Description(), originalAgent.WelcomeMessage())
-		}
-	}()
-
-	// Emit agent info for the new agent
-	if newAgent, err := r.team.Agent(params.Agent); err == nil {
-		evts <- AgentInfo(newAgent.Name(), getAgentModelID(newAgent), newAgent.Description(), newAgent.WelcomeMessage())
-	}
-
 	memberAgentTask := "You are a member of a team of agents. Your goal is to complete the following task:"
 	memberAgentTask += fmt.Sprintf("\n\n<task>\n%s\n</task>", params.Task)
 	if params.ExpectedOutput != "" {
@@ -1842,6 +1819,8 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		return nil, err
 	}
 
+	// Create the child session before emitting AgentSwitching so the session ID
+	// is available for the TUI to correlate events with the correct sub-session.
 	s := session.New(
 		session.WithSystemMessage(memberAgentTask),
 		session.WithImplicitUserMessage("Please proceed."),
@@ -1852,6 +1831,29 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		session.WithSendUserMessage(false),
 		session.WithParentID(sess.ID),
 	)
+
+	ca := r.currentAgent
+
+	// Emit agent switching start event with the child session ID
+	evts <- AgentSwitching(true, ca, params.Agent, s.ID)
+
+	r.currentAgent = params.Agent
+	defer func() {
+		r.currentAgent = ca
+
+		// Emit agent switching end event with the child session ID
+		evts <- AgentSwitching(false, params.Agent, ca, s.ID)
+
+		// Restore original agent info in sidebar
+		if originalAgent, err := r.team.Agent(ca); err == nil {
+			evts <- AgentInfo(originalAgent.Name(), getAgentModelID(originalAgent), originalAgent.Description(), originalAgent.WelcomeMessage())
+		}
+	}()
+
+	// Emit agent info for the new agent
+	if newAgent, err := r.team.Agent(params.Agent); err == nil {
+		evts <- AgentInfo(newAgent.Name(), getAgentModelID(newAgent), newAgent.Description(), newAgent.WelcomeMessage())
+	}
 
 	for event := range r.RunStream(ctx, s) {
 		evts <- event

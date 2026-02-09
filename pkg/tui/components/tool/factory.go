@@ -12,8 +12,8 @@ import (
 	"github.com/docker/cagent/pkg/tui/components/tool/readmultiplefiles"
 	"github.com/docker/cagent/pkg/tui/components/tool/searchfilescontent"
 	"github.com/docker/cagent/pkg/tui/components/tool/shell"
+	"github.com/docker/cagent/pkg/tui/components/tool/subsession"
 	"github.com/docker/cagent/pkg/tui/components/tool/todotool"
-	"github.com/docker/cagent/pkg/tui/components/tool/transfertask"
 	"github.com/docker/cagent/pkg/tui/components/tool/writefile"
 	"github.com/docker/cagent/pkg/tui/core/layout"
 	"github.com/docker/cagent/pkg/tui/service"
@@ -62,7 +62,7 @@ func newDefaultRegistry() *Registry {
 	// Define tool registrations declaratively.
 	// Tools with the same visual representation share a builder.
 	registry.RegisterAll([]Registration{
-		{[]string{builtin.ToolNameTransferTask}, transfertask.New},
+		{[]string{builtin.ToolNameTransferTask}, subsession.New},
 		{[]string{builtin.ToolNameHandoff}, handoff.New},
 		{[]string{builtin.ToolNameEditFile}, editfile.New},
 		{[]string{builtin.ToolNameWriteFile}, writefile.New},

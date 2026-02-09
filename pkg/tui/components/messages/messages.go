@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -56,6 +57,9 @@ type Model interface {
 	AppendReasoning(agentName, content string) tea.Cmd
 	AddShellOutputMessage(content string) tea.Cmd
 	LoadFromSession(sess *session.Session) tea.Cmd
+
+	StartSubSession(fromAgent, toAgent, sessionID string)
+	EndSubSession(sessionID string)
 
 	ScrollToBottom() tea.Cmd
 	AdjustBottomSlack(delta int)
@@ -122,6 +126,12 @@ type model struct {
 	inlineEditTextarea      textarea.Model // Textarea for inline editing
 	inlineEditOriginal      string         // Original content (for cancel)
 	inlineEditPrevSelection int            // Previous selection index before entering inline edit (-1 = was not in selection mode)
+
+	// Sub-session tracking (supports parallel and nested sub-sessions)
+	// Maps child session ID → transfer_task message index in m.messages
+	subSessionMap map[string]int
+	// Maps sub-agent name → child session ID (reverse lookup for events that only carry agent name)
+	agentToSessionID map[string]string
 }
 
 // New creates a new message list component
@@ -148,6 +158,8 @@ func newModel(width, height int, sessionState *service.SessionState) *model {
 		scrollview:           sv,
 		selectedMessageIndex: -1,
 		inlineEditMsgIndex:   -1,
+		subSessionMap:        make(map[string]int),
+		agentToSessionID:     make(map[string]string),
 		debugLayout:          os.Getenv("CAGENT_EXPERIMENTAL_DEBUG_LAYOUT") == "1",
 		renderDirty:          true,
 	}
@@ -738,6 +750,10 @@ func (m *model) isSelectableMessage(index int) bool {
 	if index < 0 || index >= len(m.messages) {
 		return false
 	}
+	// Hidden sub-session messages are not selectable
+	if m.isHiddenSubSessionMessage(index) {
+		return false
+	}
 	msg := m.messages[index]
 	switch msg.Type {
 	case types.MessageTypeAssistant, types.MessageTypeAssistantReasoningBlock:
@@ -863,6 +879,10 @@ func (m *model) shouldCacheMessage(index int) bool {
 	msg := m.messages[index]
 	switch msg.Type {
 	case types.MessageTypeToolCall:
+		// Don't cache transfer_task messages with active sub-sessions
+		if msg.SubSessionActive {
+			return false
+		}
 		return msg.ToolStatus == types.ToolStatusCompleted ||
 			msg.ToolStatus == types.ToolStatusError ||
 			msg.ToolStatus == types.ToolStatusConfirmation
@@ -881,6 +901,13 @@ func (m *model) shouldCacheMessage(index int) bool {
 }
 
 func (m *model) renderItem(index int, view layout.Model) renderedItem {
+	// Hide InSubSession messages when in collapsed mode (hideToolResults=true).
+	// In collapsed mode, the sub-session content is shown via the transfer_task's
+	// subsession renderer instead.
+	if m.isHiddenSubSessionMessage(index) {
+		return renderedItem{}
+	}
+
 	// If this message is being inline edited, render the textarea instead
 	if index == m.inlineEditMsgIndex {
 		rendered := m.renderInlineEditTextarea()
@@ -978,15 +1005,41 @@ func (m *model) updateInlineEditTextareaHeight() {
 	m.inlineEditTextarea.SetCursorColumn(cursorCol)
 }
 
+// isHiddenSubSessionMessage returns true if the message at the given index
+// should be hidden because it's a sub-session message and we're in collapsed mode.
+func (m *model) isHiddenSubSessionMessage(index int) bool {
+	if index < 0 || index >= len(m.messages) {
+		return false
+	}
+	return m.messages[index].InSubSession && m.sessionState.HideToolResults()
+}
+
 func (m *model) needsSeparator(index int) bool {
 	if index >= len(m.messages)-1 {
 		return false
 	}
+
+	// Don't add separators around hidden sub-session messages
+	if m.isHiddenSubSessionMessage(index) {
+		return false
+	}
+	// Find the next visible message to decide about separators
+	nextVisible := -1
+	for j := index + 1; j < len(m.messages); j++ {
+		if !m.isHiddenSubSessionMessage(j) {
+			nextVisible = j
+			break
+		}
+	}
+	if nextVisible < 0 {
+		return false
+	}
+
 	currentIsToolCall := m.messages[index].Type == types.MessageTypeToolCall
-	nextIsToolCall := m.messages[index+1].Type == types.MessageTypeToolCall
+	nextIsToolCall := m.messages[nextVisible].Type == types.MessageTypeToolCall
 
 	// Always add a separator before transfer_task, even between consecutive tool calls
-	if nextIsToolCall && m.messages[index+1].ToolCall.Function.Name == builtin.ToolNameTransferTask {
+	if nextIsToolCall && m.messages[nextVisible].ToolCall.Function.Name == builtin.ToolNameTransferTask {
 		return true
 	}
 
@@ -1304,6 +1357,8 @@ func (m *model) AddOrUpdateToolCall(agentName string, toolCall tools.ToolCall, t
 				msg.ToolCall.Function.Arguments = toolCall.Function.Arguments
 			}
 			m.invalidateItem(i)
+			// Also update sub-session summary if applicable
+			m.updateSubSessionToolCall(toolCall, toolDef, status)
 			return nil
 		}
 	}
@@ -1313,23 +1368,99 @@ func (m *model) AddOrUpdateToolCall(agentName string, toolCall tools.ToolCall, t
 	// If there's an active reasoning block, add the tool call to it
 	if block, blockIdx := m.getActiveReasoningBlock(agentName); block != nil {
 		msg := types.ToolCallMessage(agentName, toolCall, toolDef, status)
+		if m.isSubSessionAgent(agentName) && toolCall.Function.Name != builtin.ToolNameTransferTask {
+			msg.InSubSession = true
+		}
 		cmd := block.AddToolCall(msg)
 		m.invalidateItem(blockIdx)
+		// Also add to sub-session summary
+		m.addSubSessionToolCall(agentName, toolCall, toolDef, status)
 		return cmd
 	}
 
 	// Otherwise create a standalone tool call message
 	msg := types.ToolCallMessage(agentName, toolCall, toolDef, status)
+	if m.isSubSessionAgent(agentName) && toolCall.Function.Name != builtin.ToolNameTransferTask {
+		msg.InSubSession = true
+	}
 	m.messages = append(m.messages, msg)
 	view := m.createToolCallView(msg)
 	m.views = append(m.views, view)
 	m.renderDirty = true
 
+	// Also add to sub-session summary
+	m.addSubSessionToolCall(agentName, toolCall, toolDef, status)
+
 	return view.Init()
 }
 
+// addSubSessionToolCall adds a tool call to the correct parent sub-session's summary data.
+// Uses agentName to look up which transfer_task this tool call belongs to.
+func (m *model) addSubSessionToolCall(agentName string, toolCall tools.ToolCall, toolDef tools.Tool, status types.ToolStatus) {
+	if toolCall.Function.Name == builtin.ToolNameTransferTask {
+		return
+	}
+	idx := m.subSessionIdxForAgent(agentName)
+	if idx < 0 {
+		return
+	}
+	parentMsg := m.messages[idx]
+	// Check if it already exists
+	for i := range parentMsg.SubSessionToolCalls {
+		if parentMsg.SubSessionToolCalls[i].ToolCall.ID == toolCall.ID {
+			return
+		}
+	}
+	parentMsg.SubSessionToolCalls = append(parentMsg.SubSessionToolCalls, types.SubSessionToolCall{
+		ToolCall:       toolCall,
+		ToolDefinition: toolDef,
+		Status:         status,
+	})
+	m.invalidateItem(idx)
+}
+
+// updateSubSessionToolCall updates a tool call in any active sub-session's summary data.
+// Searches all active sub-sessions by tool call ID since the ID is globally unique.
+func (m *model) updateSubSessionToolCall(toolCall tools.ToolCall, _ tools.Tool, status types.ToolStatus) {
+	if toolCall.Function.Name == builtin.ToolNameTransferTask {
+		return
+	}
+	for _, idx := range m.subSessionMap {
+		parentMsg := m.messages[idx]
+		for i := range parentMsg.SubSessionToolCalls {
+			if parentMsg.SubSessionToolCalls[i].ToolCall.ID == toolCall.ID {
+				parentMsg.SubSessionToolCalls[i].Status = status
+				if toolCall.Function.Arguments != "" {
+					parentMsg.SubSessionToolCalls[i].ToolCall.Function.Arguments = toolCall.Function.Arguments
+				}
+				m.invalidateItem(idx)
+				return
+			}
+		}
+	}
+}
+
+// updateSubSessionToolResult updates a tool result in any active sub-session's summary data.
+func (m *model) updateSubSessionToolResult(toolCallID string, status types.ToolStatus, result *tools.ToolCallResult) {
+	for _, idx := range m.subSessionMap {
+		parentMsg := m.messages[idx]
+		for i := range parentMsg.SubSessionToolCalls {
+			if parentMsg.SubSessionToolCalls[i].ToolCall.ID == toolCallID {
+				parentMsg.SubSessionToolCalls[i].Status = status
+				parentMsg.SubSessionToolCalls[i].Result = result
+				m.invalidateItem(idx)
+				return
+			}
+		}
+	}
+}
+
 func (m *model) AddToolResult(msg *runtime.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd {
-	// First check reasoning blocks for the tool call
+	// Update sub-session summary data if applicable.
+	// Search all active sub-sessions by tool call ID (globally unique).
+	m.updateSubSessionToolResult(msg.ToolCall.ID, status, msg.Result)
+
+	// Then check reasoning blocks for the tool call
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].Type == types.MessageTypeAssistantReasoningBlock {
 			if block, ok := m.views[i].(*reasoningblock.Model); ok {
@@ -1377,7 +1508,11 @@ func (m *model) AppendToLastMessage(agentName, content string) tea.Cmd {
 		return nil
 	}
 
-	return m.addMessage(types.Agent(types.MessageTypeAssistant, agentName, content))
+	msg := types.Agent(types.MessageTypeAssistant, agentName, content)
+	if m.isSubSessionAgent(agentName) {
+		msg.InSubSession = true
+	}
+	return m.addMessage(msg)
 }
 
 func (m *model) AppendReasoning(agentName, content string) tea.Cmd {
@@ -1410,9 +1545,10 @@ func (m *model) addReasoningBlock(agentName, content string) tea.Cmd {
 	shouldAutoScroll := !m.userHasScrolled
 
 	msg := &types.Message{
-		Type:    types.MessageTypeAssistantReasoningBlock,
-		Sender:  agentName,
-		Content: content,
+		Type:         types.MessageTypeAssistantReasoningBlock,
+		Sender:       agentName,
+		Content:      content,
+		InSubSession: m.isSubSessionAgent(agentName),
 	}
 
 	block := reasoningblock.New(nextBlockID(), agentName, m.sessionState)
@@ -1481,6 +1617,86 @@ func (m *model) contentWidth() int {
 
 func (m *model) totalScrollableHeight() int {
 	return m.totalHeight + m.bottomSlack
+}
+
+// isSubSessionAgent returns true if the given agent name is currently running as a sub-session.
+func (m *model) isSubSessionAgent(agentName string) bool {
+	_, ok := m.agentToSessionID[agentName]
+	return ok
+}
+
+// subSessionIdxForAgent returns the message index of the transfer_task that delegated to the
+// given agent, or -1 if that agent is not in an active sub-session.
+func (m *model) subSessionIdxForAgent(agentName string) int {
+	sessionID, ok := m.agentToSessionID[agentName]
+	if !ok {
+		return -1
+	}
+	if idx, ok := m.subSessionMap[sessionID]; ok {
+		return idx
+	}
+	return -1
+}
+
+// StartSubSession marks the beginning of a sub-session.
+// It finds the transfer_task targeting toAgent by parsing tool call arguments and stores
+// the mapping keyed by the child session ID. This correctly handles parallel sub-sessions
+// (A→B and A→C) and even two parallel transfers to the same agent since each child
+// session has a unique ID.
+func (m *model) StartSubSession(_, toAgent, sessionID string) {
+	if _, exists := m.subSessionMap[sessionID]; exists {
+		return // already tracked
+	}
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Type != types.MessageTypeToolCall || msg.ToolCall.Function.Name != builtin.ToolNameTransferTask {
+			continue
+		}
+		// Parse the tool call arguments to check if this transfer_task targets toAgent
+		var params builtin.TransferTaskArgs
+		if err := json.Unmarshal([]byte(msg.ToolCall.Function.Arguments), &params); err != nil {
+			continue
+		}
+		if params.Agent != toAgent {
+			continue
+		}
+		// Skip transfer_task messages already tracked by another sub-session
+		alreadyTracked := false
+		for _, trackedIdx := range m.subSessionMap {
+			if trackedIdx == i {
+				alreadyTracked = true
+				break
+			}
+		}
+		if alreadyTracked {
+			continue
+		}
+		m.subSessionMap[sessionID] = i
+		m.agentToSessionID[toAgent] = sessionID
+		msg.SubSessionActive = true
+		m.invalidateItem(i)
+		return
+	}
+}
+
+// EndSubSession marks the end of the sub-session with the given session ID.
+func (m *model) EndSubSession(sessionID string) {
+	idx, ok := m.subSessionMap[sessionID]
+	if !ok {
+		return
+	}
+	delete(m.subSessionMap, sessionID)
+	// Clean up the reverse map
+	for agent, sid := range m.agentToSessionID {
+		if sid == sessionID {
+			delete(m.agentToSessionID, agent)
+			break
+		}
+	}
+	if idx >= 0 && idx < len(m.messages) {
+		m.messages[idx].SubSessionActive = false
+		m.invalidateItem(idx)
+	}
 }
 
 // Helper methods
@@ -1605,6 +1821,10 @@ func (m *model) hasAnimatedContent() bool {
 			// Tool calls with pending/running status have spinners
 			if msg.ToolStatus == types.ToolStatusPending ||
 				msg.ToolStatus == types.ToolStatusRunning {
+				return true
+			}
+			// Sub-session with active status needs spinner
+			if msg.SubSessionActive {
 				return true
 			}
 		case types.MessageTypeAssistantReasoningBlock:

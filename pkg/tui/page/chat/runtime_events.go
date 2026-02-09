@@ -112,6 +112,11 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 
 	case *runtime.AgentSwitchingEvent:
 		p.sidebar.SetAgentSwitching(msg.Switching)
+		if msg.Switching {
+			p.messages.StartSubSession(msg.FromAgent, msg.ToAgent, msg.SessionID)
+		} else {
+			p.messages.EndSubSession(msg.SessionID)
+		}
 		return true, nil
 
 	case *runtime.ToolsetInfoEvent:

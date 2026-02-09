@@ -469,15 +469,17 @@ type AgentSwitchingEvent struct {
 	Switching bool   `json:"switching"`
 	FromAgent string `json:"from_agent,omitempty"`
 	ToAgent   string `json:"to_agent,omitempty"`
+	SessionID string `json:"session_id,omitempty"` // Child sub-session ID
 	AgentContext
 }
 
-func AgentSwitching(switching bool, fromAgent, toAgent string) Event {
+func AgentSwitching(switching bool, fromAgent, toAgent, sessionID string) Event {
 	return &AgentSwitchingEvent{
 		Type:         "agent_switching",
 		Switching:    switching,
 		FromAgent:    fromAgent,
 		ToAgent:      toAgent,
+		SessionID:    sessionID,
 		AgentContext: newAgentContext(cmp.Or(toAgent, fromAgent)),
 	}
 }

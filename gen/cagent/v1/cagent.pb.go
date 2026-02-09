@@ -3833,11 +3833,14 @@ func (x *TeamInfoEvent) GetAgentName() string {
 
 // AgentSwitchingEvent is sent when agent switching occurs.
 type AgentSwitchingEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Switching     bool                   `protobuf:"varint,1,opt,name=switching,proto3" json:"switching,omitempty"`
-	FromAgent     string                 `protobuf:"bytes,2,opt,name=from_agent,json=fromAgent,proto3" json:"from_agent,omitempty"`
-	ToAgent       string                 `protobuf:"bytes,3,opt,name=to_agent,json=toAgent,proto3" json:"to_agent,omitempty"`
-	AgentName     string                 `protobuf:"bytes,4,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Switching bool                   `protobuf:"varint,1,opt,name=switching,proto3" json:"switching,omitempty"`
+	FromAgent string                 `protobuf:"bytes,2,opt,name=from_agent,json=fromAgent,proto3" json:"from_agent,omitempty"`
+	ToAgent   string                 `protobuf:"bytes,3,opt,name=to_agent,json=toAgent,proto3" json:"to_agent,omitempty"`
+	AgentName string                 `protobuf:"bytes,4,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	// session_id is the child sub-session's unique ID, used to correlate
+	// events belonging to this sub-session.
+	SessionId     string `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3896,6 +3899,13 @@ func (x *AgentSwitchingEvent) GetToAgent() string {
 func (x *AgentSwitchingEvent) GetAgentName() string {
 	if x != nil {
 		return x.AgentName
+	}
+	return ""
+}
+
+func (x *AgentSwitchingEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
 	}
 	return ""
 }
@@ -4644,14 +4654,16 @@ const file_cagent_v1_cagent_proto_rawDesc = "" +
 	"\x10available_agents\x18\x01 \x03(\v2\x17.cagent.v1.AgentDetailsR\x0favailableAgents\x12#\n" +
 	"\rcurrent_agent\x18\x02 \x01(\tR\fcurrentAgent\x12\x1d\n" +
 	"\n" +
-	"agent_name\x18\x03 \x01(\tR\tagentName\"\x8c\x01\n" +
+	"agent_name\x18\x03 \x01(\tR\tagentName\"\xab\x01\n" +
 	"\x13AgentSwitchingEvent\x12\x1c\n" +
 	"\tswitching\x18\x01 \x01(\bR\tswitching\x12\x1d\n" +
 	"\n" +
 	"from_agent\x18\x02 \x01(\tR\tfromAgent\x12\x19\n" +
 	"\bto_agent\x18\x03 \x01(\tR\atoAgent\x12\x1d\n" +
 	"\n" +
-	"agent_name\x18\x04 \x01(\tR\tagentName\"t\n" +
+	"agent_name\x18\x04 \x01(\tR\tagentName\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"t\n" +
 	"\x10ToolsetInfoEvent\x12'\n" +
 	"\x0favailable_tools\x18\x01 \x01(\x05R\x0eavailableTools\x12\x18\n" +
 	"\aloading\x18\x02 \x01(\bR\aloading\x12\x1d\n" +
