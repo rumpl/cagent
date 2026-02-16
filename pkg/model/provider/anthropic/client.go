@@ -354,14 +354,6 @@ func (c *Client) CreateChatCompletionStream(
 		"max_tokens", maxTokens,
 		"message_count", len(params.Messages))
 
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		b, err := json.Marshal(params)
-		if err != nil {
-			slog.Error("Failed to marshal Anthropic request", "error", err)
-		}
-		slog.Debug("Request", "request", string(b))
-	}
-
 	// Add fine-grained tool streaming beta header
 	betaHeader := option.WithHeader("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
 

@@ -15,7 +15,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/compaction"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
@@ -253,7 +252,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 				contextLimit = int64(m.Limit.Context)
 			}
 
-			if m != nil && r.sessionCompaction && compaction.ShouldCompact(sess.InputTokens, sess.OutputTokens, 0, contextLimit) {
+			if m != nil && r.sessionCompaction && ShouldCompact(sess.InputTokens+sess.OutputTokens, contextLimit, r.sessionCompactor.settings.ReserveTokens) {
 				r.Summarize(ctx, sess, "", events)
 			}
 
@@ -461,8 +460,7 @@ func (r *LocalRuntime) recordAssistantMessage(
 
 // compactIfNeeded estimates the token impact of tool results added since
 // messageCountBefore and triggers proactive compaction when the estimated
-// total exceeds 90% of the context window. This prevents sending an
-// oversized request on the next iteration.
+// total exceeds the compaction threshold after reserving output tokens.
 func (r *LocalRuntime) compactIfNeeded(
 	ctx context.Context,
 	sess *session.Session,
@@ -479,20 +477,22 @@ func (r *LocalRuntime) compactIfNeeded(
 	newMessages := sess.GetAllMessages()[messageCountBefore:]
 	var addedTokens int64
 	for _, msg := range newMessages {
-		addedTokens += compaction.EstimateMessageTokens(&msg.Message)
+		addedTokens += int64(estimateMessageTokens(&msg))
 	}
 
-	if !compaction.ShouldCompact(sess.InputTokens, sess.OutputTokens, addedTokens, contextLimit) {
+	estimatedTotal := sess.InputTokens + sess.OutputTokens + addedTokens
+	if !ShouldCompact(estimatedTotal, contextLimit, r.sessionCompactor.settings.ReserveTokens) {
 		return
 	}
 
-	slog.Info("Proactive compaction: tool results pushed estimated context past 90%% threshold",
+	slog.Info("Proactive compaction: tool results pushed estimated context past the reserve threshold",
 		"agent", a.Name(),
 		"input_tokens", sess.InputTokens,
 		"output_tokens", sess.OutputTokens,
 		"added_estimated_tokens", addedTokens,
-		"estimated_total", sess.InputTokens+sess.OutputTokens+addedTokens,
+		"estimated_total", estimatedTotal,
 		"context_limit", contextLimit,
+		"reserve_tokens", r.sessionCompactor.settings.ReserveTokens,
 	)
 	r.Summarize(ctx, sess, "", events)
 }
