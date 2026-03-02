@@ -738,7 +738,7 @@ func TestFilesystemTool_RemoveDirectory_IsFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Output, "is not a directory")
+	assert.Contains(t, result.Output, "not a directory")
 }
 
 func TestFilesystemTool_RemoveDirectory_MultipleStopsOnError(t *testing.T) {

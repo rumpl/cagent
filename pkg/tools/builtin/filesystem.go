@@ -3,7 +3,6 @@ package builtin
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -13,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/docker/cagent/pkg/fsx"
 	"github.com/docker/cagent/pkg/tools"
@@ -756,10 +754,7 @@ func (t *FilesystemTool) handleRemoveDirectory(_ context.Context, args RemoveDir
 	for _, path := range args.Paths {
 		resolvedPath := t.resolvePath(path)
 
-		if err := syscall.Rmdir(resolvedPath); err != nil {
-			if errors.Is(err, syscall.ENOTDIR) {
-				return tools.ResultError(fmt.Sprintf("Error: %s is not a directory", path)), nil
-			}
+		if err := rmdir(resolvedPath); err != nil {
 			return tools.ResultError(fmt.Sprintf("Error removing directory %s: %s", path, err)), nil
 		}
 		results = append(results, fmt.Sprintf("Directory removed successfully: %s", path))
