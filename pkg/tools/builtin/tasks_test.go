@@ -15,7 +15,8 @@ import (
 func newTestTasksTool(t *testing.T) *TasksTool {
 	t.Helper()
 	dir := t.TempDir()
-	return NewTasksTool(filepath.Join(dir, "tasks.json"))
+	storagePath := filepath.Join(dir, "tasks.json")
+	return NewTasksTool(storagePath)
 }
 
 func TestTasksTool_DisplayNames(t *testing.T) {
@@ -141,7 +142,7 @@ func TestTasksTool_GetTask(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
-	var got taskWithEffective
+	var got TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &got))
 	assert.Equal(t, created.ID, got.ID)
 	assert.Equal(t, StatusPending, got.EffectiveStatus)
@@ -164,7 +165,7 @@ func TestTasksTool_GetTask_Blocked(t *testing.T) {
 	result, err := tool.getTask(t.Context(), GetTaskArgs{ID: blocked.ID})
 	require.NoError(t, err)
 
-	var got taskWithEffective
+	var got TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &got))
 	assert.Equal(t, StatusBlocked, got.EffectiveStatus)
 }
@@ -261,7 +262,7 @@ func TestTasksTool_DeleteTask_RemovesDependencies(t *testing.T) {
 	getResult, err := tool.getTask(t.Context(), GetTaskArgs{ID: dependent.ID})
 	require.NoError(t, err)
 
-	var got taskWithEffective
+	var got TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(getResult.Output), &got))
 	assert.Empty(t, got.Dependencies)
 	assert.Equal(t, StatusPending, got.EffectiveStatus)
@@ -286,7 +287,7 @@ func TestTasksTool_ListTasks(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
-	var tasks []taskWithEffective
+	var tasks []TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &tasks))
 	require.Len(t, tasks, 3)
 	assert.Equal(t, "Critical", tasks[0].Title)
@@ -308,7 +309,7 @@ func TestTasksTool_ListTasks_FilterByStatus(t *testing.T) {
 	result, err := tool.listTasks(t.Context(), ListTasksArgs{Status: "pending"})
 	require.NoError(t, err)
 
-	var tasks []taskWithEffective
+	var tasks []TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &tasks))
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "Also pending", tasks[0].Title)
@@ -324,7 +325,7 @@ func TestTasksTool_ListTasks_FilterByPriority(t *testing.T) {
 	result, err := tool.listTasks(t.Context(), ListTasksArgs{Priority: "high"})
 	require.NoError(t, err)
 
-	var tasks []taskWithEffective
+	var tasks []TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &tasks))
 	require.Len(t, tasks, 2)
 	for _, task := range tasks {
@@ -349,7 +350,7 @@ func TestTasksTool_ListTasks_BlockedLast(t *testing.T) {
 	result, err := tool.listTasks(t.Context(), ListTasksArgs{})
 	require.NoError(t, err)
 
-	var tasks []taskWithEffective
+	var tasks []TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &tasks))
 	require.Len(t, tasks, 3)
 	// Blocked task should be last regardless of priority
@@ -374,7 +375,7 @@ func TestTasksTool_NextTask(t *testing.T) {
 	result, err := tool.nextTask(t.Context(), tools.ToolCall{})
 	require.NoError(t, err)
 
-	var task taskWithEffective
+	var task TaskWithStatus
 	require.NoError(t, json.Unmarshal([]byte(result.Output), &task))
 	assert.Equal(t, "Blocker", task.Title)
 }
@@ -534,4 +535,116 @@ func TestTasksTool_ParametersAreObjects(t *testing.T) {
 func TestTasksTool_Instructions(t *testing.T) {
 	tool := newTestTasksTool(t)
 	assert.NotEmpty(t, tool.Instructions())
+}
+
+func TestTasksTool_WithTaskStorage(t *testing.T) {
+	dir := t.TempDir()
+	storagePath := filepath.Join(dir, "tasks.json")
+	storage := NewFileTaskStorage(storagePath)
+	tool := NewTasksTool(storagePath, WithTaskStorage(storage))
+
+	result, err := tool.createTask(t.Context(), CreateTaskArgs{
+		Title:       "Test task",
+		Description: "Custom storage test",
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	// Verify the custom storage received the item
+	tasks, err := storage.List()
+	require.NoError(t, err)
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "Test task", tasks[0].Title)
+	assert.Equal(t, "Custom storage test", tasks[0].Description)
+}
+
+func TestTasksTool_WithTaskStorage_NilIgnored(t *testing.T) {
+	dir := t.TempDir()
+	storagePath := filepath.Join(dir, "tasks.json")
+	tool := NewTasksTool(storagePath, WithTaskStorage(nil))
+
+	// The default FileTaskStorage should still be in place.
+	result, err := tool.createTask(t.Context(), CreateTaskArgs{
+		Title: "Still works",
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+}
+
+// ---------------------------------------------------------------------------
+// FileTaskStorage unit tests
+// ---------------------------------------------------------------------------
+
+func TestFileTaskStorage_CreateValidatesDeps(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileTaskStorage(filepath.Join(dir, "tasks.json"))
+
+	err := s.Create(Task{
+		ID:           "a",
+		Dependencies: []string{"nonexistent"},
+	})
+	assert.ErrorIs(t, err, ErrDependencyNotFound)
+}
+
+func TestFileTaskStorage_CreateValidatesCycle(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileTaskStorage(filepath.Join(dir, "tasks.json"))
+
+	require.NoError(t, s.Create(Task{ID: "a"}))
+	require.NoError(t, s.Create(Task{ID: "b", Dependencies: []string{"a"}}))
+
+	err := s.Create(Task{ID: "c", Dependencies: []string{"b"}})
+	require.NoError(t, err) // no cycle
+
+	err = s.Create(Task{ID: "d", Dependencies: []string{"c"}})
+	require.NoError(t, err) // still no cycle
+
+	// But a→d would cycle: a←b←c←d←a
+	err = s.Update(Task{ID: "a", Dependencies: []string{"d"}})
+	assert.ErrorIs(t, err, ErrDependencyCycle)
+}
+
+func TestFileTaskStorage_UpdateNotFound(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileTaskStorage(filepath.Join(dir, "tasks.json"))
+
+	err := s.Update(Task{ID: "nonexistent"})
+	assert.ErrorIs(t, err, ErrTaskNotFound)
+}
+
+func TestFileTaskStorage_DeleteCascadesDeps(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileTaskStorage(filepath.Join(dir, "tasks.json"))
+
+	require.NoError(t, s.Create(Task{ID: "a"}))
+	require.NoError(t, s.Create(Task{ID: "b", Dependencies: []string{"a"}}))
+	require.NoError(t, s.Create(Task{ID: "c", Dependencies: []string{"a", "b"}}))
+
+	require.NoError(t, s.Delete("a"))
+
+	tws, err := s.Get("b")
+	require.NoError(t, err)
+	assert.Empty(t, tws.Dependencies)
+
+	tws, err = s.Get("c")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b"}, tws.Dependencies)
+}
+
+func TestFileTaskStorage_GetEffectiveStatus(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFileTaskStorage(filepath.Join(dir, "tasks.json"))
+
+	require.NoError(t, s.Create(Task{ID: "a", Status: StatusPending}))
+	require.NoError(t, s.Create(Task{ID: "b", Status: StatusPending, Dependencies: []string{"a"}}))
+
+	tws, err := s.Get("b")
+	require.NoError(t, err)
+	assert.Equal(t, StatusBlocked, tws.EffectiveStatus)
+
+	// Complete the dependency — effective status should unblock.
+	require.NoError(t, s.Update(Task{ID: "a", Status: StatusDone}))
+	tws, err = s.Get("b")
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, tws.EffectiveStatus)
 }

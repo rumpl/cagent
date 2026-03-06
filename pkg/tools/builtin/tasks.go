@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,18 +79,210 @@ type Task struct {
 	UpdatedAt    string       `json:"updatedAt"`
 }
 
-type taskWithEffective struct {
+// TaskWithStatus pairs a task with its effective status, which accounts
+// for the state of its dependencies.
+type TaskWithStatus struct {
 	Task
 	EffectiveStatus TaskStatus `json:"effectiveStatus"`
 }
+
+// Sentinel errors returned by TaskStorage implementations.
+var (
+	ErrTaskNotFound       = errors.New("task not found")
+	ErrDependencyNotFound = errors.New("dependency task not found")
+	ErrDependencyCycle    = errors.New("dependency would create a cycle")
+	ErrDuplicateDependency = errors.New("dependency already exists")
+)
+
+// TaskStorage defines the storage layer for task items.
+//
+// Implementations are responsible for dependency integrity: Create and
+// Update must verify that every referenced dependency exists and that
+// the resulting graph is acyclic. Delete must remove the deleted task
+// from all other tasks' dependency lists.
+type TaskStorage interface {
+	// Create persists a new task.
+	// Returns ErrDependencyNotFound or ErrDependencyCycle on invalid dependencies.
+	Create(task Task) error
+
+	// Get returns a task and its effective status.
+	// Returns ErrTaskNotFound if the ID does not exist.
+	Get(id string) (TaskWithStatus, error)
+
+	// List returns every task with its effective status.
+	List() ([]TaskWithStatus, error)
+
+	// Update modifies an existing task.
+	// Returns ErrTaskNotFound if the task does not exist,
+	// ErrDependencyNotFound or ErrDependencyCycle on invalid dependencies.
+	Update(task Task) error
+
+	// Delete removes a task and cleans up references to it in other
+	// tasks' dependency lists.
+	// Returns ErrTaskNotFound if the ID does not exist.
+	Delete(id string) error
+}
+
+// ---------------------------------------------------------------------------
+// FileTaskStorage — file-backed implementation
+// ---------------------------------------------------------------------------
 
 type taskStore struct {
 	Tasks map[string]Task `json:"tasks"`
 }
 
-type TasksTool struct {
+// FileTaskStorage is a file-backed, concurrency-safe implementation of TaskStorage.
+type FileTaskStorage struct {
 	mu       sync.Mutex
 	filePath string
+}
+
+// NewFileTaskStorage creates a FileTaskStorage that reads/writes to the given path.
+func NewFileTaskStorage(filePath string) *FileTaskStorage {
+	return &FileTaskStorage{filePath: filePath}
+}
+
+func (s *FileTaskStorage) load() map[string]Task {
+	data, err := os.ReadFile(s.filePath)
+	if err != nil {
+		return make(map[string]Task)
+	}
+	var store taskStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		return make(map[string]Task)
+	}
+	if store.Tasks == nil {
+		return make(map[string]Task)
+	}
+	return store.Tasks
+}
+
+func (s *FileTaskStorage) save(tasks map[string]Task) error {
+	if err := os.MkdirAll(filepath.Dir(s.filePath), 0o700); err != nil {
+		return fmt.Errorf("creating storage directory: %w", err)
+	}
+	data, err := json.MarshalIndent(taskStore{Tasks: tasks}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling task store: %w", err)
+	}
+	return os.WriteFile(s.filePath, data, 0o644)
+}
+
+func (s *FileTaskStorage) validateDeps(tasks map[string]Task, taskID string, deps []string) error {
+	for _, depID := range deps {
+		if _, ok := tasks[depID]; !ok {
+			return fmt.Errorf("%w: %s", ErrDependencyNotFound, depID)
+		}
+	}
+	if hasCycle(tasks, taskID, deps) {
+		return ErrDependencyCycle
+	}
+	return nil
+}
+
+func (s *FileTaskStorage) Create(task Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tasks := s.load()
+	if err := s.validateDeps(tasks, task.ID, task.Dependencies); err != nil {
+		return err
+	}
+	tasks[task.ID] = task
+	return s.save(tasks)
+}
+
+func (s *FileTaskStorage) Get(id string) (TaskWithStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tasks := s.load()
+	task, ok := tasks[id]
+	if !ok {
+		return TaskWithStatus{}, fmt.Errorf("%w: %s", ErrTaskNotFound, id)
+	}
+	return TaskWithStatus{
+		Task:            task,
+		EffectiveStatus: effectiveStatus(task, tasks),
+	}, nil
+}
+
+func (s *FileTaskStorage) List() ([]TaskWithStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tasks := s.load()
+	result := make([]TaskWithStatus, 0, len(tasks))
+	for _, task := range tasks {
+		result = append(result, TaskWithStatus{
+			Task:            task,
+			EffectiveStatus: effectiveStatus(task, tasks),
+		})
+	}
+	return result, nil
+}
+
+func (s *FileTaskStorage) Update(task Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tasks := s.load()
+	if _, ok := tasks[task.ID]; !ok {
+		return fmt.Errorf("%w: %s", ErrTaskNotFound, task.ID)
+	}
+	if err := s.validateDeps(tasks, task.ID, task.Dependencies); err != nil {
+		return err
+	}
+	tasks[task.ID] = task
+	return s.save(tasks)
+}
+
+func (s *FileTaskStorage) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tasks := s.load()
+	if _, ok := tasks[id]; !ok {
+		return fmt.Errorf("%w: %s", ErrTaskNotFound, id)
+	}
+
+	// Remove the deleted task from other tasks' dependency lists.
+	for otherID, task := range tasks {
+		if otherID == id {
+			continue
+		}
+		filtered := slices.DeleteFunc(slices.Clone(task.Dependencies), func(d string) bool {
+			return d == id
+		})
+		if len(filtered) != len(task.Dependencies) {
+			task.Dependencies = filtered
+			tasks[otherID] = task
+		}
+	}
+
+	delete(tasks, id)
+	return s.save(tasks)
+}
+
+// ---------------------------------------------------------------------------
+// TasksTool
+// ---------------------------------------------------------------------------
+
+// TaskOption is a functional option for configuring a TasksTool.
+type TaskOption func(*TasksTool)
+
+// WithTaskStorage sets a custom storage implementation for the TasksTool.
+// A nil value is silently ignored, keeping the default storage.
+func WithTaskStorage(storage TaskStorage) TaskOption {
+	return func(t *TasksTool) {
+		if storage != nil {
+			t.storage = storage
+		}
+	}
+}
+
+type TasksTool struct {
+	storage  TaskStorage
 	basePath string
 }
 
@@ -98,11 +291,15 @@ var (
 	_ tools.Instructable = (*TasksTool)(nil)
 )
 
-func NewTasksTool(storagePath string) *TasksTool {
-	return &TasksTool{
-		filePath: storagePath,
+func NewTasksTool(storagePath string, opts ...TaskOption) *TasksTool {
+	t := &TasksTool{
+		storage:  NewFileTaskStorage(storagePath),
 		basePath: filepath.Dir(storagePath),
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 func (t *TasksTool) Instructions() string {
@@ -115,31 +312,9 @@ Tasks are saved to a JSON file and survive across sessions. A task is automatica
 Workflow: create_task → list_tasks/next_task → update_task as work progresses. Use add_dependency/remove_dependency to manage ordering.`
 }
 
-func (t *TasksTool) load() taskStore {
-	data, err := os.ReadFile(t.filePath)
-	if err != nil {
-		return taskStore{Tasks: make(map[string]Task)}
-	}
-	var store taskStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return taskStore{Tasks: make(map[string]Task)}
-	}
-	if store.Tasks == nil {
-		store.Tasks = make(map[string]Task)
-	}
-	return store
-}
-
-func (t *TasksTool) save(store taskStore) error {
-	if err := os.MkdirAll(filepath.Dir(t.filePath), 0o700); err != nil {
-		return fmt.Errorf("creating storage directory: %w", err)
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling task store: %w", err)
-	}
-	return os.WriteFile(t.filePath, data, 0o644)
-}
+// ---------------------------------------------------------------------------
+// Pure helpers (no storage access)
+// ---------------------------------------------------------------------------
 
 func effectiveStatus(task Task, tasks map[string]Task) TaskStatus {
 	if task.Status == StatusDone {
@@ -194,7 +369,7 @@ func (t *TasksTool) resolveDescription(description, filePath string) (string, er
 	return description, nil
 }
 
-func sortTasks(tasks []taskWithEffective) {
+func sortTasks(tasks []TaskWithStatus) {
 	sort.SliceStable(tasks, func(i, j int) bool {
 		a, b := tasks[i], tasks[j]
 		if (a.EffectiveStatus == StatusBlocked) != (b.EffectiveStatus == StatusBlocked) {
@@ -208,7 +383,21 @@ func sortTasks(tasks []taskWithEffective) {
 	})
 }
 
+// storageError translates a storage error into a tool-call error result,
+// returning nil when the error should be surfaced as a Go error instead.
+func storageError(err error) *tools.ToolCallResult {
+	if errors.Is(err, ErrTaskNotFound) ||
+		errors.Is(err, ErrDependencyNotFound) ||
+		errors.Is(err, ErrDependencyCycle) ||
+		errors.Is(err, ErrDuplicateDependency) {
+		return tools.ResultError(err.Error())
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Tool argument types
+// ---------------------------------------------------------------------------
 
 type CreateTaskArgs struct {
 	Title        string   `json:"title" jsonschema:"Short title for the task"`
@@ -251,7 +440,9 @@ type RemoveDependencyArgs struct {
 	DependsOnID string `json:"dependsOnId" jsonschema:"The dependency to remove"`
 }
 
+// ---------------------------------------------------------------------------
 // Tool handlers
+// ---------------------------------------------------------------------------
 
 func (t *TasksTool) createTask(_ context.Context, params CreateTaskArgs) (*tools.ToolCallResult, error) {
 	desc, err := t.resolveDescription(params.Description, params.Path)
@@ -266,27 +457,13 @@ func (t *TasksTool) createTask(_ context.Context, params CreateTaskArgs) (*tools
 		return tools.ResultError(fmt.Sprintf("invalid priority: %s", params.Priority)), nil
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	id := uuid.New().String()
-
 	deps := params.Dependencies
 	if deps == nil {
 		deps = []string{}
 	}
-	for _, depID := range deps {
-		if _, ok := store.Tasks[depID]; !ok {
-			return tools.ResultError(fmt.Sprintf("dependency task not found: %s", depID)), nil
-		}
-	}
-	if hasCycle(store.Tasks, id, deps) {
-		return tools.ResultError("adding these dependencies would create a cycle"), nil
-	}
 
 	task := Task{
-		ID:           id,
+		ID:           uuid.New().String(),
 		Title:        params.Title,
 		Description:  desc,
 		Priority:     priority,
@@ -296,36 +473,36 @@ func (t *TasksTool) createTask(_ context.Context, params CreateTaskArgs) (*tools
 		UpdatedAt:    now(),
 	}
 
-	store.Tasks[id] = task
-	if err := t.save(store); err != nil {
-		return tools.ResultError(err.Error()), nil
+	if err := t.storage.Create(task); err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
 
 	return taskResult(task), nil
 }
 
 func (t *TasksTool) getTask(_ context.Context, params GetTaskArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	task, ok := store.Tasks[params.ID]
-	if !ok {
-		return tools.ResultError(fmt.Sprintf("task not found: %s", params.ID)), nil
+	tws, err := t.storage.Get(params.ID)
+	if err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
-
-	return taskWithEffectiveResult(task, store.Tasks), nil
+	return taskWithStatusResult(tws), nil
 }
 
 func (t *TasksTool) updateTask(_ context.Context, params UpdateTaskArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	task, ok := store.Tasks[params.ID]
-	if !ok {
-		return tools.ResultError(fmt.Sprintf("task not found: %s", params.ID)), nil
+	tws, err := t.storage.Get(params.ID)
+	if err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
+	task := tws.Task
 
 	if params.Title != "" {
 		task.Title = params.Title
@@ -350,51 +527,27 @@ func (t *TasksTool) updateTask(_ context.Context, params UpdateTaskArgs) (*tools
 		task.Status = TaskStatus(params.Status)
 	}
 	if params.Dependencies != nil {
-		for _, depID := range params.Dependencies {
-			if _, exists := store.Tasks[depID]; !exists {
-				return tools.ResultError(fmt.Sprintf("dependency task not found: %s", depID)), nil
-			}
-		}
-		if hasCycle(store.Tasks, params.ID, params.Dependencies) {
-			return tools.ResultError("adding these dependencies would create a cycle"), nil
-		}
 		task.Dependencies = params.Dependencies
 	}
 
 	task.UpdatedAt = now()
-	store.Tasks[params.ID] = task
 
-	if err := t.save(store); err != nil {
-		return tools.ResultError(err.Error()), nil
+	if err := t.storage.Update(task); err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
 
 	return taskResult(task), nil
 }
 
 func (t *TasksTool) deleteTask(_ context.Context, params DeleteTaskArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	if _, ok := store.Tasks[params.ID]; !ok {
-		return tools.ResultError(fmt.Sprintf("task not found: %s", params.ID)), nil
-	}
-
-	for id, task := range store.Tasks {
-		filtered := make([]string, 0, len(task.Dependencies))
-		for _, d := range task.Dependencies {
-			if d != params.ID {
-				filtered = append(filtered, d)
-			}
+	if err := t.storage.Delete(params.ID); err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
 		}
-		task.Dependencies = filtered
-		store.Tasks[id] = task
-	}
-
-	delete(store.Tasks, params.ID)
-
-	if err := t.save(store); err != nil {
-		return tools.ResultError(err.Error()), nil
+		return nil, err
 	}
 
 	out, err := json.MarshalIndent(map[string]string{"deleted": params.ID}, "", "  ")
@@ -405,35 +558,20 @@ func (t *TasksTool) deleteTask(_ context.Context, params DeleteTaskArgs) (*tools
 }
 
 func (t *TasksTool) listTasks(_ context.Context, params ListTasksArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	var tasks []taskWithEffective
-	for _, task := range store.Tasks {
-		tasks = append(tasks, taskWithEffective{
-			Task:            task,
-			EffectiveStatus: effectiveStatus(task, store.Tasks),
-		})
+	tasks, err := t.storage.List()
+	if err != nil {
+		return nil, err
 	}
 
 	if params.Status != "" {
-		filtered := tasks[:0]
-		for _, task := range tasks {
-			if string(task.EffectiveStatus) == params.Status {
-				filtered = append(filtered, task)
-			}
-		}
-		tasks = filtered
+		tasks = slices.DeleteFunc(tasks, func(tw TaskWithStatus) bool {
+			return string(tw.EffectiveStatus) != params.Status
+		})
 	}
 	if params.Priority != "" {
-		filtered := tasks[:0]
-		for _, task := range tasks {
-			if string(task.Priority) == params.Priority {
-				filtered = append(filtered, task)
-			}
-		}
-		tasks = filtered
+		tasks = slices.DeleteFunc(tasks, func(tw TaskWithStatus) bool {
+			return string(tw.Priority) != params.Priority
+		})
 	}
 
 	sortTasks(tasks)
@@ -446,16 +584,9 @@ func (t *TasksTool) listTasks(_ context.Context, params ListTasksArgs) (*tools.T
 }
 
 func (t *TasksTool) nextTask(_ context.Context, _ tools.ToolCall) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	var tasks []taskWithEffective
-	for _, task := range store.Tasks {
-		tasks = append(tasks, taskWithEffective{
-			Task:            task,
-			EffectiveStatus: effectiveStatus(task, store.Tasks),
-		})
+	tasks, err := t.storage.List()
+	if err != nil {
+		return nil, err
 	}
 	sortTasks(tasks)
 
@@ -475,63 +606,60 @@ func (t *TasksTool) nextTask(_ context.Context, _ tools.ToolCall) (*tools.ToolCa
 }
 
 func (t *TasksTool) addDependency(_ context.Context, params AddDependencyArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	tws, err := t.storage.Get(params.TaskID)
+	if err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
+	}
+	task := tws.Task
 
-	store := t.load()
-	task, ok := store.Tasks[params.TaskID]
-	if !ok {
-		return tools.ResultError(fmt.Sprintf("task not found: %s", params.TaskID)), nil
-	}
-	if _, ok := store.Tasks[params.DependsOnID]; !ok {
-		return tools.ResultError(fmt.Sprintf("dependency task not found: %s", params.DependsOnID)), nil
-	}
 	if slices.Contains(task.Dependencies, params.DependsOnID) {
-		return tools.ResultError("dependency already exists"), nil
+		return tools.ResultError(ErrDuplicateDependency.Error()), nil
 	}
 
-	newDeps := append(task.Dependencies, params.DependsOnID)
-	if hasCycle(store.Tasks, params.TaskID, newDeps) {
-		return tools.ResultError("adding this dependency would create a cycle"), nil
-	}
-
-	task.Dependencies = newDeps
+	task.Dependencies = append(task.Dependencies, params.DependsOnID)
 	task.UpdatedAt = now()
-	store.Tasks[params.TaskID] = task
 
-	if err := t.save(store); err != nil {
-		return tools.ResultError(err.Error()), nil
+	if err := t.storage.Update(task); err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
 
 	return taskResult(task), nil
 }
 
 func (t *TasksTool) removeDependency(_ context.Context, params RemoveDependencyArgs) (*tools.ToolCallResult, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	store := t.load()
-	task, ok := store.Tasks[params.TaskID]
-	if !ok {
-		return tools.ResultError(fmt.Sprintf("task not found: %s", params.TaskID)), nil
-	}
-
-	filtered := make([]string, 0, len(task.Dependencies))
-	for _, d := range task.Dependencies {
-		if d != params.DependsOnID {
-			filtered = append(filtered, d)
+	tws, err := t.storage.Get(params.TaskID)
+	if err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
 		}
+		return nil, err
 	}
-	task.Dependencies = filtered
-	task.UpdatedAt = now()
-	store.Tasks[params.TaskID] = task
+	task := tws.Task
 
-	if err := t.save(store); err != nil {
-		return tools.ResultError(err.Error()), nil
+	task.Dependencies = slices.DeleteFunc(slices.Clone(task.Dependencies), func(d string) bool {
+		return d == params.DependsOnID
+	})
+	task.UpdatedAt = now()
+
+	if err := t.storage.Update(task); err != nil {
+		if r := storageError(err); r != nil {
+			return r, nil
+		}
+		return nil, err
 	}
 
 	return taskResult(task), nil
 }
+
+// ---------------------------------------------------------------------------
+// Result helpers
+// ---------------------------------------------------------------------------
 
 func taskResult(task Task) *tools.ToolCallResult {
 	out, err := json.Marshal(task)
@@ -541,12 +669,8 @@ func taskResult(task Task) *tools.ToolCallResult {
 	return &tools.ToolCallResult{Output: string(out)}
 }
 
-func taskWithEffectiveResult(task Task, tasks map[string]Task) *tools.ToolCallResult {
-	result := taskWithEffective{
-		Task:            task,
-		EffectiveStatus: effectiveStatus(task, tasks),
-	}
-	out, err := json.Marshal(result)
+func taskWithStatusResult(tws TaskWithStatus) *tools.ToolCallResult {
+	out, err := json.Marshal(tws)
 	if err != nil {
 		return tools.ResultError(err.Error())
 	}
