@@ -220,6 +220,11 @@ type LocalRuntime struct {
 	executionsMu sync.RWMutex
 	executions   []*Execution
 
+	lifecycleHooks          RuntimeLifecycleHooks
+	buildContextMiddlewares []BuildContextMiddleware
+	modelMiddlewares        []ModelMiddleware
+	toolMiddlewares         []ToolMiddleware
+
 	// onToolsChanged is called when an MCP toolset reports a tool list change.
 	onToolsChanged func(Event)
 
@@ -294,6 +299,30 @@ func WithWorkingDir(dir string) Opt {
 func WithEnv(env []string) Opt {
 	return func(r *LocalRuntime) {
 		r.env = env
+	}
+}
+
+func WithLifecycleHooks(hooks RuntimeLifecycleHooks) Opt {
+	return func(r *LocalRuntime) {
+		mergeLifecycleHooks(&r.lifecycleHooks, hooks)
+	}
+}
+
+func WithBuildContextMiddlewares(middlewares ...BuildContextMiddleware) Opt {
+	return func(r *LocalRuntime) {
+		r.buildContextMiddlewares = append(r.buildContextMiddlewares, middlewares...)
+	}
+}
+
+func WithModelMiddlewares(middlewares ...ModelMiddleware) Opt {
+	return func(r *LocalRuntime) {
+		r.modelMiddlewares = append(r.modelMiddlewares, middlewares...)
+	}
+}
+
+func WithToolMiddlewares(middlewares ...ToolMiddleware) Opt {
+	return func(r *LocalRuntime) {
+		r.toolMiddlewares = append(r.toolMiddlewares, middlewares...)
 	}
 }
 

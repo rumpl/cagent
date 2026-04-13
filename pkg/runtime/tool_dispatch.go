@@ -51,6 +51,23 @@ func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *
 	a := exec.resolveAgent()
 	slog.Debug("Processing tool calls", "agent", a.Name(), "call_count", len(calls))
 
+	if len(calls) == 0 {
+		return
+	}
+
+	batchPhase := &ToolBatchPhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Turn: exec.turn, Events: events, Calls: calls, Tools: agentTools}
+	if err := r.runToolBatchHooks(ctx, r.lifecycleHooks.BeforeToolBatch, batchPhase); err != nil {
+		events <- Error(err.Error())
+		return
+	}
+	finishBatch := func() bool {
+		if err := r.runToolBatchHooks(ctx, r.lifecycleHooks.AfterToolBatch, batchPhase); err != nil {
+			events <- Error(err.Error())
+			return false
+		}
+		return true
+	}
+
 	// Build a map of agent tools for quick lookup.
 	agentToolMap := make(map[string]tools.Tool, len(agentTools))
 	for _, t := range agentTools {
@@ -82,18 +99,30 @@ func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *
 			continue
 		}
 
-		// Pick the handler: runtime-managed tools (transfer_task, handoff)
-		// have dedicated handlers; everything else goes through the toolset.
-		var runTool func()
-		if handler, exists := r.toolMap[toolCall.Function.Name]; exists {
-			runTool = func() { r.runAgentTool(callCtx, handler, sess, toolCall, tool, events, a) }
-		} else {
-			runTool = func() { r.runTool(callCtx, tool, toolCall, events, sess, a) }
+		phase := &ToolCallPhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Turn: exec.turn, Events: events, ToolCall: toolCall, Tool: tool}
+		toolResult, err := r.executeToolPhase(callCtx, phase, func(ctx context.Context, phase *ToolCallPhase) (*ToolExecutionResult, error) {
+			runTool := func() {
+				if handler, exists := r.toolMap[phase.ToolCall.Function.Name]; exists {
+					r.runAgentTool(ctx, handler, sess, phase.ToolCall, phase.Tool, events, a)
+				} else {
+					r.runTool(ctx, phase.Tool, phase.ToolCall, events, sess, a)
+				}
+			}
+
+			canceled := r.executeWithApproval(ctx, exec, sess, phase.ToolCall, phase.Tool, events, a, runTool)
+			return &ToolExecutionResult{Canceled: canceled}, nil
+		})
+		if err != nil {
+			errMsg := fmt.Sprintf("Tool execution failed: %v", err)
+			r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, errMsg)
+			callSpan.RecordError(err)
+			callSpan.SetStatus(codes.Error, "tool middleware error")
+			callSpan.End()
+			finishBatch()
+			return
 		}
 
-		// Execute tool with approval check.
-		canceled := r.executeWithApproval(callCtx, exec, sess, toolCall, tool, events, a, runTool)
-		if canceled {
+		if toolResult != nil && toolResult.Canceled {
 			callSpan.SetStatus(codes.Ok, "tool call canceled by user")
 			callSpan.End()
 
@@ -104,12 +133,15 @@ func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *
 				remainingTool := agentToolMap[remaining.Function.Name]
 				r.addToolErrorResponse(ctx, sess, remaining, remainingTool, events, a, "The tool call was canceled because a previous tool call in the same batch was canceled by the user.")
 			}
+			finishBatch()
 			return
 		}
 
 		callSpan.SetStatus(codes.Ok, "tool call processed")
 		callSpan.End()
 	}
+
+	finishBatch()
 }
 
 // executeWithApproval handles the tool approval flow and executes the tool.
@@ -226,11 +258,21 @@ func (r *LocalRuntime) askUserForConfirmation(
 	events <- ToolCallConfirmation(toolCall, tool, a.Name())
 
 	r.executeOnUserInputHooks(ctx, sess.ID, "tool confirmation")
+	pausePhase := &PausePhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Events: events, Reason: "tool_confirmation", ToolCall: &toolCall, Tool: &tool}
+	if err := r.runPauseHooks(ctx, r.lifecycleHooks.BeforePauseForUser, pausePhase); err != nil {
+		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, err.Error())
+		return true
+	}
 
 	req, ok := exec.waitForResume(ctx)
 	if !ok {
 		slog.Debug("Context cancelled while waiting for resume", "tool", toolName, "session_id", sess.ID)
 		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, "The tool call was canceled by the user.")
+		return true
+	}
+
+	if err := r.runResumeHooks(ctx, r.lifecycleHooks.AfterResume, &ResumePhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Events: events, Reason: "tool_confirmation", Request: req}); err != nil {
+		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, err.Error())
 		return true
 	}
 

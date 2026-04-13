@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
@@ -285,17 +284,17 @@ func (e *Execution) waitForElicitation(ctx context.Context) (ElicitationResult, 
 	}
 }
 
-func (e *Execution) observeInitialUserInput() {
+func (e *Execution) observeInitialUserInput(ctx context.Context) error {
 	if !e.session.SendUserMessage {
-		return
+		return nil
 	}
 
 	msg, pos, ok := lastUserMessageInSession(e.session)
 	if !ok {
-		return
+		return nil
 	}
 
-	e.applyUserInput(userInputAction{
+	return e.applyUserInput(ctx, userInputAction{
 		DisplayContent: msg.Message.Content,
 		StoredContent:  msg.Message.Content,
 		MultiContent:   msg.Message.MultiContent,
@@ -304,26 +303,43 @@ func (e *Execution) observeInitialUserInput() {
 	})
 }
 
-func (e *Execution) appendSteerInput(msg QueuedMessage) {
+func (e *Execution) appendSteerInput(ctx context.Context, msg QueuedMessage) error {
 	wrapped := fmt.Sprintf(
 		"<system-reminder>\nThe user sent the following message while you were working:\n%s\n\nPlease address this in your next response while continuing with your current tasks.\n</system-reminder>",
 		msg.Content,
 	)
-	e.applyUserInput(newUserInputAction(msg.Content, wrapped, msg.MultiContent))
+	return e.applyUserInput(ctx, newUserInputAction(msg.Content, wrapped, msg.MultiContent))
 }
 
-func (e *Execution) appendFollowUpInput(msg QueuedMessage) {
-	e.applyUserInput(newUserInputAction(msg.Content, msg.Content, msg.MultiContent))
+func (e *Execution) appendFollowUpInput(ctx context.Context, msg QueuedMessage) error {
+	return e.applyUserInput(ctx, newUserInputAction(msg.Content, msg.Content, msg.MultiContent))
 }
 
-func (e *Execution) applyUserInput(input userInputAction) {
-	pos := input.SessionPos
-	if input.Append {
-		userMsg := session.UserMessage(input.StoredContent, input.MultiContent...)
+func (e *Execution) applyUserInput(ctx context.Context, input userInputAction) error {
+	a := e.resolveAgent()
+	phase := &UserMessagePhase{
+		Runtime:      e.runtime,
+		Execution:    e,
+		Session:      e.session,
+		Agent:        a,
+		Events:       e.events,
+		Input:        &input,
+		DisplayInput: input.DisplayContent,
+	}
+	if err := e.runtime.runUserMessageHooks(ctx, e.runtime.lifecycleHooks.BeforeUserMessage, phase); err != nil {
+		return err
+	}
+
+	pos := phase.Input.SessionPos
+	if phase.Input.Append {
+		userMsg := session.UserMessage(phase.Input.StoredContent, phase.Input.MultiContent...)
 		e.session.AddMessage(userMsg)
 		pos = len(e.session.Messages) - 1
 	}
-	e.events <- UserMessage(input.DisplayContent, e.currentSessionID(), input.MultiContent, pos)
+	e.events <- UserMessage(phase.Input.DisplayContent, e.currentSessionID(), phase.Input.MultiContent, pos)
+
+	phase.Input.SessionPos = pos
+	return e.runtime.runUserMessageHooks(ctx, e.runtime.lifecycleHooks.AfterUserMessage, phase)
 }
 
 func lastUserMessageInSession(sess *session.Session) (*session.Message, int, bool) {
@@ -345,6 +361,10 @@ func (e *Execution) finalize(ctx context.Context) {
 
 	a := e.resolveAgent()
 	if a != nil {
+		phase := &SessionPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events}
+		if err := e.runtime.runSessionHooks(context.WithoutCancel(ctx), e.runtime.lifecycleHooks.SessionEnd, phase); err != nil {
+			slog.Warn("Session end lifecycle hook failed", "agent", a.Name(), "error", err)
+		}
 		e.runtime.executeSessionEndHooks(context.WithoutCancel(ctx), e.session, a)
 		e.events <- StreamStopped(e.currentSessionID(), a.Name())
 	} else {
@@ -367,6 +387,10 @@ func (e *Execution) run(ctx context.Context) {
 	defer sessionSpan.End()
 	defer e.finalize(ctx)
 
+	if err := e.runtime.runSessionHooks(ctx, e.runtime.lifecycleHooks.SessionStart, &SessionPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events}); err != nil {
+		e.events <- Error(err.Error())
+		return
+	}
 	e.runtime.executeSessionStartHooks(ctx, e.session, a, e.events)
 	e.events <- TeamInfo(e.runtime.agentDetailsFromTeam(), a.Name())
 
@@ -380,7 +404,10 @@ func (e *Execution) run(ctx context.Context) {
 	}
 	agentTools = filterExcludedTools(agentTools, e.session.ExcludedTools)
 	e.events <- ToolsetInfo(len(agentTools), false, a.Name())
-	e.observeInitialUserInput()
+	if err := e.observeInitialUserInput(ctx); err != nil {
+		e.events <- Error(err.Error())
+		return
+	}
 	e.events <- StreamStarted(e.currentSessionID(), a.Name())
 
 	for {
@@ -431,6 +458,12 @@ func (e *Execution) run(ctx context.Context) {
 				return
 			}
 
+			pausePhase := &PausePhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events, Reason: "max_iterations"}
+			if err := e.runtime.runPauseHooks(ctx, e.runtime.lifecycleHooks.BeforePauseForUser, pausePhase); err != nil {
+				e.events <- Error(err.Error())
+				return
+			}
+
 			req, ok := e.waitForResume(ctx)
 			if !ok {
 				slog.Debug(
@@ -438,6 +471,11 @@ func (e *Execution) run(ctx context.Context) {
 					"agent", a.Name(),
 					"session_id", e.currentSessionID(),
 				)
+				return
+			}
+
+			if err := e.runtime.runResumeHooks(ctx, e.runtime.lifecycleHooks.AfterResume, &ResumePhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events, Reason: "max_iterations", Request: req}); err != nil {
+				e.events <- Error(err.Error())
 				return
 			}
 
@@ -475,6 +513,19 @@ func (e *Execution) run(ctx context.Context) {
 
 		turn := &Turn{Number: e.iteration, Agent: a, Tools: agentTools}
 		e.turn = turn
+		turnPhase := &TurnPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Events: e.events}
+		if err := e.runtime.runTurnHooks(ctx, e.runtime.lifecycleHooks.TurnStart, turnPhase); err != nil {
+			e.events <- Error(err.Error())
+			streamSpan.End()
+			return
+		}
+		finishTurn := func() bool {
+			if err := e.runtime.runTurnHooks(ctx, e.runtime.lifecycleHooks.TurnEnd, turnPhase); err != nil {
+				e.events <- Error(err.Error())
+				return false
+			}
+			return true
+		}
 
 		model := a.Model()
 		if e.toolModelOverride != "" {
@@ -507,14 +558,24 @@ func (e *Execution) run(ctx context.Context) {
 			}
 		}
 
-		promptContext := e.session.BuildPromptContext(a)
-		if m != nil && len(m.Modalities.Input) > 0 && !slices.Contains(m.Modalities.Input, "image") {
-			promptContext.Messages = stripImageContent(promptContext.Messages)
+		buildContextPhase := &BuildContextPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Model: model, ModelDefinition: m}
+		if err := e.runtime.buildContext(ctx, buildContextPhase); err != nil {
+			e.events <- Error(err.Error())
+			streamSpan.End()
+			return
 		}
-		turn.PromptContext = promptContext
-		turn.PromptMessages = promptContext.Messages
+		turn.PromptContext = buildContextPhase.PromptContext
+		turn.PromptMessages = buildContextPhase.PromptContext.Messages
 
-		res, usedModel, err := e.runtime.tryModelWithFallback(streamCtx, a, model, promptContext.Messages, agentTools, e.session, m, e.events)
+		modelResult, err := e.runtime.executeModelPhase(streamCtx, &ModelPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, PromptContext: turn.PromptContext, Messages: turn.PromptMessages, Tools: agentTools, Model: model, ModelDefinition: m, Events: e.events})
+		var usedModel provider.Provider
+		if modelResult != nil {
+			usedModel = modelResult.UsedModel
+		}
+		var res streamResult
+		if modelResult != nil {
+			res = modelResult.Result
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				slog.Debug("Model stream canceled by context", "agent", a.Name(), "session_id", e.currentSessionID())
@@ -566,7 +627,17 @@ func (e *Execution) run(ctx context.Context) {
 		)
 		streamSpan.End()
 
+		commitPhase := &AssistantCommitPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Events: e.events, Result: res, AgentTools: agentTools, ModelID: turn.ModelID, ModelDefinition: m}
+		if err := e.runtime.runAssistantCommitHooks(ctx, e.runtime.lifecycleHooks.BeforeAssistantCommit, commitPhase); err != nil {
+			e.events <- Error(err.Error())
+			return
+		}
 		msgUsage := e.runtime.recordAssistantMessage(e.session, a, res, agentTools, turn.ModelID, m, e.events)
+		commitPhase.MessageUsage = msgUsage
+		if err := e.runtime.runAssistantCommitHooks(ctx, e.runtime.lifecycleHooks.AfterAssistantCommit, commitPhase); err != nil {
+			e.events <- Error(err.Error())
+			return
+		}
 		usage := SessionUsage(e.session, turn.ContextLimit)
 		usage.LastMessage = msgUsage
 		e.events <- NewTokenUsageEvent(e.currentSessionID(), a.Name(), usage)
@@ -596,9 +667,15 @@ func (e *Execution) run(ctx context.Context) {
 
 		if steered := e.steerQueue.Drain(ctx); len(steered) > 0 {
 			for _, sm := range steered {
-				e.appendSteerInput(sm)
+				if err := e.appendSteerInput(ctx, sm); err != nil {
+					e.events <- Error(err.Error())
+					return
+				}
 			}
 			e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
+			if !finishTurn() {
+				return
+			}
 			continue
 		}
 
@@ -607,14 +684,26 @@ func (e *Execution) run(ctx context.Context) {
 			e.runtime.executeStopHooks(ctx, e.session, a, res.Content, e.events)
 
 			if followUp, ok := e.followUpQueue.Dequeue(ctx); ok {
-				e.appendFollowUpInput(followUp)
+				if err := e.appendFollowUpInput(ctx, followUp); err != nil {
+					e.events <- Error(err.Error())
+					return
+				}
 				e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
+				if !finishTurn() {
+					return
+				}
 				continue
 			}
 
+			if !finishTurn() {
+				return
+			}
 			break
 		}
 
 		e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
+		if !finishTurn() {
+			return
+		}
 	}
 }
