@@ -101,16 +101,12 @@ func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *
 
 		phase := &ToolCallPhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Turn: exec.turn, Events: events, ToolCall: toolCall, Tool: tool}
 		toolResult, err := r.executeToolPhase(callCtx, phase, func(ctx context.Context, phase *ToolCallPhase) (*ToolExecutionResult, error) {
-			runTool := func() {
-				if handler, exists := r.toolMap[phase.ToolCall.Function.Name]; exists {
-					r.runAgentTool(ctx, handler, sess, phase.ToolCall, phase.Tool, events, a)
-				} else {
-					r.runTool(ctx, phase.Tool, phase.ToolCall, events, sess, a)
-				}
+			if handler, exists := r.toolMap[phase.ToolCall.Function.Name]; exists {
+				r.runAgentTool(ctx, handler, sess, phase.ToolCall, phase.Tool, events, a)
+			} else {
+				r.runTool(ctx, phase.Tool, phase.ToolCall, events, sess, a)
 			}
-
-			canceled := r.executeWithApproval(ctx, exec, sess, phase.ToolCall, phase.Tool, events, a, runTool)
-			return &ToolExecutionResult{Canceled: canceled}, nil
+			return &ToolExecutionResult{}, nil
 		})
 		if err != nil {
 			errMsg := fmt.Sprintf("Tool execution failed: %v", err)
@@ -391,27 +387,11 @@ func (r *LocalRuntime) executeToolWithHandler(
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
 func (r *LocalRuntime) runTool(ctx context.Context, tool tools.Tool, toolCall tools.ToolCall, events chan Event, sess *session.Session, a *agent.Agent) {
-	hooksExec := r.getHooksExecutor(a)
-
-	// Execute pre-tool hooks if configured.
-	if hooksExec != nil && hooksExec.HasPreToolUseHooks() {
-		blocked, modifiedTC := r.executePreToolHook(ctx, hooksExec, sess, toolCall, tool, events, a)
-		if blocked {
-			return
-		}
-		toolCall = modifiedTC
-	}
-
 	r.executeToolWithHandler(ctx, toolCall, tool, events, sess, a, "runtime.tool.handler",
 		func(ctx context.Context) (*tools.ToolCallResult, time.Duration, error) {
 			res, err := tool.Handler(ctx, toolCall)
 			return res, 0, err
 		})
-
-	// Execute post-tool hooks if configured.
-	if hooksExec != nil && hooksExec.HasPostToolUseHooks() {
-		r.executePostToolHook(ctx, hooksExec, sess, toolCall, events, a)
-	}
 }
 
 // newHooksInput builds a hooks.Input from the common tool-call fields.
@@ -461,7 +441,7 @@ func (r *LocalRuntime) executePreToolHook(
 	return false, toolCall
 }
 
-// executePostToolHook runs the post-tool-use hook and emits any system messages.
+// executePostToolHook runs the post-tool-use hook and returns the hook result.
 func (r *LocalRuntime) executePostToolHook(
 	ctx context.Context,
 	hooksExec *hooks.Executor,
@@ -469,13 +449,16 @@ func (r *LocalRuntime) executePostToolHook(
 	toolCall tools.ToolCall,
 	events chan Event,
 	a *agent.Agent,
-) {
+) *hooks.Result {
 	result, err := hooksExec.ExecutePostToolUse(ctx, r.newHooksInput(sess, toolCall))
 	if err != nil {
 		slog.Warn("Post-tool hook execution failed", "tool", toolCall.Function.Name, "error", err)
-	} else if result.SystemMessage != "" {
+		return nil
+	}
+	if result.SystemMessage != "" {
 		events <- Warning(result.SystemMessage, a.Name())
 	}
+	return result
 }
 
 // parseToolInput parses tool arguments JSON into a map
