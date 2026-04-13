@@ -12,7 +12,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/team"
 )
 
 const maxSummaryTokens = 16_000
@@ -49,37 +48,29 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	// Compute the messages to compact, keeping recent messages aside.
 	messages, firstKeptEntry := extractMessagesToCompact(sess, compactionAgent, int64(m.Limit.Context), additionalPrompt)
 
-	// Run the compaction.
-	compactionSession := session.New(
-		session.WithTitle("Generating summary"),
-		session.WithMessages(toItems(messages)),
-	)
-
-	t := team.New(team.WithAgents(compactionAgent))
-	rt, err := New(t, WithSessionCompaction(false))
+	result, err := r.summaryService.SummarizeMessages(ctx, summaryModel, m, messages)
 	if err != nil {
 		slog.Error("Failed to generate session summary", "error", err)
 		events <- Error(err.Error())
 		return
 	}
-	if _, err = rt.Run(ctx, compactionSession); err != nil {
-		slog.Error("Failed to generate session summary", "error", err)
-		events <- Error(err.Error())
-		return
-	}
 
-	summary := compactionSession.GetLastAssistantMessageContent()
+	summary := result.Content
 	if summary == "" {
 		return
 	}
 
 	// Update the session.
-	sess.InputTokens = compactionSession.OutputTokens
+	if result.Usage != nil {
+		sess.InputTokens = result.Usage.OutputTokens
+	} else {
+		sess.InputTokens = int64(len(summary) / 4)
+	}
 	sess.OutputTokens = 0
 	sess.Messages = append(sess.Messages, session.Item{
 		Summary:        summary,
 		FirstKeptEntry: firstKeptEntry,
-		Cost:           compactionSession.TotalCost(),
+		Cost:           result.Cost,
 	})
 	_ = r.sessionStore.UpdateSession(ctx, sess)
 
@@ -216,18 +207,4 @@ func firstMessageToKeep(messages []chat.Message, contextLimit int64) int {
 	}
 
 	return lastValidMessageSeen
-}
-
-func toItems(messages []chat.Message) []session.Item {
-	var items []session.Item
-
-	for _, message := range messages {
-		items = append(items, session.Item{
-			Message: &session.Message{
-				Message: message,
-			},
-		})
-	}
-
-	return items
 }

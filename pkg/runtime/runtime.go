@@ -203,6 +203,7 @@ type LocalRuntime struct {
 	currentAgent      string
 	tracer            trace.Tracer
 	modelsStore       ModelStore
+	summaryService    SummaryService
 	sessionCompaction bool
 	managedOAuth      bool
 
@@ -298,6 +299,12 @@ func WithSessionCompaction(sessionCompaction bool) Opt {
 func WithModelStore(store ModelStore) Opt {
 	return func(r *LocalRuntime) {
 		r.modelsStore = store
+	}
+}
+
+func WithSummaryService(service SummaryService) Opt {
+	return func(r *LocalRuntime) {
+		r.summaryService = service
 	}
 }
 
@@ -405,6 +412,9 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 			return nil, err
 		}
 		r.modelsStore = modelsStore
+	}
+	if r.summaryService == nil {
+		r.summaryService = modelSummaryService{}
 	}
 
 	// Validate that the current agent exists and has a model
