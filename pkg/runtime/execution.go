@@ -14,7 +14,6 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/compaction"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
@@ -553,9 +552,6 @@ func (e *Execution) run(ctx context.Context) {
 
 		if m != nil {
 			turn.ContextLimit = int64(m.Limit.Context)
-			if e.runtime.sessionCompaction && compaction.ShouldCompact(e.session.InputTokens, e.session.OutputTokens, 0, turn.ContextLimit) {
-				e.runtime.Summarize(ctx, e.session, "", e.events)
-			}
 		}
 
 		buildContextPhase := &BuildContextPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Model: model, ModelDefinition: m}
@@ -583,25 +579,6 @@ func (e *Execution) run(ctx context.Context) {
 				return
 			}
 
-			if _, ok := errors.AsType[*modelerrors.ContextOverflowError](err); ok && e.runtime.sessionCompaction && e.overflowCompactions < maxOverflowCompactions {
-				e.overflowCompactions++
-				slog.Warn("Context window overflow detected, attempting auto-compaction",
-					"agent", a.Name(),
-					"session_id", e.currentSessionID(),
-					"input_tokens", e.session.InputTokens,
-					"output_tokens", e.session.OutputTokens,
-					"context_limit", turn.ContextLimit,
-					"attempt", e.overflowCompactions,
-				)
-				e.events <- Warning(
-					"The conversation has exceeded the model's context window. Automatically compacting the conversation history...",
-					a.Name(),
-				)
-				e.runtime.Summarize(ctx, e.session, "", e.events)
-				streamSpan.End()
-				continue
-			}
-
 			streamSpan.RecordError(err)
 			streamSpan.SetStatus(codes.Error, "error handling stream")
 			slog.Error("All models failed", "agent", a.Name(), "error", err)
@@ -613,7 +590,6 @@ func (e *Execution) run(ctx context.Context) {
 			return
 		}
 
-		e.overflowCompactions = 0
 		turn.Result = res
 
 		if usedModel != nil && usedModel.ID() != model.ID() {
@@ -672,7 +648,6 @@ func (e *Execution) run(ctx context.Context) {
 					return
 				}
 			}
-			e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
 			if !finishTurn() {
 				return
 			}
@@ -688,7 +663,6 @@ func (e *Execution) run(ctx context.Context) {
 					e.events <- Error(err.Error())
 					return
 				}
-				e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
 				if !finishTurn() {
 					return
 				}
@@ -701,7 +675,6 @@ func (e *Execution) run(ctx context.Context) {
 			break
 		}
 
-		e.runtime.compactIfNeeded(ctx, e.session, a, m, turn.ContextLimit, turn.MessageCountBeforeTools, e.events)
 		if !finishTurn() {
 			return
 		}

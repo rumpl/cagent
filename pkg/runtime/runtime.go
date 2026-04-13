@@ -368,6 +368,7 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		pendingFollowUpQueue: followUpQueueFactory(),
 	}
 	r.bgAgents = agenttool.NewHandler(r)
+	r.installBuiltins()
 
 	for _, opt := range opts {
 		opt(r)
