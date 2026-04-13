@@ -278,11 +278,20 @@ func (r *LocalRuntime) buildContext(ctx context.Context, phase *BuildContextPhas
 
 func (r *LocalRuntime) executeModelPhase(ctx context.Context, phase *ModelPhase) (*ModelResult, error) {
 	final := func(ctx context.Context, phase *ModelPhase) (*ModelResult, error) {
-		res, usedModel, err := r.tryModelWithFallback(ctx, phase.Agent, phase.Model, phase.Messages, phase.Tools, phase.Session, phase.ModelDefinition, phase.Events)
+		stream, err := phase.Model.CreateChatCompletionStream(ctx, phase.Messages, phase.Tools)
 		if err != nil {
 			return nil, err
 		}
-		return &ModelResult{Result: res, UsedModel: usedModel}, nil
+		if rp, ok := phase.Model.(interface{ LastSelectedModelID() string }); ok {
+			if selected := rp.LastSelectedModelID(); selected != "" {
+				phase.Events <- AgentInfo(phase.Agent.Name(), selected, phase.Agent.Description(), phase.Agent.WelcomeMessage())
+			}
+		}
+		res, err := r.handleStream(ctx, stream, phase.Agent, phase.Tools, phase.Session, phase.ModelDefinition, phase.Events)
+		if err != nil {
+			return nil, err
+		}
+		return &ModelResult{Result: res, UsedModel: phase.Model}, nil
 	}
 
 	for i := len(r.modelMiddlewares) - 1; i >= 0; i-- {

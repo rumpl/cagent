@@ -17,7 +17,10 @@ import (
 
 func (r *LocalRuntime) installBuiltins() {
 	r.buildContextMiddlewares = append(r.buildContextMiddlewares, r.promptInjectionBuildContextMiddleware())
-	r.modelMiddlewares = append(r.modelMiddlewares, r.compactionModelMiddleware())
+	r.modelMiddlewares = append(r.modelMiddlewares,
+		r.compactionModelMiddleware(),
+		r.fallbackModelMiddleware(),
+	)
 	r.toolMiddlewares = append(r.toolMiddlewares,
 		r.approvalToolMiddleware(),
 		r.shellHookToolMiddleware(),

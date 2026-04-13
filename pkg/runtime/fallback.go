@@ -9,12 +9,9 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/backoff"
-	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // fallbackCooldownState tracks when we should stick with a fallback model
@@ -158,43 +155,31 @@ func getEffectiveRetries(a *agent.Agent) int {
 	return retries
 }
 
-// tryModelWithFallback attempts to create a stream and get a response using the primary model,
-// falling back to configured fallback models if the primary fails.
-//
-// Retry behavior:
-// - Retryable errors (5xx, timeouts): retry the same model with exponential backoff
-// - Non-retryable errors (429, 4xx): skip to the next model in the chain immediately
-//
-// Cooldown behavior:
-//   - When the primary fails with a non-retryable error and a fallback succeeds, the runtime
-//     "sticks" with that fallback for a configurable cooldown period.
-//   - During cooldown, subsequent calls skip the primary and start from the pinned fallback.
-//   - When cooldown expires, the primary is tried again; if it succeeds, cooldown is cleared.
-//
-// Returns the stream result, the model that was used, and any error.
-func (r *LocalRuntime) tryModelWithFallback(
-	ctx context.Context,
-	a *agent.Agent,
-	primaryModel provider.Provider,
-	messages []chat.Message,
-	agentTools []tools.Tool,
-	sess *session.Session,
-	m *modelsdev.Model,
-	events chan Event,
-) (streamResult, provider.Provider, error) {
-	fallbackModels := a.FallbackModels()
+// fallbackModelMiddleware retries the current model and falls back to the
+// agent's configured alternates without baking that policy into the execution
+// loop itself.
+func (r *LocalRuntime) fallbackModelMiddleware() ModelMiddleware {
+	return func(ctx context.Context, phase *ModelPhase, next ModelHandler) (*ModelResult, error) {
+		return r.tryModelWithFallback(ctx, phase, next)
+	}
+}
 
+// tryModelWithFallback executes the model phase via next, retrying the current
+// model and walking the fallback chain when needed.
+func (r *LocalRuntime) tryModelWithFallback(ctx context.Context, phase *ModelPhase, next ModelHandler) (*ModelResult, error) {
+	a := phase.Agent
+	primaryModel := phase.Model
+	fallbackModels := a.FallbackModels()
 	fallbackRetries := getEffectiveRetries(a)
 
-	// Build the chain of models to try: primary (index 0) + fallbacks (index 1+)
+	// Build the chain of models to try: primary (index 0) + fallbacks (index 1+).
 	modelChain := buildModelChain(primaryModel, fallbackModels)
 
-	// Check if we're in a cooldown period and should skip the primary
+	// Check if we're in a cooldown period and should skip the primary.
 	startIndex := 0
 	inCooldown := false
 	cooldownState := r.getCooldownState(a.Name())
 	if cooldownState != nil && len(fallbackModels) > cooldownState.fallbackIndex {
-		// We're in cooldown - start from the pinned fallback (skip primary)
 		startIndex = cooldownState.fallbackIndex + 1 // +1 because index 0 is primary
 		inCooldown = true
 		slog.Debug("Skipping primary due to cooldown",
@@ -209,37 +194,29 @@ func (r *LocalRuntime) tryModelWithFallback(
 
 	for chainIdx := startIndex; chainIdx < len(modelChain); chainIdx++ {
 		modelEntry := modelChain[chainIdx]
-
-		// Each model in the chain gets (1 + retries) attempts for retryable errors.
-		// Non-retryable errors (429 with fallbacks, 4xx) skip immediately to the next model.
-		// 429 without fallbacks is retried directly on the same model.
 		maxAttempts := 1 + fallbackRetries
 
 		for attempt := range maxAttempts {
-			// Check context before each attempt
 			if ctx.Err() != nil {
-				return streamResult{}, nil, ctx.Err()
+				return nil, ctx.Err()
 			}
 
-			// Apply backoff before retry (not on first attempt of each model)
 			if attempt > 0 {
 				backoffDelay := backoff.Calculate(attempt - 1)
 				logRetryBackoff(a.Name(), modelEntry.provider.ID(), attempt, backoffDelay)
 				if !backoff.SleepWithContext(ctx, backoffDelay) {
-					return streamResult{}, nil, ctx.Err()
+					return nil, ctx.Err()
 				}
 			}
 
-			// Emit fallback event when transitioning to a new model (but not when starting in cooldown)
 			if chainIdx > startIndex && attempt == 0 {
 				logFallbackAttempt(a.Name(), modelEntry, attempt, fallbackRetries, lastErr)
-				// Get the previous model's ID for the event
 				prevModelID := modelChain[chainIdx-1].provider.ID()
 				reason := ""
 				if lastErr != nil {
 					reason = lastErr.Error()
 				}
-				events <- ModelFallback(
+				phase.Events <- ModelFallback(
 					a.Name(),
 					prevModelID,
 					modelEntry.provider.ID(),
@@ -249,80 +226,47 @@ func (r *LocalRuntime) tryModelWithFallback(
 				)
 			}
 
-			slog.Debug("Creating chat completion stream",
+			slog.Debug("Executing model attempt",
 				"agent", a.Name(),
 				"model", modelEntry.provider.ID(),
 				"is_fallback", modelEntry.isFallback,
 				"in_cooldown", inCooldown,
 				"attempt", attempt+1)
 
-			stream, err := modelEntry.provider.CreateChatCompletionStream(ctx, messages, agentTools)
+			attemptPhase := *phase
+			attemptPhase.Model = modelEntry.provider
+			attemptPhase.ModelDefinition = r.modelDefinitionForProvider(ctx, modelEntry.provider, phase.ModelDefinition)
+			result, err := next(ctx, &attemptPhase)
 			if err != nil {
 				lastErr = err
-
-				// Context cancellation is never retryable
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return streamResult{}, nil, err
+					return nil, err
 				}
 
 				decision := r.handleModelError(ctx, err, a, modelEntry, attempt, hasFallbacks, &primaryFailedWithNonRetryable)
 				if decision == retryDecisionReturn {
-					return streamResult{}, nil, ctx.Err()
+					return nil, ctx.Err()
 				} else if decision == retryDecisionBreak {
 					break
 				}
 				continue
 			}
 
-			// Stream created successfully, now handle it
-			slog.Debug("Processing stream", "agent", a.Name(), "model", modelEntry.provider.ID())
-
-			// If the provider is a rule-based router, notify the sidebar
-			// of the selected sub-model's YAML-configured name.
-			if rp, ok := modelEntry.provider.(interface{ LastSelectedModelID() string }); ok {
-				if selected := rp.LastSelectedModelID(); selected != "" {
-					events <- AgentInfo(a.Name(), selected, a.Description(), a.WelcomeMessage())
-				}
-			}
-
-			res, err := r.handleStream(ctx, stream, a, agentTools, sess, m, events)
-			if err != nil {
-				lastErr = err
-
-				// Context cancellation stops everything
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return streamResult{}, nil, err
-				}
-
-				decision := r.handleModelError(ctx, err, a, modelEntry, attempt, hasFallbacks, &primaryFailedWithNonRetryable)
-				if decision == retryDecisionReturn {
-					return streamResult{}, nil, ctx.Err()
-				} else if decision == retryDecisionBreak {
-					break
-				}
-				continue
-			}
-
-			// Success!
-			// Handle cooldown state based on which model succeeded
 			switch {
 			case modelEntry.isFallback && primaryFailedWithNonRetryable:
-				// Primary failed with non-retryable error, fallback succeeded.
-				// Set cooldown to stick with this fallback.
 				r.setCooldownState(a.Name(), modelEntry.index, getEffectiveCooldown(a))
 			case !modelEntry.isFallback:
-				// Primary succeeded - clear any existing cooldown.
-				// This handles both normal success and recovery after cooldown expires.
 				r.clearCooldownState(a.Name())
 			}
 
-			return res, modelEntry.provider, nil
+			if result == nil {
+				result = &ModelResult{}
+			}
+			result.UsedModel = modelEntry.provider
+			return result, nil
 		}
 	}
 
-	// All models and retries exhausted.
-	// If the last error (or any error in the chain) was a context overflow,
-	// wrap it in a ContextOverflowError so the caller can auto-compact.
 	if lastErr != nil {
 		prefix := "model failed"
 		if hasFallbacks {
@@ -330,11 +274,29 @@ func (r *LocalRuntime) tryModelWithFallback(
 		}
 		wrapped := fmt.Errorf("%s: %w", prefix, lastErr)
 		if modelerrors.IsContextOverflowError(lastErr) {
-			return streamResult{}, nil, modelerrors.NewContextOverflowError(wrapped)
+			return nil, modelerrors.NewContextOverflowError(wrapped)
 		}
-		return streamResult{}, nil, wrapped
+		return nil, wrapped
 	}
-	return streamResult{}, nil, errors.New("model failed with unknown error")
+	return nil, errors.New("model failed with unknown error")
+}
+
+func (r *LocalRuntime) modelDefinitionForProvider(ctx context.Context, model provider.Provider, fallback *modelsdev.Model) *modelsdev.Model {
+	if model == nil {
+		return fallback
+	}
+	if fallback != nil && fallback.Name == model.ID() {
+		return fallback
+	}
+	if r.modelsStore == nil {
+		return fallback
+	}
+	definition, err := r.modelsStore.GetModel(ctx, model.ID())
+	if err != nil {
+		slog.Debug("Failed to resolve model definition for provider", "model", model.ID(), "error", err)
+		return fallback
+	}
+	return definition
 }
 
 // retryDecision is the outcome of handleModelError.

@@ -596,7 +596,15 @@ func (e *Execution) run(ctx context.Context) {
 
 		turn.Result = res
 
-		if usedModel != nil && usedModel.ID() != model.ID() {
+		if usedModel != nil && usedModel.ID() != turn.ModelID {
+			fallbackDefinition := e.runtime.modelDefinitionForProvider(ctx, usedModel, m)
+			turn.Model = usedModel
+			turn.ModelID = usedModel.ID()
+			turn.ModelDefinition = fallbackDefinition
+			m = fallbackDefinition
+			if fallbackDefinition != nil {
+				turn.ContextLimit = int64(fallbackDefinition.Limit.Context)
+			}
 			slog.Info("Used fallback model", "agent", a.Name(), "primary", model.ID(), "used", usedModel.ID())
 			e.events <- AgentInfo(a.Name(), usedModel.ID(), a.Description(), a.WelcomeMessage())
 		}
