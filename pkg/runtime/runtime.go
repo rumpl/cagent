@@ -86,66 +86,84 @@ type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall t
 // ElicitationRequestHandler is a function type for handling elicitation requests
 type ElicitationRequestHandler func(ctx context.Context, message string, schema map[string]any) (map[string]any, error)
 
-// Runtime defines the contract for runtime execution
-type Runtime interface {
-	// CurrentAgentInfo returns information about the currently active agent
+// Runner is the minimal capability for executing a session.
+type Runner interface {
+	// RunStream starts the agent's interaction loop and returns a channel of events.
+	RunStream(ctx context.Context, sess *session.Session) <-chan Event
+	// Run starts the agent's interaction loop and returns the final messages.
+	Run(ctx context.Context, sess *session.Session) ([]session.Message, error)
+}
+
+// InteractiveController contains the runtime controls that require an active run.
+type InteractiveController interface {
+	// Resume allows resuming execution after user confirmation.
+	// The ResumeRequest carries the decision type and an optional reason (for rejections).
+	Resume(ctx context.Context, req ResumeRequest)
+	// ResumeElicitation sends an elicitation response back to a waiting elicitation request.
+	ResumeElicitation(_ context.Context, action tools.ElicitationAction, content map[string]any) error
+	// Steer enqueues a user message for urgent mid-turn injection into the running agent loop.
+	Steer(msg QueuedMessage) error
+	// FollowUp enqueues a message for end-of-turn processing. Each follow-up gets a full undivided agent turn.
+	FollowUp(msg QueuedMessage) error
+}
+
+// AgentInspector exposes agent selection and inspection operations.
+type AgentInspector interface {
+	// CurrentAgentInfo returns information about the currently active agent.
 	CurrentAgentInfo(ctx context.Context) CurrentAgentInfo
-	// CurrentAgentName returns the name of the currently active agent
+	// CurrentAgentName returns the name of the currently active agent.
 	CurrentAgentName() string
-	// SetCurrentAgent sets the currently active agent for subsequent user messages
+	// SetCurrentAgent sets the currently active agent for subsequent user messages.
 	SetCurrentAgent(agentName string) error
-	// CurrentAgentTools returns the tools for the active agent
+	// CurrentAgentTools returns the tools for the active agent.
 	CurrentAgentTools(ctx context.Context) ([]tools.Tool, error)
+	// PermissionsInfo returns the team-level permission patterns (allow/ask/deny).
+	PermissionsInfo() *PermissionsInfo
+	// CurrentAgentSkillsToolset returns the skills toolset for the current agent, or nil if skills are not enabled.
+	CurrentAgentSkillsToolset() *builtin.SkillsToolset
+	// CurrentMCPPrompts returns MCP prompts available from the current agent's toolsets.
+	CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo
+	// ExecuteMCPPrompt executes a named MCP prompt with the given arguments.
+	ExecuteMCPPrompt(ctx context.Context, promptName string, arguments map[string]string) (string, error)
+}
+
+// StartupInfoEmitter exposes presentation bootstrap operations.
+type StartupInfoEmitter interface {
 	// EmitStartupInfo emits initial agent, team, and toolset information for immediate display.
 	// When sess is non-nil and contains token data, a TokenUsageEvent is also emitted
 	// so the UI can display context usage percentage on session restore.
 	EmitStartupInfo(ctx context.Context, sess *session.Session, events chan Event)
-	// ResetStartupInfo resets the startup info emission flag, allowing re-emission
+	// ResetStartupInfo resets the startup info emission flag, allowing re-emission.
 	ResetStartupInfo()
-	// RunStream starts the agent's interaction loop and returns a channel of events
-	RunStream(ctx context.Context, sess *session.Session) <-chan Event
-	// Run starts the agent's interaction loop and returns the final messages
-	Run(ctx context.Context, sess *session.Session) ([]session.Message, error)
-	// Resume allows resuming execution after user confirmation.
-	// The ResumeRequest carries the decision type and an optional reason (for rejections).
-	Resume(ctx context.Context, req ResumeRequest)
-	// ResumeElicitation sends an elicitation response back to a waiting elicitation request
-	ResumeElicitation(_ context.Context, action tools.ElicitationAction, content map[string]any) error
+}
+
+// SessionStorageProvider exposes browsing and title-update operations for persisted sessions.
+type SessionStorageProvider interface {
 	// SessionStore returns the session store for browsing/loading past sessions.
 	// Returns nil if no persistent session store is configured.
 	SessionStore() session.Store
-
-	// Summarize generates a summary for the session
-	Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event)
-
-	// PermissionsInfo returns the team-level permission patterns (allow/ask/deny).
-	// Returns nil if no permissions are configured.
-	PermissionsInfo() *PermissionsInfo
-
-	// CurrentAgentSkillsToolset returns the skills toolset for the current agent, or nil if skills are not enabled.
-	CurrentAgentSkillsToolset() *builtin.SkillsToolset
-
-	// CurrentMCPPrompts returns MCP prompts available from the current agent's toolsets.
-	// Returns an empty map if no MCP prompts are available.
-	CurrentMCPPrompts(ctx context.Context) map[string]mcptools.PromptInfo
-
-	// ExecuteMCPPrompt executes a named MCP prompt with the given arguments.
-	ExecuteMCPPrompt(ctx context.Context, promptName string, arguments map[string]string) (string, error)
-
 	// UpdateSessionTitle persists a new title for the current session.
 	UpdateSessionTitle(ctx context.Context, sess *session.Session, title string) error
-
 	// TitleGenerator returns a generator for automatic session titles, or nil
 	// if the runtime does not support local title generation (e.g. remote runtimes).
 	TitleGenerator() *sessiontitle.Generator
+}
 
-	// Steer enqueues a user message for urgent mid-turn injection into the
-	// running agent loop. Returns an error if the queue is full or steering
-	// is not available.
-	Steer(msg QueuedMessage) error
-	// FollowUp enqueues a message for end-of-turn processing. Each follow-up
-	// gets a full undivided agent turn. Returns an error if the queue is full.
-	FollowUp(msg QueuedMessage) error
+// Summarizer exposes session compaction/summarization.
+type Summarizer interface {
+	// Summarize generates a summary for the session.
+	Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events chan Event)
+}
+
+// Runtime remains the compatibility facade, but it is now expressed as a
+// composition of smaller capability interfaces.
+type Runtime interface {
+	Runner
+	InteractiveController
+	AgentInspector
+	StartupInfoEmitter
+	SessionStorageProvider
+	Summarizer
 
 	// Close releases resources held by the runtime (e.g., session store connections).
 	Close() error
