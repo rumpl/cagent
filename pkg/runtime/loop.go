@@ -276,8 +276,8 @@ func filterExcludedTools(agentTools []tools.Tool, excluded []string) []tools.Too
 	return filtered
 }
 
-// chanSend wraps a channel as a func(Event) for use with emitAgentWarnings
-// and RAG event forwarding. The send is non-blocking: if the channel is full
+// chanSend wraps a channel as a func(Event) for use with RAG event forwarding.
+// The send is non-blocking: if the channel is full
 // or closed, the event is silently dropped. This prevents a panic when a
 // long-lived goroutine (e.g. RAG file watcher) tries to forward an event
 // after the per-message events channel has been closed.

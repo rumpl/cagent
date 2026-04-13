@@ -21,9 +21,10 @@ const maxSummaryTokens = 16_000
 // so the LLM can continue naturally after compaction.
 const maxKeepTokens = 20_000
 
-// doCompact runs compaction on a session and applies the result (events,
-// persistence, token count updates). The agent is used to extract the
-// conversation from the session and to obtain the model for summarization.
+// doCompact runs compaction on a session and applies the transcript/token
+// updates. Persistence is handled by typed observers on the wrapped runtime.
+// The agent is used to extract the conversation from the session and to obtain
+// the model for summarization.
 func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *agent.Agent, additionalPrompt string, events chan Event) {
 	slog.Debug("Generating summary for session", "session_id", sess.ID)
 	events <- SessionCompaction(sess.ID, "started", a.Name())
@@ -72,7 +73,6 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		FirstKeptEntry: firstKeptEntry,
 		Cost:           result.Cost,
 	})
-	_ = r.sessionStore.UpdateSession(ctx, sess)
 
 	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
 	events <- SessionSummary(sess.ID, summary, a.Name(), firstKeptEntry)
