@@ -1195,7 +1195,11 @@ func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitPa
 		return tools.ElicitationResult{}, errors.New("no active execution available for elicitation")
 	}
 
-	r.executeOnUserInputHooks(ctx, exec.currentSessionID(), "elicitation")
+	a := exec.resolveAgent()
+	pausePhase := &PausePhase{Runtime: r, Execution: exec, Session: exec.session, Agent: a, Events: exec.events, Reason: "elicitation"}
+	if err := r.runPauseHooks(ctx, r.lifecycleHooks.BeforePauseForUser, pausePhase); err != nil {
+		return tools.ElicitationResult{}, err
+	}
 
 	slog.Debug("Sending elicitation request event to client", "message", req.Message, "mode", req.Mode, "requested_schema", req.RequestedSchema, "url", req.URL)
 	slog.Debug("Elicitation request meta", "meta", req.Meta)
@@ -1205,6 +1209,10 @@ func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitPa
 	result, err := exec.waitForElicitation(ctx)
 	if err != nil {
 		slog.Debug("Context cancelled while waiting for elicitation response")
+		return tools.ElicitationResult{}, err
+	}
+
+	if err := r.runResumeHooks(ctx, r.lifecycleHooks.AfterResume, &ResumePhase{Runtime: r, Execution: exec, Session: exec.session, Agent: a, Events: exec.events, Reason: "elicitation", Elicitation: &result}); err != nil {
 		return tools.ElicitationResult{}, err
 	}
 

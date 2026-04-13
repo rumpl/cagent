@@ -765,14 +765,14 @@ func buildInvariantSystemMessages(a *agent.Agent) []chat.Message {
 	return messages
 }
 
-// buildContextSpecificSystemMessages builds system messages that vary
+// BuildContextSpecificSystemMessages builds system messages that vary
 // per user, project, or time. These messages should come after
 // the invariant checkpoint to maintain optimal caching behavior.
 //
 // These messages depend on runtime context (working directory, current date,
 // user-specific skills) and cannot be cached across sessions or users.
 // Note: Session summary is handled separately in buildSessionSummaryMessages.
-func buildContextSpecificSystemMessages(a *agent.Agent, s *Session) []chat.Message {
+func BuildContextSpecificSystemMessages(a *agent.Agent, s *Session) []chat.Message {
 	var messages []chat.Message
 
 	if a.AddDate() {

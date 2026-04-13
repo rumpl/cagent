@@ -4,16 +4,163 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
+	"time"
 
+	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/compaction"
+	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelerrors"
+	"github.com/docker/docker-agent/pkg/session"
 )
 
 func (r *LocalRuntime) installBuiltins() {
+	r.buildContextMiddlewares = append(r.buildContextMiddlewares, r.promptInjectionBuildContextMiddleware())
 	r.modelMiddlewares = append(r.modelMiddlewares, r.compactionModelMiddleware())
 	mergeLifecycleHooks(&r.lifecycleHooks, RuntimeLifecycleHooks{
-		AfterToolBatch: []ToolBatchHook{r.compactionAfterToolBatchHook},
+		SessionStart:       []SessionHook{r.sessionStartHooksLifecycleAdapter},
+		SessionEnd:         []SessionHook{r.sessionEndHooksLifecycleAdapter},
+		BeforePauseForUser: []PauseHook{r.onUserInputPauseHookAdapter},
+		TurnEnd:            []TurnHook{r.stopHooksTurnAdapter},
+		AfterToolBatch:     []ToolBatchHook{r.compactionAfterToolBatchHook},
 	})
+}
+
+func (r *LocalRuntime) promptInjectionBuildContextMiddleware() BuildContextMiddleware {
+	return func(ctx context.Context, phase *BuildContextPhase, next BuildContextHandler) error {
+		if err := next(ctx, phase); err != nil {
+			return err
+		}
+		if phase == nil || phase.PromptContext == nil || phase.Agent == nil || phase.Session == nil {
+			return nil
+		}
+
+		contextMessages := buildRuntimeContextSystemMessages(phase.Agent, phase.Session, phase.Execution)
+		if len(contextMessages) == 0 {
+			return nil
+		}
+		contextMessages[len(contextMessages)-1].CacheControl = true
+		phase.PromptContext.InsertContextSystemMessages(contextMessages...)
+		return nil
+	}
+}
+
+func buildRuntimeContextSystemMessages(a *agent.Agent, sess *session.Session, exec *Execution) []chat.Message {
+	messages := append([]chat.Message{}, session.BuildContextSpecificSystemMessages(a, sess)...)
+	if exec != nil && len(exec.sessionPromptMessages) > 0 {
+		messages = append(messages, exec.sessionPromptMessages...)
+	}
+	return messages
+}
+
+func appendExecutionPromptContext(exec *Execution, additionalContext string) {
+	if exec == nil || strings.TrimSpace(additionalContext) == "" {
+		return
+	}
+	msg := chat.Message{
+		Role:      chat.MessageRoleSystem,
+		Content:   additionalContext,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	exec.sessionPromptMessages = append(exec.sessionPromptMessages, msg)
+}
+
+func (r *LocalRuntime) sessionStartHooksLifecycleAdapter(ctx context.Context, phase *SessionPhase) error {
+	if phase == nil || phase.Agent == nil || phase.Session == nil {
+		return nil
+	}
+
+	hooksExec := r.getHooksExecutor(phase.Agent)
+	if hooksExec == nil || !hooksExec.HasSessionStartHooks() {
+		return nil
+	}
+
+	slog.Debug("Executing session start hooks", "agent", phase.Agent.Name(), "session_id", phase.Session.ID)
+	result, err := hooksExec.ExecuteSessionStart(ctx, &hooks.Input{
+		SessionID: phase.Session.ID,
+		Cwd:       r.workingDir,
+		Source:    "startup",
+	})
+	if err != nil {
+		slog.Warn("Session start hook execution failed", "agent", phase.Agent.Name(), "error", err)
+		return nil
+	}
+	if result.SystemMessage != "" {
+		phase.Events <- Warning(result.SystemMessage, phase.Agent.Name())
+	}
+	appendExecutionPromptContext(phase.Execution, result.AdditionalContext)
+	return nil
+}
+
+func (r *LocalRuntime) sessionEndHooksLifecycleAdapter(ctx context.Context, phase *SessionPhase) error {
+	if phase == nil || phase.Agent == nil || phase.Session == nil {
+		return nil
+	}
+
+	hooksExec := r.getHooksExecutor(phase.Agent)
+	if hooksExec == nil || !hooksExec.HasSessionEndHooks() {
+		return nil
+	}
+
+	slog.Debug("Executing session end hooks", "agent", phase.Agent.Name(), "session_id", phase.Session.ID)
+	_, err := hooksExec.ExecuteSessionEnd(ctx, &hooks.Input{
+		SessionID: phase.Session.ID,
+		Cwd:       r.workingDir,
+		Reason:    "stream_ended",
+	})
+	if err != nil {
+		slog.Error("Session end hook execution failed", "agent", phase.Agent.Name(), "error", err)
+	}
+	return nil
+}
+
+func (r *LocalRuntime) onUserInputPauseHookAdapter(ctx context.Context, phase *PausePhase) error {
+	if phase == nil || phase.Agent == nil || phase.Session == nil {
+		return nil
+	}
+
+	hooksExec := r.getHooksExecutor(phase.Agent)
+	if hooksExec == nil || !hooksExec.HasOnUserInputHooks() {
+		return nil
+	}
+
+	slog.Debug("Executing on-user-input hooks", "reason", phase.Reason, "session_id", phase.Session.ID)
+	_, err := hooksExec.ExecuteOnUserInput(ctx, &hooks.Input{
+		SessionID: phase.Session.ID,
+		Cwd:       r.workingDir,
+	})
+	if err != nil {
+		slog.Warn("On-user-input hook execution failed", "error", err)
+	}
+	return nil
+}
+
+func (r *LocalRuntime) stopHooksTurnAdapter(ctx context.Context, phase *TurnPhase) error {
+	if phase == nil || phase.Turn == nil || phase.Agent == nil || phase.Session == nil || !phase.Turn.Result.Stopped {
+		return nil
+	}
+
+	hooksExec := r.getHooksExecutor(phase.Agent)
+	if hooksExec == nil || !hooksExec.HasStopHooks() {
+		return nil
+	}
+
+	slog.Debug("Executing stop hooks", "agent", phase.Agent.Name(), "session_id", phase.Session.ID)
+	result, err := hooksExec.ExecuteStop(ctx, &hooks.Input{
+		SessionID:    phase.Session.ID,
+		Cwd:          r.workingDir,
+		StopResponse: phase.Turn.Result.Content,
+	})
+	if err != nil {
+		slog.Warn("Stop hook execution failed", "agent", phase.Agent.Name(), "error", err)
+		return nil
+	}
+	if result.SystemMessage != "" {
+		phase.Events <- Warning(result.SystemMessage, phase.Agent.Name())
+	}
+	appendExecutionPromptContext(phase.Execution, result.AdditionalContext)
+	return nil
 }
 
 func (r *LocalRuntime) compactionModelMiddleware() ModelMiddleware {

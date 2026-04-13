@@ -257,7 +257,6 @@ func (r *LocalRuntime) askUserForConfirmation(
 	slog.Debug("Tools not approved, waiting for resume", "tool", toolName, "session_id", sess.ID)
 	events <- ToolCallConfirmation(toolCall, tool, a.Name())
 
-	r.executeOnUserInputHooks(ctx, sess.ID, "tool confirmation")
 	pausePhase := &PausePhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Events: events, Reason: "tool_confirmation", ToolCall: &toolCall, Tool: &tool}
 	if err := r.runPauseHooks(ctx, r.lifecycleHooks.BeforePauseForUser, pausePhase); err != nil {
 		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, err.Error())

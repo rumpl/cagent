@@ -30,6 +30,45 @@ type PromptContextMetadata struct {
 	ConversationMessages int
 }
 
+// InsertContextSystemMessages appends context-specific system messages to the
+// prompt context and inserts them into the final message list immediately after
+// the invariant system section. This preserves the already-trimmed transcript
+// projection while letting runtime middlewares add ephemeral prompt context.
+func (ctx *PromptContext) InsertContextSystemMessages(messages ...chat.Message) {
+	if ctx == nil || len(messages) == 0 {
+		return
+	}
+
+	insertionPoint := len(ctx.InvariantSystemMessages) + len(ctx.ContextSystemMessages)
+	if insertionPoint > len(ctx.Messages) {
+		insertionPoint = len(ctx.Messages)
+	}
+
+	ctx.ContextSystemMessages = append(ctx.ContextSystemMessages, messages...)
+
+	updated := make([]chat.Message, 0, len(ctx.Messages)+len(messages))
+	updated = append(updated, ctx.Messages[:insertionPoint]...)
+	updated = append(updated, messages...)
+	updated = append(updated, ctx.Messages[insertionPoint:]...)
+	ctx.Messages = sanitizeToolCalls(updated)
+	ctx.recountMessageTypes()
+}
+
+func (ctx *PromptContext) recountMessageTypes() {
+	if ctx == nil {
+		return
+	}
+	ctx.Metadata.SystemMessages = 0
+	ctx.Metadata.ConversationMessages = 0
+	for i := range ctx.Messages {
+		if ctx.Messages[i].Role == chat.MessageRoleSystem {
+			ctx.Metadata.SystemMessages++
+		} else {
+			ctx.Metadata.ConversationMessages++
+		}
+	}
+}
+
 // PromptBuilder derives a PromptContext from a Session transcript and an agent
 // configuration.
 type PromptBuilder struct {
@@ -47,7 +86,39 @@ func (s *Session) BuildPromptContext(a *agent.Agent) *PromptContext {
 	return NewPromptBuilder(s, a).Build()
 }
 
+// BuildBasePromptContext returns the prompt context derived only from durable
+// transcript state plus invariant agent configuration. Runtime-specific prompt
+// injections (date, environment, prompt files, hook-provided context, etc.)
+// are intentionally excluded so the runtime can add them as build-context
+// middlewares.
+func (s *Session) BuildBasePromptContext(a *agent.Agent) *PromptContext {
+	return NewPromptBuilder(s, a).BuildBase()
+}
+
 func (b *PromptBuilder) Build() *PromptContext {
+	ctx := b.BuildBase()
+	if b == nil || b.session == nil || b.agent == nil {
+		return ctx
+	}
+
+	contextMessages := BuildContextSpecificSystemMessages(b.agent, b.session)
+	markLastMessageAsCacheControl(contextMessages)
+	ctx.InsertContextSystemMessages(contextMessages...)
+
+	slog.Debug("Built prompt context",
+		"agent", b.agent.Name(),
+		"session_id", b.session.ID,
+		"total_messages", len(ctx.Messages),
+		"system_messages", ctx.Metadata.SystemMessages,
+		"conversation_messages", ctx.Metadata.ConversationMessages,
+		"max_history_items", ctx.Metadata.MaxHistoryItems,
+		"max_old_tool_call_tokens", ctx.Metadata.MaxOldToolCallTokens,
+	)
+
+	return ctx
+}
+
+func (b *PromptBuilder) BuildBase() *PromptContext {
 	ctx := &PromptContext{}
 	if b == nil || b.session == nil || b.agent == nil {
 		return ctx
@@ -61,21 +132,16 @@ func (b *PromptBuilder) Build() *PromptContext {
 	ctx.InvariantSystemMessages = buildInvariantSystemMessages(a)
 	markLastMessageAsCacheControl(ctx.InvariantSystemMessages)
 
-	ctx.ContextSystemMessages = buildContextSpecificSystemMessages(a, s)
-	markLastMessageAsCacheControl(ctx.ContextSystemMessages)
-
 	items := s.snapshotItems()
 	ctx.SummaryMessages, ctx.Metadata.SummaryStartIndex = buildSessionSummaryMessages(items)
 	ctx.TranscriptMessages = buildTranscriptMessages(items, ctx.Metadata.SummaryStartIndex)
 
 	messages := make([]chat.Message, 0,
 		len(ctx.InvariantSystemMessages)+
-			len(ctx.ContextSystemMessages)+
 			len(ctx.SummaryMessages)+
 			len(ctx.TranscriptMessages),
 	)
 	messages = append(messages, ctx.InvariantSystemMessages...)
-	messages = append(messages, ctx.ContextSystemMessages...)
 	messages = append(messages, ctx.SummaryMessages...)
 	messages = append(messages, ctx.TranscriptMessages...)
 
@@ -93,25 +159,7 @@ func (b *PromptBuilder) Build() *PromptContext {
 	}
 
 	ctx.Messages = sanitizeToolCalls(messages)
-
-	for i := range ctx.Messages {
-		if ctx.Messages[i].Role == chat.MessageRoleSystem {
-			ctx.Metadata.SystemMessages++
-		} else {
-			ctx.Metadata.ConversationMessages++
-		}
-	}
-
-	slog.Debug("Built prompt context",
-		"agent", a.Name(),
-		"session_id", s.ID,
-		"total_messages", len(ctx.Messages),
-		"system_messages", ctx.Metadata.SystemMessages,
-		"conversation_messages", ctx.Metadata.ConversationMessages,
-		"max_history_items", ctx.Metadata.MaxHistoryItems,
-		"max_old_tool_call_tokens", ctx.Metadata.MaxOldToolCallTokens,
-	)
-
+	ctx.recountMessageTypes()
 	return ctx
 }
 

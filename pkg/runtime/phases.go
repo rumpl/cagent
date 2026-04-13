@@ -89,13 +89,14 @@ type PausePhase struct {
 
 // ResumePhase describes a runtime resume after a pause.
 type ResumePhase struct {
-	Runtime   *LocalRuntime
-	Execution *Execution
-	Session   *session.Session
-	Agent     *agent.Agent
-	Events    chan Event
-	Reason    string
-	Request   ResumeRequest
+	Runtime     *LocalRuntime
+	Execution   *Execution
+	Session     *session.Session
+	Agent       *agent.Agent
+	Events      chan Event
+	Reason      string
+	Request     ResumeRequest
+	Elicitation *ElicitationResult
 }
 
 // BuildContextPhase describes prompt-context construction for a turn.
@@ -255,7 +256,7 @@ func (r *LocalRuntime) runToolBatchHooks(ctx context.Context, hooks []ToolBatchH
 
 func (r *LocalRuntime) buildContext(ctx context.Context, phase *BuildContextPhase) error {
 	final := func(_ context.Context, phase *BuildContextPhase) error {
-		phase.PromptContext = phase.Session.BuildPromptContext(phase.Agent)
+		phase.PromptContext = phase.Session.BuildBasePromptContext(phase.Agent)
 		if phase.ModelDefinition != nil && len(phase.ModelDefinition.Modalities.Input) > 0 {
 			if !containsModality(phase.ModelDefinition.Modalities.Input, "image") {
 				phase.PromptContext.Messages = stripImageContent(phase.PromptContext.Messages)

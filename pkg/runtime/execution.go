@@ -47,6 +47,7 @@ type Execution struct {
 	elicitationRequestCh  chan ElicitationResult
 	steerQueue            MessageQueue
 	followUpQueue         MessageQueue
+	sessionPromptMessages []chat.Message
 	sessionScratch        map[string]any
 	turn                  *Turn
 	pauseMu               sync.RWMutex
@@ -364,13 +365,11 @@ func (e *Execution) finalize(ctx context.Context) {
 		if err := e.runtime.runSessionHooks(context.WithoutCancel(ctx), e.runtime.lifecycleHooks.SessionEnd, phase); err != nil {
 			slog.Warn("Session end lifecycle hook failed", "agent", a.Name(), "error", err)
 		}
-		e.runtime.executeSessionEndHooks(context.WithoutCancel(ctx), e.session, a)
 		e.events <- StreamStopped(e.currentSessionID(), a.Name())
 	} else {
 		e.events <- StreamStopped(e.currentSessionID(), "")
 	}
 
-	e.runtime.executeOnUserInputHooks(ctx, e.currentSessionID(), "stream stopped")
 	telemetry.RecordSessionEnd(ctx)
 }
 
@@ -390,7 +389,6 @@ func (e *Execution) run(ctx context.Context) {
 		e.events <- Error(err.Error())
 		return
 	}
-	e.runtime.executeSessionStartHooks(ctx, e.session, a, e.events)
 	e.events <- TeamInfo(e.runtime.agentDetailsFromTeam(), a.Name())
 
 	e.runtime.emitAgentWarnings(a, chanSend(e.events))
@@ -439,7 +437,6 @@ func (e *Execution) run(ctx context.Context) {
 
 			maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", e.runtimeMaxIterations)
 			e.runtime.executeNotificationHooks(ctx, a, e.currentSessionID(), "warning", maxIterMsg)
-			e.runtime.executeOnUserInputHooks(ctx, e.currentSessionID(), "max iterations reached")
 
 			if e.session.NonInteractive {
 				slog.Debug("Auto-stopping after max iterations (non-interactive)", "agent", a.Name())
@@ -656,7 +653,6 @@ func (e *Execution) run(ctx context.Context) {
 
 		if res.Stopped {
 			slog.Debug("Conversation stopped", "agent", a.Name())
-			e.runtime.executeStopHooks(ctx, e.session, a, res.Content, e.events)
 
 			if followUp, ok := e.followUpQueue.Dequeue(ctx); ok {
 				if err := e.appendFollowUpInput(ctx, followUp); err != nil {
