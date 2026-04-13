@@ -65,6 +65,7 @@ type Turn struct {
 	ModelID                 string
 	ModelDefinition         *modelsdev.Model
 	ContextLimit            int64
+	PromptContext           *session.PromptContext
 	PromptMessages          []chat.Message
 	MessageCountBeforeTools int
 	Result                  streamResult
@@ -506,13 +507,14 @@ func (e *Execution) run(ctx context.Context) {
 			}
 		}
 
-		messages := e.session.GetMessages(a)
+		promptContext := e.session.BuildPromptContext(a)
 		if m != nil && len(m.Modalities.Input) > 0 && !slices.Contains(m.Modalities.Input, "image") {
-			messages = stripImageContent(messages)
+			promptContext.Messages = stripImageContent(promptContext.Messages)
 		}
-		turn.PromptMessages = messages
+		turn.PromptContext = promptContext
+		turn.PromptMessages = promptContext.Messages
 
-		res, usedModel, err := e.runtime.tryModelWithFallback(streamCtx, a, model, messages, agentTools, e.session, m, e.events)
+		res, usedModel, err := e.runtime.tryModelWithFallback(streamCtx, a, model, promptContext.Messages, agentTools, e.session, m, e.events)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				slog.Debug("Model stream canceled by context", "agent", a.Name(), "session_id", e.currentSessionID())
