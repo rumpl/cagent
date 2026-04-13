@@ -48,6 +48,7 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 	toolCallIndex := make(map[string]int)   // toolCallID -> index in toolCalls slice
 	emittedPartial := make(map[string]bool) // toolCallID -> whether we've emitted a partial event
 	toolDefMap := make(map[string]tools.Tool, len(agentTools))
+	exec := r.executionForSession(sess)
 	for _, t := range agentTools {
 		toolDefMap[t.Name] = t
 	}
@@ -175,6 +176,7 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 
 		if choice.Delta.ReasoningContent != "" {
 			events <- AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent)
+			r.observeAssistantChunk(ctx, &ObservedAssistantChunk{Runtime: r, Execution: exec, Session: sess, Agent: a, ReasoningDelta: choice.Delta.ReasoningContent})
 			fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
 		}
 
@@ -185,6 +187,7 @@ func (r *LocalRuntime) handleStream(ctx context.Context, stream chat.MessageStre
 
 		if choice.Delta.Content != "" {
 			events <- AgentChoice(a.Name(), sess.ID, choice.Delta.Content)
+			r.observeAssistantChunk(ctx, &ObservedAssistantChunk{Runtime: r, Execution: exec, Session: sess, Agent: a, ContentDelta: choice.Delta.Content})
 			fullContent.WriteString(choice.Delta.Content)
 		}
 	}

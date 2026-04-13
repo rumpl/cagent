@@ -70,6 +70,8 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 // per-message usage information for the token-usage event. Empty responses
 // (no text and no tool calls) are silently skipped since providers reject them.
 func (r *LocalRuntime) recordAssistantMessage(
+	ctx context.Context,
+	exec *Execution,
 	sess *session.Session,
 	a *agent.Agent,
 	res streamResult,
@@ -123,7 +125,7 @@ func (r *LocalRuntime) recordAssistantMessage(
 		FinishReason:      res.FinishReason,
 	}
 
-	addAgentMessage(sess, a, &assistantMessage, events)
+	r.addAgentMessage(ctx, exec, sess, a, &assistantMessage, events)
 	slog.Debug("Added assistant message to session", "agent", a.Name(), "total_messages", len(sess.GetAllMessages()))
 
 	// Build per-message usage for the event.

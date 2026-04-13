@@ -242,6 +242,7 @@ type LocalRuntime struct {
 	buildContextMiddlewares []BuildContextMiddleware
 	modelMiddlewares        []ModelMiddleware
 	toolMiddlewares         []ToolMiddleware
+	observers               RuntimeObservers
 
 	// onToolsChanged is called when an MCP toolset reports a tool list change.
 	onToolsChanged func(Event)
@@ -341,6 +342,12 @@ func WithModelMiddlewares(middlewares ...ModelMiddleware) Opt {
 func WithToolMiddlewares(middlewares ...ToolMiddleware) Opt {
 	return func(r *LocalRuntime) {
 		r.toolMiddlewares = append(r.toolMiddlewares, middlewares...)
+	}
+}
+
+func WithObservers(observers RuntimeObservers) Opt {
+	return func(r *LocalRuntime) {
+		mergeRuntimeObservers(&r.observers, observers)
 	}
 }
 
@@ -845,8 +852,11 @@ func (r *LocalRuntime) Close() error {
 func (r *LocalRuntime) UpdateSessionTitle(ctx context.Context, sess *session.Session, title string) error {
 	sess.Title = title
 	if r.sessionStore != nil {
-		return r.sessionStore.UpdateSession(ctx, sess)
+		if err := r.sessionStore.UpdateSession(ctx, sess); err != nil {
+			return err
+		}
 	}
+	r.observeSessionTitle(ctx, &ObservedSessionTitle{Runtime: r, Session: sess, Title: title})
 	return nil
 }
 
@@ -1182,7 +1192,9 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 	if m, err := r.modelsStore.GetModel(ctx, modelID); err == nil && m != nil {
 		contextLimit = int64(m.Limit.Context)
 	}
-	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
+	usage := SessionUsage(sess, contextLimit)
+	events <- NewTokenUsageEvent(sess.ID, a.Name(), usage)
+	r.observeTokenUsage(ctx, &ObservedTokenUsage{Runtime: r, Session: sess, Agent: a, Usage: usage})
 }
 
 // elicitationHandler creates an elicitation handler that can be used by MCP clients

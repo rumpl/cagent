@@ -177,6 +177,7 @@ func (r *LocalRuntime) runSubSessionForwarding(ctx context.Context, parent, chil
 	parent.ToolsApproved = child.ToolsApproved
 
 	parent.AddSubSession(child)
+	r.observeSubSessionCompleted(ctx, &ObservedSubSession{Runtime: r, ParentSession: parent, SubSession: child, Agent: r.resolveSessionAgent(parent)})
 	evts <- SubSessionCompleted(parent.ID, child, callerAgent)
 
 	span.SetStatus(codes.Ok, "sub-session completed")
@@ -217,6 +218,7 @@ func (r *LocalRuntime) runSubSessionCollecting(ctx context.Context, parent, chil
 
 	result := child.GetLastAssistantMessageContent()
 	parent.AddSubSession(child)
+	r.observeSubSessionCompleted(ctx, &ObservedSubSession{Runtime: r, ParentSession: parent, SubSession: child, Agent: r.resolveSessionAgent(parent)})
 	return &agenttool.RunResult{Result: result}
 }
 

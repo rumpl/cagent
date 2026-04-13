@@ -85,6 +85,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 
 	slog.Debug("Generated session summary", "session_id", sess.ID, "summary_length", len(summary))
 	events <- SessionSummary(sess.ID, summary, a.Name(), firstKeptEntry)
+	r.observeSessionSummary(ctx, &ObservedSessionSummary{Runtime: r, Session: sess, Agent: a, Summary: summary, FirstKeptEntry: firstKeptEntry})
 }
 
 // extractMessagesToCompact returns the messages to send to the compaction model

@@ -331,12 +331,19 @@ func (e *Execution) applyUserInput(ctx context.Context, input userInputAction) e
 	}
 
 	pos := phase.Input.SessionPos
+	var observedMsg *session.Message
 	if phase.Input.Append {
 		userMsg := session.UserMessage(phase.Input.StoredContent, phase.Input.MultiContent...)
 		e.session.AddMessage(userMsg)
 		pos = len(e.session.Messages) - 1
+		observedMsg = userMsg
+	} else if pos >= 0 && pos < len(e.session.Messages) && e.session.Messages[pos].IsMessage() {
+		observedMsg = e.session.Messages[pos].Message
 	}
 	e.events <- UserMessage(phase.Input.DisplayContent, e.currentSessionID(), phase.Input.MultiContent, pos)
+	if observedMsg != nil {
+		e.runtime.observeUserMessage(ctx, &ObservedUserMessage{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Message: observedMsg, SessionPosition: pos})
+	}
 
 	phase.Input.SessionPos = pos
 	return e.runtime.runUserMessageHooks(ctx, e.runtime.lifecycleHooks.AfterUserMessage, phase)
@@ -450,7 +457,7 @@ func (e *Execution) run(ctx context.Context) {
 					CreatedAt: time.Now().Format(time.RFC3339),
 				}
 
-				addAgentMessage(e.session, a, &assistantMessage, e.events)
+				e.runtime.addAgentMessage(ctx, e, e.session, a, &assistantMessage, e.events)
 				return
 			}
 
@@ -490,7 +497,7 @@ func (e *Execution) run(ctx context.Context) {
 					CreatedAt: time.Now().Format(time.RFC3339),
 				}
 
-				addAgentMessage(e.session, a, &assistantMessage, e.events)
+				e.runtime.addAgentMessage(ctx, e, e.session, a, &assistantMessage, e.events)
 				return
 			}
 		}
@@ -605,7 +612,7 @@ func (e *Execution) run(ctx context.Context) {
 			e.events <- Error(err.Error())
 			return
 		}
-		msgUsage := e.runtime.recordAssistantMessage(e.session, a, res, agentTools, turn.ModelID, m, e.events)
+		msgUsage := e.runtime.recordAssistantMessage(ctx, e, e.session, a, res, agentTools, turn.ModelID, m, e.events)
 		commitPhase.MessageUsage = msgUsage
 		if err := e.runtime.runAssistantCommitHooks(ctx, e.runtime.lifecycleHooks.AfterAssistantCommit, commitPhase); err != nil {
 			e.events <- Error(err.Error())
@@ -614,6 +621,7 @@ func (e *Execution) run(ctx context.Context) {
 		usage := SessionUsage(e.session, turn.ContextLimit)
 		usage.LastMessage = msgUsage
 		e.events <- NewTokenUsageEvent(e.currentSessionID(), a.Name(), usage)
+		e.runtime.observeTokenUsage(ctx, &ObservedTokenUsage{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Usage: usage})
 
 		turn.MessageCountBeforeTools = len(e.session.GetAllMessages())
 		e.runtime.processToolCallsWithExecution(ctx, e, res.Calls, agentTools)

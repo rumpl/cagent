@@ -382,7 +382,7 @@ func (r *LocalRuntime) executeToolWithHandler(
 		toolResponseMsg.MultiContent = multiContent
 	}
 
-	addAgentMessage(sess, a, &toolResponseMsg, events)
+	r.addAgentMessage(ctx, r.executionForSession(sess), sess, a, &toolResponseMsg, events)
 }
 
 // runTool executes agent tools from toolsets (MCP, filesystem, etc.).
@@ -479,15 +479,16 @@ func (r *LocalRuntime) runAgentTool(ctx context.Context, handler ToolHandlerFunc
 		})
 }
 
-func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, events chan Event) {
+func (r *LocalRuntime) addAgentMessage(ctx context.Context, exec *Execution, sess *session.Session, a *agent.Agent, msg *chat.Message, events chan Event) {
 	agentMsg := session.NewAgentMessage(a.Name(), msg)
 	sess.AddMessage(agentMsg)
 	events <- MessageAdded(sess.ID, agentMsg, a.Name())
+	r.observeMessageAdded(ctx, &ObservedMessage{Runtime: r, Execution: exec, Session: sess, Agent: a, Message: agentMsg})
 }
 
 // addToolErrorResponse adds a tool error response to the session and emits the event.
 // This consolidates the common pattern used by validation, rejection, and cancellation responses.
-func (r *LocalRuntime) addToolErrorResponse(_ context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
+func (r *LocalRuntime) addToolErrorResponse(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, tool tools.Tool, events chan Event, a *agent.Agent, errorMsg string) {
 	events <- ToolCallResponse(toolCall.ID, tool, tools.ResultError(errorMsg), errorMsg, a.Name())
 
 	toolResponseMsg := chat.Message{
@@ -497,5 +498,5 @@ func (r *LocalRuntime) addToolErrorResponse(_ context.Context, sess *session.Ses
 		IsError:    true,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
-	addAgentMessage(sess, a, &toolResponseMsg, events)
+	r.addAgentMessage(ctx, r.executionForSession(sess), sess, a, &toolResponseMsg, events)
 }
