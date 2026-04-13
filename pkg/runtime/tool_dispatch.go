@@ -57,12 +57,12 @@ func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *
 
 	batchPhase := &ToolBatchPhase{Runtime: r, Execution: exec, Session: sess, Agent: a, Turn: exec.turn, Events: events, Calls: calls, Tools: agentTools}
 	if err := r.runToolBatchHooks(ctx, r.lifecycleHooks.BeforeToolBatch, batchPhase); err != nil {
-		events <- Error(err.Error())
+		r.emitError(ctx, events, a, sess.ID, err.Error())
 		return
 	}
 	finishBatch := func() bool {
 		if err := r.runToolBatchHooks(ctx, r.lifecycleHooks.AfterToolBatch, batchPhase); err != nil {
-			events <- Error(err.Error())
+			r.emitError(ctx, events, a, sess.ID, err.Error())
 			return false
 		}
 		return true
@@ -427,7 +427,7 @@ func (r *LocalRuntime) executePreToolHook(
 		return true, toolCall
 	default:
 		if result.SystemMessage != "" {
-			events <- Warning(result.SystemMessage, a.Name())
+			r.emitWarning(ctx, events, a, sess.ID, result.SystemMessage)
 		}
 		if result.ModifiedInput != nil {
 			if updated, merr := json.Marshal(result.ModifiedInput); merr != nil {
@@ -456,7 +456,7 @@ func (r *LocalRuntime) executePostToolHook(
 		return nil
 	}
 	if result.SystemMessage != "" {
-		events <- Warning(result.SystemMessage, a.Name())
+		r.emitWarning(ctx, events, a, sess.ID, result.SystemMessage)
 	}
 	return result
 }

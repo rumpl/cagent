@@ -18,6 +18,7 @@ type RuntimeObservers struct {
 	TokenUsageUpdated   []TokenUsageObserver
 	SubSessionCompleted []SubSessionObserver
 	SessionTitleUpdated []SessionTitleObserver
+	Notifications       []NotificationObserver
 }
 
 type UserMessageObserver func(context.Context, *ObservedUserMessage) error
@@ -27,6 +28,7 @@ type SessionSummaryObserver func(context.Context, *ObservedSessionSummary) error
 type TokenUsageObserver func(context.Context, *ObservedTokenUsage) error
 type SubSessionObserver func(context.Context, *ObservedSubSession) error
 type SessionTitleObserver func(context.Context, *ObservedSessionTitle) error
+type NotificationObserver func(context.Context, *ObservedNotification) error
 
 // ObservedUserMessage describes a user message that entered a session through
 // the runtime's canonical input path.
@@ -92,6 +94,15 @@ type ObservedSessionTitle struct {
 	Title   string
 }
 
+// ObservedNotification describes a user-facing warning or error emitted by the runtime.
+type ObservedNotification struct {
+	Runtime   *LocalRuntime
+	Agent     *agent.Agent
+	SessionID string
+	Level     string
+	Message   string
+}
+
 func mergeRuntimeObservers(dst *RuntimeObservers, src RuntimeObservers) {
 	dst.UserMessageAdded = append(dst.UserMessageAdded, src.UserMessageAdded...)
 	dst.AssistantChunk = append(dst.AssistantChunk, src.AssistantChunk...)
@@ -100,6 +111,7 @@ func mergeRuntimeObservers(dst *RuntimeObservers, src RuntimeObservers) {
 	dst.TokenUsageUpdated = append(dst.TokenUsageUpdated, src.TokenUsageUpdated...)
 	dst.SubSessionCompleted = append(dst.SubSessionCompleted, src.SubSessionCompleted...)
 	dst.SessionTitleUpdated = append(dst.SessionTitleUpdated, src.SessionTitleUpdated...)
+	dst.Notifications = append(dst.Notifications, src.Notifications...)
 }
 
 func observeList[T any, F ~func(context.Context, *T) error](ctx context.Context, observers []F, value *T, kind string) {
@@ -136,4 +148,8 @@ func (r *LocalRuntime) observeSubSessionCompleted(ctx context.Context, observed 
 
 func (r *LocalRuntime) observeSessionTitle(ctx context.Context, observed *ObservedSessionTitle) {
 	observeList(ctx, r.observers.SessionTitleUpdated, observed, "session_title")
+}
+
+func (r *LocalRuntime) observeNotification(ctx context.Context, observed *ObservedNotification) {
+	observeList(ctx, r.observers.Notifications, observed, "notification")
 }

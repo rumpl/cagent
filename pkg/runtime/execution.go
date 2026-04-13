@@ -393,23 +393,23 @@ func (e *Execution) run(ctx context.Context) {
 	defer e.finalize(ctx)
 
 	if err := e.runtime.runSessionHooks(ctx, e.runtime.lifecycleHooks.SessionStart, &SessionPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events}); err != nil {
-		e.events <- Error(err.Error())
+		e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 		return
 	}
 	e.events <- TeamInfo(e.runtime.agentDetailsFromTeam(), a.Name())
 
-	e.runtime.emitAgentWarnings(a, chanSend(e.events))
+	e.runtime.emitAgentWarningsWithNotification(ctx, e.currentSessionID(), a, e.events)
 	e.runtime.configureToolsetHandlers(a, e.events)
 
 	agentTools, err := e.runtime.getTools(ctx, a, sessionSpan, e.events)
 	if err != nil {
-		e.events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+		e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), fmt.Sprintf("failed to get tools: %v", err))
 		return
 	}
 	agentTools = filterExcludedTools(agentTools, e.session.ExcludedTools)
 	e.events <- ToolsetInfo(len(agentTools), false, a.Name())
 	if err := e.observeInitialUserInput(ctx); err != nil {
-		e.events <- Error(err.Error())
+		e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 		return
 	}
 	e.events <- StreamStarted(e.currentSessionID(), a.Name())
@@ -421,12 +421,12 @@ func (e *Execution) run(ctx context.Context) {
 			e.prevAgentName = a.Name()
 		}
 
-		e.runtime.emitAgentWarnings(a, chanSend(e.events))
+		e.runtime.emitAgentWarningsWithNotification(ctx, e.currentSessionID(), a, e.events)
 		e.runtime.configureToolsetHandlers(a, e.events)
 
 		agentTools, err = e.runtime.getTools(ctx, a, sessionSpan, e.events)
 		if err != nil {
-			e.events <- Error(fmt.Sprintf("failed to get tools: %v", err))
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), fmt.Sprintf("failed to get tools: %v", err))
 			return
 		}
 		agentTools = filterExcludedTools(agentTools, e.session.ExcludedTools)
@@ -443,7 +443,7 @@ func (e *Execution) run(ctx context.Context) {
 			e.events <- MaxIterationsReached(e.runtimeMaxIterations)
 
 			maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", e.runtimeMaxIterations)
-			e.runtime.executeNotificationHooks(ctx, a, e.currentSessionID(), "warning", maxIterMsg)
+			e.runtime.emitWarning(ctx, e.events, a, e.currentSessionID(), maxIterMsg)
 
 			if e.session.NonInteractive {
 				slog.Debug("Auto-stopping after max iterations (non-interactive)", "agent", a.Name())
@@ -463,7 +463,7 @@ func (e *Execution) run(ctx context.Context) {
 
 			pausePhase := &PausePhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events, Reason: "max_iterations"}
 			if err := e.runtime.runPauseHooks(ctx, e.runtime.lifecycleHooks.BeforePauseForUser, pausePhase); err != nil {
-				e.events <- Error(err.Error())
+				e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 				return
 			}
 
@@ -478,7 +478,7 @@ func (e *Execution) run(ctx context.Context) {
 			}
 
 			if err := e.runtime.runResumeHooks(ctx, e.runtime.lifecycleHooks.AfterResume, &ResumePhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Events: e.events, Reason: "max_iterations", Request: req}); err != nil {
-				e.events <- Error(err.Error())
+				e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 				return
 			}
 
@@ -518,13 +518,13 @@ func (e *Execution) run(ctx context.Context) {
 		e.turn = turn
 		turnPhase := &TurnPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Events: e.events}
 		if err := e.runtime.runTurnHooks(ctx, e.runtime.lifecycleHooks.TurnStart, turnPhase); err != nil {
-			e.events <- Error(err.Error())
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 			streamSpan.End()
 			return
 		}
 		finishTurn := func() bool {
 			if err := e.runtime.runTurnHooks(ctx, e.runtime.lifecycleHooks.TurnEnd, turnPhase); err != nil {
-				e.events <- Error(err.Error())
+				e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 				return false
 			}
 			return true
@@ -560,7 +560,7 @@ func (e *Execution) run(ctx context.Context) {
 
 		buildContextPhase := &BuildContextPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Model: model, ModelDefinition: m}
 		if err := e.runtime.buildContext(ctx, buildContextPhase); err != nil {
-			e.events <- Error(err.Error())
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 			streamSpan.End()
 			return
 		}
@@ -588,8 +588,7 @@ func (e *Execution) run(ctx context.Context) {
 			slog.Error("All models failed", "agent", a.Name(), "error", err)
 			telemetry.RecordError(ctx, err.Error())
 			errMsg := modelerrors.FormatError(err)
-			e.events <- Error(errMsg)
-			e.runtime.executeNotificationHooks(ctx, a, e.currentSessionID(), "error", errMsg)
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), errMsg)
 			streamSpan.End()
 			return
 		}
@@ -617,13 +616,13 @@ func (e *Execution) run(ctx context.Context) {
 
 		commitPhase := &AssistantCommitPhase{Runtime: e.runtime, Execution: e, Session: e.session, Agent: a, Turn: turn, Events: e.events, Result: res, AgentTools: agentTools, ModelID: turn.ModelID, ModelDefinition: m}
 		if err := e.runtime.runAssistantCommitHooks(ctx, e.runtime.lifecycleHooks.BeforeAssistantCommit, commitPhase); err != nil {
-			e.events <- Error(err.Error())
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 			return
 		}
 		msgUsage := e.runtime.recordAssistantMessage(ctx, e, e.session, a, res, agentTools, turn.ModelID, m, e.events)
 		commitPhase.MessageUsage = msgUsage
 		if err := e.runtime.runAssistantCommitHooks(ctx, e.runtime.lifecycleHooks.AfterAssistantCommit, commitPhase); err != nil {
-			e.events <- Error(err.Error())
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 			return
 		}
 		usage := SessionUsage(e.session, turn.ContextLimit)
@@ -646,8 +645,7 @@ func (e *Execution) run(ctx context.Context) {
 				"Agent terminated: detected %d consecutive identical calls to %s. "+
 					"This indicates a degenerate loop where the model is not making progress.",
 				e.loopDetector.consecutive, toolName)
-			e.events <- Error(errMsg)
-			e.runtime.executeNotificationHooks(ctx, a, e.currentSessionID(), "error", errMsg)
+			e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), errMsg)
 			e.loopDetector.reset()
 			return
 		}
@@ -657,7 +655,7 @@ func (e *Execution) run(ctx context.Context) {
 		if steered := e.steerQueue.Drain(ctx); len(steered) > 0 {
 			for _, sm := range steered {
 				if err := e.appendSteerInput(ctx, sm); err != nil {
-					e.events <- Error(err.Error())
+					e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 					return
 				}
 			}
@@ -672,7 +670,7 @@ func (e *Execution) run(ctx context.Context) {
 
 			if followUp, ok := e.followUpQueue.Dequeue(ctx); ok {
 				if err := e.appendFollowUpInput(ctx, followUp); err != nil {
-					e.events <- Error(err.Error())
+					e.runtime.emitError(ctx, e.events, a, e.currentSessionID(), err.Error())
 					return
 				}
 				if !finishTurn() {

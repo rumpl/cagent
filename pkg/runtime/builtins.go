@@ -25,6 +25,9 @@ func (r *LocalRuntime) installBuiltins() {
 		r.approvalToolMiddleware(),
 		r.shellHookToolMiddleware(),
 	)
+	mergeRuntimeObservers(&r.observers, RuntimeObservers{
+		Notifications: []NotificationObserver{r.notificationHookObserver},
+	})
 	mergeLifecycleHooks(&r.lifecycleHooks, RuntimeLifecycleHooks{
 		SessionStart:       []SessionHook{r.sessionStartHooksLifecycleAdapter},
 		SessionEnd:         []SessionHook{r.sessionEndHooksLifecycleAdapter},
@@ -73,6 +76,33 @@ func appendExecutionPromptContext(exec *Execution, additionalContext string) {
 	exec.sessionPromptMessages = append(exec.sessionPromptMessages, msg)
 }
 
+func (r *LocalRuntime) notificationHookObserver(ctx context.Context, observed *ObservedNotification) error {
+	if observed == nil || observed.Agent == nil {
+		return nil
+	}
+	if observed.Level != "error" && observed.Level != "warning" {
+		slog.Error("Invalid notification level", "level", observed.Level, "expected", "error|warning")
+		return nil
+	}
+
+	hooksExec := r.getHooksExecutor(observed.Agent)
+	if hooksExec == nil || !hooksExec.HasNotificationHooks() {
+		return nil
+	}
+
+	slog.Debug("Executing notification hooks", "level", observed.Level, "session_id", observed.SessionID)
+	_, err := hooksExec.ExecuteNotification(ctx, &hooks.Input{
+		SessionID:           observed.SessionID,
+		Cwd:                 r.workingDir,
+		NotificationLevel:   observed.Level,
+		NotificationMessage: observed.Message,
+	})
+	if err != nil {
+		slog.Warn("Notification hook execution failed", "error", err)
+	}
+	return nil
+}
+
 func (r *LocalRuntime) sessionStartHooksLifecycleAdapter(ctx context.Context, phase *SessionPhase) error {
 	if phase == nil || phase.Agent == nil || phase.Session == nil {
 		return nil
@@ -94,7 +124,7 @@ func (r *LocalRuntime) sessionStartHooksLifecycleAdapter(ctx context.Context, ph
 		return nil
 	}
 	if result.SystemMessage != "" {
-		phase.Events <- Warning(result.SystemMessage, phase.Agent.Name())
+		r.emitWarning(ctx, phase.Events, phase.Agent, phase.Session.ID, result.SystemMessage)
 	}
 	appendExecutionPromptContext(phase.Execution, result.AdditionalContext)
 	return nil
@@ -164,7 +194,7 @@ func (r *LocalRuntime) stopHooksTurnAdapter(ctx context.Context, phase *TurnPhas
 		return nil
 	}
 	if result.SystemMessage != "" {
-		phase.Events <- Warning(result.SystemMessage, phase.Agent.Name())
+		r.emitWarning(ctx, phase.Events, phase.Agent, phase.Session.ID, result.SystemMessage)
 	}
 	appendExecutionPromptContext(phase.Execution, result.AdditionalContext)
 	return nil
@@ -204,10 +234,7 @@ func (r *LocalRuntime) compactionModelMiddleware() ModelMiddleware {
 				"context_limit", phase.Turn.ContextLimit,
 				"attempt", phase.Execution.overflowCompactions,
 			)
-			phase.Events <- Warning(
-				"The conversation has exceeded the model's context window. Automatically compacting the conversation history...",
-				phase.Agent.Name(),
-			)
+			r.emitWarning(ctx, phase.Events, phase.Agent, phase.Session.ID, "The conversation has exceeded the model's context window. Automatically compacting the conversation history...")
 			r.Summarize(ctx, phase.Session, "", phase.Events)
 			if err := rebuildModelPhasePromptContext(ctx, phase); err != nil {
 				return nil, err

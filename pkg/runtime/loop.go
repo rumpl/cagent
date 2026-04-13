@@ -221,14 +221,31 @@ func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events chan Even
 }
 
 // emitAgentWarnings drains and emits any agent initialization warnings.
-func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, send func(Event)) {
+func drainAgentWarnings(a *agent.Agent) []string {
+	if a == nil {
+		return nil
+	}
 	warnings := a.DrainWarnings()
+	if len(warnings) > 0 {
+		slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
+	}
+	return warnings
+}
+
+func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, send func(Event)) {
+	warnings := drainAgentWarnings(a)
 	if len(warnings) == 0 {
 		return
 	}
-
-	slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
 	send(Warning(formatToolWarning(a, warnings), a.Name()))
+}
+
+func (r *LocalRuntime) emitAgentWarningsWithNotification(ctx context.Context, sessionID string, a *agent.Agent, events chan Event) {
+	warnings := drainAgentWarnings(a)
+	if len(warnings) == 0 {
+		return
+	}
+	r.emitWarning(ctx, events, a, sessionID, formatToolWarning(a, warnings))
 }
 
 func formatToolWarning(a *agent.Agent, warnings []string) string {

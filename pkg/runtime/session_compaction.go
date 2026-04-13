@@ -39,7 +39,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	m, err := r.modelsStore.GetModel(ctx, summaryModel.ID())
 	if err != nil {
 		slog.Error("Failed to generate session summary", "error", errors.New("failed to get model definition"))
-		events <- Error("Failed to get model definition")
+		r.emitError(ctx, events, a, sess.ID, "Failed to get model definition")
 		return
 	}
 
@@ -51,7 +51,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	result, err := r.summaryService.SummarizeMessages(ctx, summaryModel, m, messages)
 	if err != nil {
 		slog.Error("Failed to generate session summary", "error", err)
-		events <- Error(err.Error())
+		r.emitError(ctx, events, a, sess.ID, err.Error())
 		return
 	}
 
