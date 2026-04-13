@@ -272,7 +272,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	a := r.CurrentAgent()
+	a := r.resolveSessionAgent(sess)
 
 	// Validate that the target agent is in the current agent's sub-agents list
 	if errResult := validateAgentInList(a.Name(), params.Agent, "transfer task to", "sub-agents list", a.SubAgents()); errResult != nil {
@@ -290,11 +290,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 	// Emit agent switching start event
 	evts <- AgentSwitching(true, a.Name(), params.Agent)
-
-	r.setCurrentAgent(params.Agent)
 	defer func() {
-		r.setCurrentAgent(a.Name())
-
 		// Emit agent switching end event
 		evts <- AgentSwitching(false, params.Agent, a.Name())
 
@@ -317,6 +313,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		AgentName:      params.Agent,
 		Title:          "Transferred task",
 		ToolsApproved:  sess.ToolsApproved,
+		PinAgent:       true,
 	}
 
 	s := newSubSession(sess, cfg, child)

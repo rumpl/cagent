@@ -9,10 +9,23 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
 )
+
+func skillsToolsetForAgent(a *agent.Agent) *builtin.SkillsToolset {
+	if a == nil {
+		return nil
+	}
+	for _, ts := range a.ToolSets() {
+		if st, ok := tools.As[*builtin.SkillsToolset](ts); ok {
+			return st
+		}
+	}
+	return nil
+}
 
 // handleRunSkill executes a skill as an isolated sub-agent. The skill's
 // SKILL.md content (with command expansions) becomes the system prompt, and
@@ -28,7 +41,8 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	st := r.CurrentAgentSkillsToolset()
+	a := r.resolveSessionAgent(sess)
+	st := skillsToolsetForAgent(a)
 	if st == nil {
 		return tools.ResultError("no skills are available for the current agent"), nil
 	}
@@ -51,7 +65,6 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		return tools.ResultError(fmt.Sprintf("failed to read skill content: %s", err)), nil
 	}
 
-	a := r.CurrentAgent()
 	ca := a.Name()
 
 	ctx, span := r.startSpan(ctx, "runtime.run_skill", trace.WithAttributes(
@@ -74,6 +87,7 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 		AgentName:           ca,
 		Title:               "Skill: " + params.Name,
 		ToolsApproved:       sess.ToolsApproved,
+		PinAgent:            true,
 		ExcludedTools:       []string{builtin.ToolNameRunSkill},
 	}
 

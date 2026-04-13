@@ -1400,7 +1400,7 @@ func TestToolRejectionWithReason(t *testing.T) {
 	for ev := range events {
 		if _, ok := ev.(*ToolCallConfirmationEvent); ok {
 			// Send rejection with a specific reason
-			rt.resumeChan <- ResumeReject("The arguments provided are incorrect.")
+			rt.Resume(t.Context(), ResumeReject("The arguments provided are incorrect."))
 		}
 		if resp, ok := ev.(*ToolCallResponseEvent); ok {
 			toolResponse = resp
@@ -1456,7 +1456,7 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 	for ev := range events {
 		if _, ok := ev.(*ToolCallConfirmationEvent); ok {
 			// Send rejection without a reason
-			rt.resumeChan <- ResumeReject("")
+			rt.Resume(t.Context(), ResumeReject(""))
 		}
 		if resp, ok := ev.(*ToolCallResponseEvent); ok {
 			toolResponse = resp

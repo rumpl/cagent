@@ -180,22 +180,19 @@ type ToolsChangeSubscriber interface {
 
 // LocalRuntime manages the execution of agents
 type LocalRuntime struct {
-	toolMap                     map[string]ToolHandlerFunc
-	team                        *team.Team
-	currentAgent                string
-	resumeChan                  chan ResumeRequest
-	tracer                      trace.Tracer
-	modelsStore                 ModelStore
-	sessionCompaction           bool
-	managedOAuth                bool
-	startupInfoEmitted          bool                   // Track if startup info has been emitted to avoid unnecessary duplication
-	elicitationRequestCh        chan ElicitationResult // Channel for receiving elicitation responses
-	elicitationEventsChannel    chan Event             // Current events channel for sending elicitation requests
-	elicitationEventsChannelMux sync.RWMutex           // Protects elicitationEventsChannel
-	sessionStore                session.Store
-	workingDir                  string   // Working directory for hooks execution
-	env                         []string // Environment variables for hooks execution
-	modelSwitcherCfg            *ModelSwitcherConfig
+	toolMap           map[string]ToolHandlerFunc
+	team              *team.Team
+	currentAgent      string
+	tracer            trace.Tracer
+	modelsStore       ModelStore
+	sessionCompaction bool
+	managedOAuth      bool
+
+	startupInfoEmitted bool // Track if startup info has been emitted to avoid unnecessary duplication
+	sessionStore       session.Store
+	workingDir         string   // Working directory for hooks execution
+	env                []string // Environment variables for hooks execution
+	modelSwitcherCfg   *ModelSwitcherConfig
 
 	// retryOnRateLimit enables retry-with-backoff for HTTP 429 (rate limit) errors
 	// when no fallback models are configured. When false (default), 429 errors are
@@ -209,13 +206,19 @@ type LocalRuntime struct {
 
 	currentAgentMu sync.RWMutex
 
-	// steerQueue stores urgent mid-turn messages. The agent loop drains
-	// ALL pending messages after tool execution, before the stop check.
-	steerQueue MessageQueue
+	// Queue factories create per-execution queues. Pending queues capture steer
+	// and follow-up input that arrives before a run starts so the next execution
+	// can adopt it.
+	steerQueueFactory    func() MessageQueue
+	followUpQueueFactory func() MessageQueue
+	pendingSteerQueue    MessageQueue
+	pendingFollowUpQueue MessageQueue
 
-	// followUpQueue stores end-of-turn messages. The agent loop pops
-	// exactly ONE message after the model stops and stop-hooks have run.
-	followUpQueue MessageQueue
+	// executions tracks the currently active execution stack. Nested sub-sessions
+	// register their own execution while they run so resume/elicitation and input
+	// routing target the active execution instead of shared runtime-global state.
+	executionsMu sync.RWMutex
+	executions   []*Execution
 
 	// onToolsChanged is called when an MCP toolset reports a tool list change.
 	onToolsChanged func(Event)
@@ -248,7 +251,8 @@ func WithTracer(t trace.Tracer) Opt {
 // If not provided, an in-memory buffered queue is used.
 func WithSteerQueue(q MessageQueue) Opt {
 	return func(r *LocalRuntime) {
-		r.steerQueue = q
+		r.steerQueueFactory = func() MessageQueue { return q }
+		r.pendingSteerQueue = q
 	}
 }
 
@@ -256,7 +260,8 @@ func WithSteerQueue(q MessageQueue) Opt {
 // messages. If not provided, an in-memory buffered queue is used.
 func WithFollowUpQueue(q MessageQueue) Opt {
 	return func(r *LocalRuntime) {
-		r.followUpQueue = q
+		r.followUpQueueFactory = func() MessageQueue { return q }
+		r.pendingFollowUpQueue = q
 	}
 }
 
@@ -317,18 +322,21 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, err
 	}
 
+	steerQueueFactory := func() MessageQueue { return NewInMemoryMessageQueue(defaultSteerQueueCapacity) }
+	followUpQueueFactory := func() MessageQueue { return NewInMemoryMessageQueue(defaultFollowUpQueueCapacity) }
+
 	r := &LocalRuntime{
 		toolMap:              make(map[string]ToolHandlerFunc),
 		team:                 agents,
 		currentAgent:         defaultAgent.Name(),
-		resumeChan:           make(chan ResumeRequest),
-		elicitationRequestCh: make(chan ElicitationResult),
-		steerQueue:           NewInMemoryMessageQueue(defaultSteerQueueCapacity),
-		followUpQueue:        NewInMemoryMessageQueue(defaultFollowUpQueueCapacity),
 		sessionCompaction:    true,
 		managedOAuth:         true,
 		sessionStore:         session.NewInMemorySessionStore(),
 		fallbackCooldowns:    make(map[string]*fallbackCooldownState),
+		steerQueueFactory:    steerQueueFactory,
+		followUpQueueFactory: followUpQueueFactory,
+		pendingSteerQueue:    steerQueueFactory(),
+		pendingFollowUpQueue: followUpQueueFactory(),
 	}
 	r.bgAgents = agenttool.NewHandler(r)
 
@@ -992,7 +1000,13 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 }
 
 func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
-	slog.Debug("Resuming runtime", "agent", r.CurrentAgentName(), "type", req.Type, "reason", req.Reason)
+	target := r.resumeTargetExecution()
+	agentName := r.CurrentAgentName()
+	if target != nil {
+		agentName = target.currentAgentName()
+	}
+
+	slog.Debug("Resuming runtime", "agent", agentName, "type", req.Type, "reason", req.Reason)
 
 	// Defensive validation:
 	//
@@ -1003,25 +1017,30 @@ func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
 	if !IsValidResumeType(req.Type) {
 		slog.Warn(
 			"Invalid resume type received; ignoring resume request",
-			"agent", r.CurrentAgentName(),
+			"agent", agentName,
 			"confirmation_type", req.Type,
 			"valid_types", ValidResumeTypes(),
 		)
 		return
 	}
 
-	// Attempt to deliver the resume signal to the execution loop.
+	if target == nil {
+		slog.Debug("No active execution available for resume", "confirmation_type", req.Type)
+		return
+	}
+
+	// Attempt to deliver the resume signal to the active execution.
 	//
 	// The channel is non-blocking by design to avoid deadlocks if the runtime
 	// is not currently waiting for a confirmation (e.g. already resumed,
 	// canceled, or shutting down).
 	select {
-	case r.resumeChan <- req:
-		slog.Debug("Resume signal sent", "agent", r.CurrentAgentName())
+	case target.resumeChan <- req:
+		slog.Debug("Resume signal sent", "agent", agentName)
 	default:
 		slog.Debug(
 			"Resume channel not ready; resume signal dropped",
-			"agent", r.CurrentAgentName(),
+			"agent", agentName,
 			"confirmation_type", req.Type,
 		)
 	}
@@ -1029,7 +1048,17 @@ func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
 
 // ResumeElicitation sends an elicitation response back to a waiting elicitation request
 func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any) error {
-	slog.Debug("Resuming runtime with elicitation response", "agent", r.CurrentAgentName(), "action", action)
+	target := r.elicitationTargetExecution()
+	agentName := r.CurrentAgentName()
+	if target != nil {
+		agentName = target.currentAgentName()
+	}
+
+	slog.Debug("Resuming runtime with elicitation response", "agent", agentName, "action", action)
+
+	if target == nil {
+		return errors.New("no elicitation request in progress")
+	}
 
 	result := ElicitationResult{
 		Action:  action,
@@ -1040,7 +1069,7 @@ func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.Elici
 	case <-ctx.Done():
 		slog.Debug("Context cancelled while sending elicitation response")
 		return ctx.Err()
-	case r.elicitationRequestCh <- result:
+	case target.elicitationRequestCh <- result:
 		slog.Debug("Elicitation response sent successfully", "action", action)
 		return nil
 	default:
@@ -1053,7 +1082,13 @@ func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.Elici
 // running agent loop. The message will be picked up after the current batch
 // of tool calls finishes but before the loop checks whether to stop.
 func (r *LocalRuntime) Steer(msg QueuedMessage) error {
-	if !r.steerQueue.Enqueue(context.Background(), msg) {
+	if exec := r.currentExecution(); exec != nil {
+		if !exec.steerQueue.Enqueue(context.Background(), msg) {
+			return errors.New("steer queue full")
+		}
+		return nil
+	}
+	if !r.pendingSteerQueue.Enqueue(context.Background(), msg) {
 		return errors.New("steer queue full")
 	}
 	return nil
@@ -1063,7 +1098,13 @@ func (r *LocalRuntime) Steer(msg QueuedMessage) error {
 // finishes. Unlike Steer, follow-ups are popped one at a time and each gets
 // a full undivided agent turn.
 func (r *LocalRuntime) FollowUp(msg QueuedMessage) error {
-	if !r.followUpQueue.Enqueue(context.Background(), msg) {
+	if exec := r.currentExecution(); exec != nil {
+		if !exec.followUpQueue.Enqueue(context.Background(), msg) {
+			return errors.New("follow-up queue full")
+		}
+		return nil
+	}
+	if !r.pendingFollowUpQueue.Enqueue(context.Background(), msg) {
 		return errors.New("follow-up queue full")
 	}
 	return nil
@@ -1096,50 +1137,31 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 	events <- NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit))
 }
 
-// swapElicitationEventsChannel atomically replaces the current elicitation
-// events channel and returns the previous one. Each RunStream call swaps in
-// its own channel on entry and swaps the previous one back on exit, so nested
-// streams (sub-sessions, background agents) don't lose the parent's channel.
-func (r *LocalRuntime) swapElicitationEventsChannel(ch chan Event) chan Event {
-	r.elicitationEventsChannelMux.Lock()
-	defer r.elicitationEventsChannelMux.Unlock()
-	prev := r.elicitationEventsChannel
-	r.elicitationEventsChannel = ch
-	return prev
-}
-
 // elicitationHandler creates an elicitation handler that can be used by MCP clients
-// This handler propagates elicitation requests to the runtime's client via events
+// This handler propagates elicitation requests to the runtime's client via events.
 func (r *LocalRuntime) elicitationHandler(ctx context.Context, req *mcp.ElicitParams) (tools.ElicitationResult, error) {
 	slog.Debug("Elicitation request received from MCP server", "message", req.Message)
 
-	// Hold the read lock while sending to the channel to prevent a race
-	// with swapElicitationEventsChannel / close(events).
-	r.elicitationEventsChannelMux.RLock()
-	eventsChannel := r.elicitationEventsChannel
-	if eventsChannel == nil {
-		r.elicitationEventsChannelMux.RUnlock()
-		return tools.ElicitationResult{}, errors.New("no events channel available for elicitation")
+	exec := r.elicitationTargetExecution()
+	if exec == nil || exec.events == nil {
+		return tools.ElicitationResult{}, errors.New("no active execution available for elicitation")
 	}
 
-	r.executeOnUserInputHooks(ctx, "", "elicitation")
+	r.executeOnUserInputHooks(ctx, exec.currentSessionID(), "elicitation")
 
 	slog.Debug("Sending elicitation request event to client", "message", req.Message, "mode", req.Mode, "requested_schema", req.RequestedSchema, "url", req.URL)
 	slog.Debug("Elicitation request meta", "meta", req.Meta)
 
-	// Send elicitation request event to the runtime's client
-	eventsChannel <- ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, r.CurrentAgentName())
-	r.elicitationEventsChannelMux.RUnlock()
+	exec.events <- ElicitationRequest(req.Message, req.Mode, req.RequestedSchema, req.URL, req.ElicitationID, req.Meta, exec.currentAgentName())
 
-	// Wait for response from the client
-	select {
-	case result := <-r.elicitationRequestCh:
-		return tools.ElicitationResult{
-			Action:  result.Action,
-			Content: result.Content,
-		}, nil
-	case <-ctx.Done():
+	result, err := exec.waitForElicitation(ctx)
+	if err != nil {
 		slog.Debug("Context cancelled while waiting for elicitation response")
-		return tools.ElicitationResult{}, ctx.Err()
+		return tools.ElicitationResult{}, err
 	}
+
+	return tools.ElicitationResult{
+		Action:  result.Action,
+		Content: result.Content,
+	}, nil
 }

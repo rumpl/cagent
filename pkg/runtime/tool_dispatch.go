@@ -24,12 +24,34 @@ import (
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// processToolCalls handles the execution of tool calls for an agent
+// processToolCalls handles the execution of tool calls for an agent.
 func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, calls []tools.ToolCall, agentTools []tools.Tool, events chan Event) {
-	a := r.resolveSessionAgent(sess)
+	exec := r.executionForSession(sess)
+	registered := false
+	if exec == nil {
+		exec = r.newExecution(sess, events)
+		r.registerExecution(exec)
+		registered = true
+	}
+	if registered {
+		defer r.unregisterExecution(exec)
+	}
+	if exec != nil && exec.events == nil {
+		exec.events = events
+	}
+	if exec != nil && exec.session == nil {
+		exec.session = sess
+	}
+	r.processToolCallsWithExecution(ctx, exec, calls, agentTools)
+}
+
+func (r *LocalRuntime) processToolCallsWithExecution(ctx context.Context, exec *Execution, calls []tools.ToolCall, agentTools []tools.Tool) {
+	sess := exec.session
+	events := exec.events
+	a := exec.resolveAgent()
 	slog.Debug("Processing tool calls", "agent", a.Name(), "call_count", len(calls))
 
-	// Build a map of agent tools for quick lookup
+	// Build a map of agent tools for quick lookup.
 	agentToolMap := make(map[string]tools.Tool, len(agentTools))
 	for _, t := range agentTools {
 		agentToolMap[t.Name] = t
@@ -69,8 +91,8 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 			runTool = func() { r.runTool(callCtx, tool, toolCall, events, sess, a) }
 		}
 
-		// Execute tool with approval check
-		canceled := r.executeWithApproval(callCtx, sess, toolCall, tool, events, a, runTool)
+		// Execute tool with approval check.
+		canceled := r.executeWithApproval(callCtx, exec, sess, toolCall, tool, events, a, runTool)
 		if canceled {
 			callSpan.SetStatus(codes.Ok, "tool call canceled by user")
 			callSpan.End()
@@ -102,6 +124,7 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 //  5. Default: ask for user confirmation
 func (r *LocalRuntime) executeWithApproval(
 	ctx context.Context,
+	exec *Execution,
 	sess *session.Session,
 	toolCall tools.ToolCall,
 	tool tools.Tool,
@@ -142,7 +165,7 @@ func (r *LocalRuntime) executeWithApproval(
 			return false
 		case permissions.ForceAsk:
 			slog.Debug("Tool requires confirmation (ask pattern)", "tool", toolName, "source", pc.source, "session_id", sess.ID)
-			return r.askUserForConfirmation(ctx, sess, toolCall, tool, events, a, runTool)
+			return r.askUserForConfirmation(ctx, exec, sess, toolCall, tool, events, a, runTool)
 		case permissions.Ask:
 			// No explicit match at this level; fall through to next checker
 		}
@@ -155,7 +178,7 @@ func (r *LocalRuntime) executeWithApproval(
 	}
 
 	// Default: ask the user for confirmation
-	return r.askUserForConfirmation(ctx, sess, toolCall, tool, events, a, runTool)
+	return r.askUserForConfirmation(ctx, exec, sess, toolCall, tool, events, a, runTool)
 }
 
 // permissionChecker pairs a checker with a human-readable source label.
@@ -190,6 +213,7 @@ func (r *LocalRuntime) permissionCheckers(sess *session.Session) []permissionChe
 // This is only called when --yolo is not active and no permission rule auto-approved the tool.
 func (r *LocalRuntime) askUserForConfirmation(
 	ctx context.Context,
+	exec *Execution,
 	sess *session.Session,
 	toolCall tools.ToolCall,
 	tool tools.Tool,
@@ -203,44 +227,44 @@ func (r *LocalRuntime) askUserForConfirmation(
 
 	r.executeOnUserInputHooks(ctx, sess.ID, "tool confirmation")
 
-	select {
-	case req := <-r.resumeChan:
-		switch req.Type {
-		case ResumeTypeApprove:
-			slog.Debug("Resume signal received, approving tool", "tool", toolName, "session_id", sess.ID)
-			runTool()
-		case ResumeTypeApproveSession:
-			slog.Debug("Resume signal received, approving session", "tool", toolName, "session_id", sess.ID)
-			sess.ToolsApproved = true
-			runTool()
-		case ResumeTypeApproveTool:
-			// Add the tool to session's allow list for future auto-approval
-			approvedTool := req.ToolName
-			if approvedTool == "" {
-				approvedTool = toolName
-			}
-			if sess.Permissions == nil {
-				sess.Permissions = &session.PermissionsConfig{}
-			}
-			if !slices.Contains(sess.Permissions.Allow, approvedTool) {
-				sess.Permissions.Allow = append(sess.Permissions.Allow, approvedTool)
-			}
-			slog.Debug("Resume signal received, approving tool permanently", "tool", approvedTool, "session_id", sess.ID)
-			runTool()
-		case ResumeTypeReject:
-			slog.Debug("Resume signal received, rejecting tool", "tool", toolName, "session_id", sess.ID, "reason", req.Reason)
-			rejectMsg := "The user rejected the tool call."
-			if strings.TrimSpace(req.Reason) != "" {
-				rejectMsg += " Reason: " + strings.TrimSpace(req.Reason)
-			}
-			r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, rejectMsg)
-		}
-		return false
-	case <-ctx.Done():
+	req, ok := exec.waitForResume(ctx)
+	if !ok {
 		slog.Debug("Context cancelled while waiting for resume", "tool", toolName, "session_id", sess.ID)
 		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, "The tool call was canceled by the user.")
 		return true
 	}
+
+	switch req.Type {
+	case ResumeTypeApprove:
+		slog.Debug("Resume signal received, approving tool", "tool", toolName, "session_id", sess.ID)
+		runTool()
+	case ResumeTypeApproveSession:
+		slog.Debug("Resume signal received, approving session", "tool", toolName, "session_id", sess.ID)
+		sess.ToolsApproved = true
+		runTool()
+	case ResumeTypeApproveTool:
+		// Add the tool to session's allow list for future auto-approval.
+		approvedTool := req.ToolName
+		if approvedTool == "" {
+			approvedTool = toolName
+		}
+		if sess.Permissions == nil {
+			sess.Permissions = &session.PermissionsConfig{}
+		}
+		if !slices.Contains(sess.Permissions.Allow, approvedTool) {
+			sess.Permissions.Allow = append(sess.Permissions.Allow, approvedTool)
+		}
+		slog.Debug("Resume signal received, approving tool permanently", "tool", approvedTool, "session_id", sess.ID)
+		runTool()
+	case ResumeTypeReject:
+		slog.Debug("Resume signal received, rejecting tool", "tool", toolName, "session_id", sess.ID, "reason", req.Reason)
+		rejectMsg := "The user rejected the tool call."
+		if strings.TrimSpace(req.Reason) != "" {
+			rejectMsg += " Reason: " + strings.TrimSpace(req.Reason)
+		}
+		r.addToolErrorResponse(ctx, sess, toolCall, tool, events, a, rejectMsg)
+	}
+	return false
 }
 
 // executeToolWithHandler is a common helper that handles tool execution, error handling,
