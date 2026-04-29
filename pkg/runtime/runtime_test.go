@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -24,6 +27,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/snapshot"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 	mcptools "github.com/docker/docker-agent/pkg/tools/mcp"
@@ -2590,9 +2594,9 @@ func (p *messageRecordingProvider) CreateChatCompletionStream(_ context.Context,
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	snapshot := make([]chat.Message, len(msgs))
-	copy(snapshot, msgs)
-	p.recordedMessages = append(p.recordedMessages, snapshot)
+	copied := make([]chat.Message, len(msgs))
+	copy(copied, msgs)
+	p.recordedMessages = append(p.recordedMessages, copied)
 
 	if p.callIdx >= len(p.streams) {
 		// No stream configured for this call index. Return a plain stop so
@@ -3263,4 +3267,108 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 	assert.Equal(t, sess.ID, finished.SessionID)
 	assert.True(t, finished.Allowed)
 	assert.Empty(t, finished.Error)
+}
+
+// TestRunStream_RecordsStepSnapshots end-to-end exercises the snapshot
+// builtin pair: with a snapshot.Manager wired in via WithSnapshotManager,
+// the runtime must auto-inject snapshot_turn_start and snapshot_turn_end
+// hooks and record one StepSnapshot per agent turn that mutated the
+// worktree.
+func TestRunStream_RecordsStepSnapshots(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dataDir := t.TempDir()
+	workTree := t.TempDir()
+
+	toolStream := newStreamBuilder().
+		AddToolCallName("call_1", "write_file").
+		AddToolCallArguments("call_1", `{"path":"note.txt","content":"hello from snapshot\n"}`).
+		Build()
+	finalStream := newStreamBuilder().
+		AddContent("done").
+		AddStopWithUsage(1, 1).
+		Build()
+
+	prov := &queueProvider{id: "test/mock-model", streams: []chat.MessageStream{toolStream, finalStream}}
+	writeTool := tools.Tool{
+		Name: "write_file",
+		Handler: tools.NewHandler(func(_ context.Context, args struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		},
+		) (*tools.ToolCallResult, error) {
+			return tools.ResultSuccess("ok"), os.WriteFile(filepath.Join(workTree, args.Path), []byte(args.Content), 0o644)
+		}),
+	}
+
+	root := agent.New(
+		"root",
+		"You are a test agent",
+		agent.WithModel(prov),
+		agent.WithToolSets(newStubToolSet(nil, []tools.Tool{writeTool}, nil)),
+	)
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(
+		tm,
+		WithSessionCompaction(false),
+		WithModelStore(mockModelStore{}),
+		WithWorkingDir(workTree),
+		WithSnapshotManager(snapshot.NewManager(dataDir)),
+	)
+	require.NoError(t, err)
+
+	sess := session.New(
+		session.WithUserMessage("change a file"),
+		session.WithWorkingDir(workTree),
+		session.WithToolsApproved(true),
+	)
+
+	for range rt.RunStream(t.Context(), sess) {
+	}
+
+	steps := sess.GetStepSnapshots()
+	require.NotEmpty(t, steps, "snapshot builtin must record at least one StepSnapshot")
+
+	var changedSteps []session.StepSnapshot
+	for _, step := range steps {
+		if len(step.Files) > 0 {
+			changedSteps = append(changedSteps, step)
+		}
+	}
+	if assert.NotEmpty(t, changedSteps, "expected a step recording the worktree mutation") {
+		assert.Contains(t, changedSteps[0].Files, "note.txt")
+		assert.NotEmpty(t, changedSteps[0].BeforeHash)
+		assert.NotEmpty(t, changedSteps[0].AfterHash)
+		assert.NotEqual(t, changedSteps[0].BeforeHash, changedSteps[0].AfterHash)
+	}
+
+	content, err := os.ReadFile(filepath.Join(workTree, "note.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello from snapshot\n", string(content))
+}
+
+// TestSnapshot_NoManagerNoInjection guards that a runtime without a
+// snapshot.Manager skips the auto-injection of the snapshot builtin pair
+// and stays a no-op even when an agent dispatches turn_start / turn_end.
+func TestSnapshot_NoManagerNoInjection(t *testing.T) {
+	root := agent.New(
+		"root",
+		"You are a test agent",
+		agent.WithModel(&queueProvider{id: "test/mock", streams: []chat.MessageStream{}}),
+	)
+	tm := team.New(team.WithAgents(root))
+
+	rt, err := NewLocalRuntime(
+		tm,
+		WithModelStore(mockModelStore{}),
+	)
+	require.NoError(t, err)
+
+	// Force-clear the auto-defaulted manager to assert the gating.
+	rt.snapshotManager = nil
+	assert.False(t, rt.snapshotsEnabled())
+	assert.Nil(t, rt.applySnapshotDefault(nil, root))
 }

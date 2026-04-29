@@ -16,6 +16,7 @@
 #   session_start     - one-time setup; AdditionalContext PERSISTS in the session
 #   user_prompt_submit- runs once per user message, before the first LLM call
 #   turn_start        - per-turn context; AdditionalContext is TRANSIENT
+#   turn_end          - end-of-turn observation; pairs with turn_start
 #   before_llm_call   - just before each model call (observability, guardrails)
 #   after_llm_call    - just after a successful model call
 #   session_end       - cleanup when the session terminates
@@ -224,6 +225,22 @@ agents:
           args:
             - GUIDELINES.md
             - PROJECT.md
+
+      # ====================================================================
+      # TURN-END - fires at the end of every agent turn, after the model
+      # call returned and any tool calls finished executing. Pairs with
+      # turn_start for hooks that need to bracket a full turn (e.g.
+      # filesystem snapshots that capture state changes produced by the
+      # turn's tool calls). Observational; output is ignored other than
+      # system_message.
+      # ====================================================================
+      turn_end:
+        - type: command
+          timeout: 5
+          command: |
+            INPUT=$(cat)
+            SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+            echo "[$(date)] [✕] $SESSION_ID turn finished" >> /tmp/agent-turns.log
 
       # ====================================================================
       # BEFORE-LLM-CALL - fires just before every model invocation, AFTER

@@ -39,6 +39,7 @@ func (r *LocalRuntime) buildHooksExecutors() {
 			RedactSecrets:      a.RedactSecrets(),
 		})
 		cfg = applyCacheDefault(cfg, a)
+		cfg = r.applySnapshotDefault(cfg, a)
 		if cfg == nil {
 			continue
 		}
@@ -130,6 +131,18 @@ func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.
 	return contextMessages(r.dispatchHook(ctx, a, hooks.EventTurnStart, &hooks.Input{
 		SessionID: sess.ID,
 	}, events))
+}
+
+// executeTurnEndHooks fires turn_end at the end of each loop iteration,
+// after the model call returned and any tool calls have finished
+// executing. Pairs with turn_start for hooks that need to bracket the
+// full turn (e.g. filesystem snapshots). Observational; AdditionalContext
+// is not consumed.
+func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events chan Event) {
+	r.dispatchHook(ctx, a, hooks.EventTurnEnd, &hooks.Input{
+		SessionID: sess.ID,
+		AgentName: a.Name(),
+	}, events)
 }
 
 // contextMessages converts a context-providing hook's AdditionalContext

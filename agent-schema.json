@@ -620,6 +620,13 @@
             "$ref": "#/definitions/HookDefinition"
           }
         },
+        "turn_end": {
+          "type": "array",
+          "description": "Hooks that run at the end of every agent turn, after the model call returned and any tool calls in this iteration finished executing. Pairs with turn_start for hooks that need to bracket a full turn (e.g. filesystem snapshots that capture state changes produced by the turn's tool calls). Observational; output is ignored other than system_message.",
+          "items": {
+            "$ref": "#/definitions/HookDefinition"
+          }
+        },
         "before_llm_call": {
           "type": "array",
           "description": "Hooks that run just before each model call (after turn_start has assembled the messages). Use for observability, cost guardrails, or auditing without contributing system messages — turn_start is the right event for the latter.",

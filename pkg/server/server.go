@@ -198,6 +198,7 @@ func (s *Server) getSession(c echo.Context) error {
 		Title:         sess.Title,
 		CreatedAt:     sess.CreatedAt,
 		Messages:      sess.GetAllMessages(),
+		StepSnapshots: sess.GetStepSnapshots(),
 		ToolsApproved: sess.ToolsApproved,
 		InputTokens:   sess.InputTokens,
 		OutputTokens:  sess.OutputTokens,

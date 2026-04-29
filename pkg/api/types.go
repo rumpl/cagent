@@ -129,6 +129,7 @@ type SessionResponse struct {
 	ID            string                     `json:"id"`
 	Title         string                     `json:"title"`
 	Messages      []session.Message          `json:"messages,omitempty"`
+	StepSnapshots []session.StepSnapshot     `json:"step_snapshots,omitempty"`
 	CreatedAt     time.Time                  `json:"created_at"`
 	ToolsApproved bool                       `json:"tools_approved"`
 	InputTokens   int64                      `json:"input_tokens"`

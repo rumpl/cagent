@@ -32,6 +32,12 @@ func BranchSession(parent *Session, branchAtPosition int) (*Session, error) {
 		branched.Messages = append(branched.Messages, cloned)
 	}
 
+	for _, step := range parent.GetStepSnapshots() {
+		if step.MessagePosition >= 0 && step.MessagePosition < branchAtPosition {
+			branched.StepSnapshots = append(branched.StepSnapshots, step)
+		}
+	}
+
 	setParentIDs(branched)
 	recalculateSessionTotals(branched)
 	return branched, nil
@@ -75,6 +81,7 @@ func cloneSubSession(src *Session) (*Session, error) {
 		}
 		cloned.Messages = append(cloned.Messages, clonedItem)
 	}
+	cloned.StepSnapshots = cloneStepSnapshots(src.StepSnapshots)
 
 	recalculateSessionTotals(cloned)
 	return cloned, nil

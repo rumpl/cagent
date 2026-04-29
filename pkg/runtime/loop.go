@@ -167,6 +167,11 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session, events chan Event) {
 	r.telemetry.RecordSessionStart(ctx, r.CurrentAgentName(), sess.ID)
 
+	// Register the session so runtime-private builtins (e.g. snapshot
+	// turn_start / turn_end) can resolve a *session.Session from a
+	// hooks.Input.SessionID, then drop the registration on exit.
+	defer r.trackActiveSession(sess)()
+
 	ctx, sessionSpan := r.startSpan(ctx, "runtime.session", trace.WithAttributes(
 		attribute.String("agent", r.CurrentAgentName()),
 		attribute.String("session.id", sess.ID),
@@ -485,6 +490,15 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 			r.emitHookDrivenShutdown(ctx, a, sess, stopMsg, events)
 			return
 		}
+
+		// turn_end fires once per completed loop iteration, after the
+		// model call returned and any tool calls in this iteration have
+		// finished. Pairs with turn_start for hooks that need to bracket
+		// the full turn (e.g. the snapshot builtin captures filesystem
+		// state changes here). Skipped on the deny / loop-detector / error
+		// early-returns above so a turn that didn't complete normally
+		// doesn't fire turn_end.
+		r.executeTurnEndHooks(ctx, sess, a, events)
 
 		// Record per-toolset model override for the next LLM turn.
 		toolModelOverride = toolexec.ResolveModelOverride(res.Calls, agentTools)

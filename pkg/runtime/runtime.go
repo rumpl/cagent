@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +22,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
+	"github.com/docker/docker-agent/pkg/snapshot"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin"
@@ -172,6 +174,25 @@ type LocalRuntime struct {
 	// have no entry, so [hooksExec] returns nil for them. Read-only after
 	// construction, so no locking is needed.
 	hooksExecByAgent map[string]*hooks.Executor
+
+	// snapshotManager owns the shared shadow-git snapshot infrastructure
+	// (one Repo per worktree) used by the snapshot builtin hook to
+	// capture filesystem state changes around each agent turn. nil when
+	// snapshots are disabled in user config.
+	snapshotManager *snapshot.Manager
+
+	// activeSessions registers in-flight sessions so the snapshot builtin
+	// (and other runtime-defined builtins that need to mutate session
+	// state) can resolve a *session.Session from a SessionID. Populated
+	// at the top of RunStream and cleared on exit.
+	activeSessions sync.Map // string SessionID -> *session.Session
+
+	// snapshotStateRef holds the per-session pre-turn hash recorded by
+	// the snapshot turn_start builtin and consumed by turn_end. Lazily
+	// allocated via snapshotStateOnce so a runtime that never sees a
+	// snapshot dispatch pays no cost.
+	snapshotStateOnce sync.Once
+	snapshotStateRef  *snapshotState
 
 	// transforms is the runtime's [MessageTransform] chain, applied to
 	// every LLM call in registration order. Populated by
@@ -409,6 +430,17 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 	// package-level functions registered via builtins.Register above.
 	if err := hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
 		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
+	}
+
+	// snapshot is registered here for the same reason as cache_response:
+	// it needs the runtime to resolve the live *session.Session by ID
+	// (so it can append StepSnapshot entries) and to read the shared
+	// shadow-git Manager.
+	if err := hooksRegistry.RegisterBuiltin(BuiltinSnapshotTurnStart, r.snapshotTurnStartBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinSnapshotTurnStart, err)
+	}
+	if err := hooksRegistry.RegisterBuiltin(BuiltinSnapshotTurnEnd, r.snapshotTurnEndBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinSnapshotTurnEnd, err)
 	}
 
 	// Both message transforms below capture the runtime closure to

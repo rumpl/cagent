@@ -74,6 +74,17 @@ func builtInSessionCommands() []Item {
 			},
 		},
 		{
+			ID:           "session.undo",
+			Label:        "Undo",
+			SlashCommand: "/undo",
+			Description:  "Undo the last file-changing AI step in the current session",
+			Category:     "Session",
+			Immediate:    true,
+			Execute: func(string) tea.Cmd {
+				return core.CmdHandler(messages.UndoSessionMsg{})
+			},
+		},
+		{
 			ID:           "session.clipboard",
 			Label:        "Copy",
 			SlashCommand: "/copy",

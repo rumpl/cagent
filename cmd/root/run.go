@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker-agent/pkg/profiling"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/snapshot"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tui"
@@ -360,10 +361,12 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 	}
 
 	localRt, err := runtime.New(t,
-		runtime.WithSessionStore(sessStore),
-		runtime.WithCurrentAgent(agentName),
-		runtime.WithTracer(otel.Tracer(AppName)),
-		runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+		append(snapshotManagerOpts(),
+			runtime.WithSessionStore(sessStore),
+			runtime.WithCurrentAgent(agentName),
+			runtime.WithTracer(otel.Tracer(AppName)),
+			runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+		)...,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating runtime: %w", err)
@@ -426,6 +429,20 @@ func (f *runExecFlags) handleExecMode(ctx context.Context, out *cli.Printer, rt 
 		return RuntimeError{Err: cliErr.Err}
 	}
 	return err
+}
+
+// snapshotManagerOpts returns the runtime opts that wire the shadow-git
+// snapshot manager when snapshots are enabled in the user's global
+// config (the default). Returns an empty slice when the user has
+// explicitly disabled snapshots so the runtime stays free of any
+// shadow-git state.
+func snapshotManagerOpts() []runtime.Opt {
+	if !userconfig.Get().GetSnapshots() {
+		return nil
+	}
+	return []runtime.Opt{
+		runtime.WithSnapshotManager(snapshot.NewManager(filepath.Join(paths.GetDataDir(), "snapshot"))),
+	}
 }
 
 func readInitialMessage(args []string) (*string, error) {
@@ -552,10 +569,12 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 
 		// Create the local runtime
 		localRt, err := runtime.New(t,
-			runtime.WithSessionStore(sessStore),
-			runtime.WithCurrentAgent(agt.Name()),
-			runtime.WithTracer(otel.Tracer(AppName)),
-			runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+			append(snapshotManagerOpts(),
+				runtime.WithSessionStore(sessStore),
+				runtime.WithCurrentAgent(agt.Name()),
+				runtime.WithTracer(otel.Tracer(AppName)),
+				runtime.WithModelSwitcherConfig(modelSwitcherCfg),
+			)...,
 		)
 		if err != nil {
 			return nil, nil, nil, err

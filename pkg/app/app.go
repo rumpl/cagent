@@ -818,6 +818,24 @@ func (a *App) SupportsModelSwitching() bool {
 	return ok
 }
 
+// SupportsUndo returns true if the runtime supports snapshot-based undo.
+func (a *App) SupportsUndo() bool {
+	undoer, ok := a.runtime.(runtime.SnapshotUndoer)
+	return ok && undoer.SupportsUndo()
+}
+
+// UndoLastStep reverts the latest file-changing snapshot step for the current session.
+func (a *App) UndoLastStep(ctx context.Context) (*runtime.UndoResult, error) {
+	if a.session == nil {
+		return nil, errors.New("no active session")
+	}
+	undoer, ok := a.runtime.(runtime.SnapshotUndoer)
+	if !ok || !undoer.SupportsUndo() {
+		return nil, runtime.ErrUndoNotSupported
+	}
+	return undoer.UndoLastStep(ctx, a.session)
+}
+
 // ShouldExitAfterFirstResponse returns true if the app is configured to exit
 // after the first assistant response completes.
 func (a *App) ShouldExitAfterFirstResponse() bool {

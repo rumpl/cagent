@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/browser"
 	"github.com/docker/docker-agent/pkg/evaluation"
+	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -225,6 +226,53 @@ func (m *appModel) handleExportSession(filename string) (tea.Model, tea.Cmd) {
 
 func (m *appModel) handleCompactSession(additionalPrompt string) (tea.Model, tea.Cmd) {
 	return m, m.chatPage.CompactSession(additionalPrompt)
+}
+
+func formatUndoSuccessMessage(result *runtime.UndoResult) string {
+	if result == nil || len(result.Files) == 0 {
+		return "Undid the last file-changing step."
+	}
+
+	preview := result.Files
+	if len(preview) > 3 {
+		preview = preview[:3]
+	}
+
+	message := fmt.Sprintf("Undid the last file-changing step (%d file", len(result.Files))
+	if len(result.Files) == 1 {
+		message += "): "
+	} else {
+		message += "s): "
+	}
+	message += strings.Join(preview, ", ")
+	if len(result.Files) > len(preview) {
+		message += "…"
+	}
+	return message
+}
+
+func (m *appModel) handleUndoSession() (tea.Model, tea.Cmd) {
+	if m.chatPage.IsWorking() {
+		return m, notification.WarningCmd("Wait for the current response to finish before undoing changes.")
+	}
+
+	result, err := m.application.UndoLastStep(context.Background())
+	if err != nil {
+		switch {
+		case errors.Is(err, runtime.ErrNothingToUndo):
+			return m, notification.InfoCmd("Nothing to undo.")
+		case errors.Is(err, runtime.ErrUndoOutOfSync):
+			return m, notification.WarningCmd("Cannot undo because the working tree no longer matches the last recorded session snapshot.")
+		case errors.Is(err, runtime.ErrUndoNoWorkingDir):
+			return m, notification.WarningCmd("Undo requires a session working directory.")
+		case errors.Is(err, runtime.ErrUndoNotSupported):
+			return m, notification.InfoCmd("Undo is not supported by the current runtime.")
+		default:
+			return m, notification.ErrorCmd(fmt.Sprintf("Failed to undo last step: %v", err))
+		}
+	}
+
+	return m, notification.SuccessCmd(formatUndoSuccessMessage(result))
 }
 
 func (m *appModel) handleCopySessionToClipboard() (tea.Model, tea.Cmd) {

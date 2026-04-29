@@ -27,6 +27,7 @@ var eventSpecs = []EventSpec{
 	{Type: EventSessionStart, StdoutPolicy: StdoutAdditionalContext},
 	{Type: EventUserPromptSubmit, StdoutPolicy: StdoutAdditionalContext},
 	{Type: EventTurnStart, StdoutPolicy: StdoutAdditionalContext},
+	{Type: EventTurnEnd},
 	{Type: EventBeforeLLMCall},
 	{Type: EventAfterLLMCall},
 	{Type: EventSessionEnd},

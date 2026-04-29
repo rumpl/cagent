@@ -49,6 +49,13 @@ const (
 	// EventTurnStart fires at the start of every agent turn (each model
 	// call). AdditionalContext is injected transiently and never persisted.
 	EventTurnStart EventType = "turn_start"
+	// EventTurnEnd fires at the end of every agent turn, after the model
+	// call returned and any tool calls in this iteration have finished
+	// executing. Pairs with [EventTurnStart] for hooks that need to bracket
+	// the full turn (e.g. filesystem snapshots that capture state changes
+	// produced by the turn's tool calls). Observational; output is ignored
+	// other than [Output.SystemMessage].
+	EventTurnEnd EventType = "turn_end"
 	// EventBeforeLLMCall fires immediately before each model call.
 	// Returning decision="block" (or continue=false / exit code 2)
 	// stops the run loop before the model is invoked — useful for hard

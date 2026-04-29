@@ -1703,6 +1703,14 @@ type HooksConfig struct {
 	// turn instead of bloating the message history on every resume.
 	TurnStart []HookDefinition `json:"turn_start,omitempty" yaml:"turn_start,omitempty"`
 
+	// TurnEnd hooks run at the end of every agent turn, after the model
+	// call returned and any tool calls in this iteration have finished
+	// executing. Pairs with TurnStart for hooks that need to bracket a
+	// full turn (e.g. filesystem snapshots that capture state changes
+	// produced by the turn's tool calls). Observational; output is
+	// ignored other than SystemMessage.
+	TurnEnd []HookDefinition `json:"turn_end,omitempty" yaml:"turn_end,omitempty"`
+
 	// BeforeLLMCall hooks run just before each model call (after
 	// turn_start). Use this for observability, cost guardrails, or
 	// auditing without contributing system messages — turn_start is the
@@ -1797,6 +1805,7 @@ func (h *HooksConfig) IsEmpty() bool {
 		len(h.SessionStart) == 0 &&
 		len(h.UserPromptSubmit) == 0 &&
 		len(h.TurnStart) == 0 &&
+		len(h.TurnEnd) == 0 &&
 		len(h.BeforeLLMCall) == 0 &&
 		len(h.AfterLLMCall) == 0 &&
 		len(h.SessionEnd) == 0 &&
@@ -1948,6 +1957,13 @@ func (h *HooksConfig) validate() error {
 	// Validate TurnStart hooks
 	for i, hook := range h.TurnStart {
 		if err := hook.validate("turn_start", i); err != nil {
+			return err
+		}
+	}
+
+	// Validate TurnEnd hooks
+	for i, hook := range h.TurnEnd {
+		if err := hook.validate("turn_end", i); err != nil {
 			return err
 		}
 	}

@@ -41,6 +41,9 @@ type (
 	// CompactSessionMsg generates a summary and compacts session history.
 	CompactSessionMsg struct{ AdditionalPrompt string }
 
+	// UndoSessionMsg reverts the latest file-changing snapshot step.
+	UndoSessionMsg struct{}
+
 	// CopySessionToClipboardMsg copies the entire conversation to clipboard.
 	CopySessionToClipboardMsg struct{}
 

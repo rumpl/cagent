@@ -70,9 +70,22 @@ func (si *Item) IsSubSession() bool {
 	return si.SubSession != nil
 }
 
+// StepSnapshot stores shadow-git snapshot metadata for a single LLM step.
+// BeforeHash is captured before the model turn starts, AfterHash after the step
+// finishes executing tools, and Files lists the worktree paths changed during
+// the step.
+type StepSnapshot struct {
+	AgentName       string   `json:"agent_name,omitempty"`
+	BeforeHash      string   `json:"before_hash,omitempty"`
+	AfterHash       string   `json:"after_hash,omitempty"`
+	Files           []string `json:"files,omitempty"`
+	MessagePosition int      `json:"message_position,omitempty"`
+	CreatedAt       string   `json:"created_at,omitempty"`
+}
+
 // Session represents the agent's state including conversation history and variables
 type Session struct {
-	// mu protects Messages from concurrent read/write access.
+	// mu protects session items and snapshot steps from concurrent read/write access.
 	mu sync.RWMutex `json:"-"`
 
 	// ID is the unique identifier for the session
@@ -89,6 +102,10 @@ type Session struct {
 
 	// Messages holds the conversation history (messages and sub-sessions)
 	Messages []Item `json:"messages"`
+
+	// StepSnapshots stores before/after shadow-git snapshot metadata for each
+	// LLM step in this session. These entries are not sent back to the model.
+	StepSnapshots []StepSnapshot `json:"step_snapshots,omitempty"`
 
 	// CreatedAt is the time the session was created
 	CreatedAt time.Time `json:"created_at"`
@@ -331,6 +348,20 @@ func (e *EvalCriteria) UnmarshalJSON(data []byte) error {
 // cloneMessage returns a deep copy of a session Message.
 // It copies the inner chat.Message's slice and pointer fields so that the
 // returned value shares no mutable state with the original.
+func cloneStepSnapshots(src []StepSnapshot) []StepSnapshot {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make([]StepSnapshot, len(src))
+	for i, step := range src {
+		cloned[i] = step
+		if step.Files != nil {
+			cloned[i].Files = slices.Clone(step.Files)
+		}
+	}
+	return cloned
+}
+
 func cloneMessage(m *Message) *Message {
 	cp := *m
 	cp.Message = cloneChatMessage(m.Message)
@@ -406,6 +437,52 @@ func (s *Session) AddSubSession(subSession *Session) {
 	s.mu.Lock()
 	s.Messages = append(s.Messages, NewSubSessionItem(subSession))
 	s.mu.Unlock()
+}
+
+// AddStepSnapshot appends snapshot metadata for a completed agent turn.
+func (s *Session) AddStepSnapshot(step StepSnapshot) {
+	s.mu.Lock()
+	s.StepSnapshots = append(s.StepSnapshots, step)
+	s.mu.Unlock()
+}
+
+// GetStepSnapshots returns a deep copy of the recorded step snapshots.
+func (s *Session) GetStepSnapshots() []StepSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneStepSnapshots(s.StepSnapshots)
+}
+
+// GetAllStepSnapshots returns snapshot steps from this session and nested
+// sub-sessions in conversation order.
+func (s *Session) GetAllStepSnapshots() []StepSnapshot {
+	s.mu.RLock()
+	items := make([]Item, len(s.Messages))
+	copy(items, s.Messages)
+	steps := cloneStepSnapshots(s.StepSnapshots)
+	s.mu.RUnlock()
+
+	stepsByPos := make(map[int][]StepSnapshot)
+	var tail []StepSnapshot
+	for _, step := range steps {
+		if step.MessagePosition >= 0 && step.MessagePosition < len(items) {
+			stepsByPos[step.MessagePosition] = append(stepsByPos[step.MessagePosition], step)
+		} else {
+			tail = append(tail, step)
+		}
+	}
+
+	var all []StepSnapshot
+	for i, item := range items {
+		if posSteps := stepsByPos[i]; len(posSteps) > 0 {
+			all = append(all, posSteps...)
+		}
+		if item.IsSubSession() {
+			all = append(all, item.SubSession.GetAllStepSnapshots()...)
+		}
+	}
+	all = append(all, tail...)
+	return all
 }
 
 // Duration calculates the duration of the session from message timestamps.
@@ -603,6 +680,13 @@ func WithTitle(title string) Opt {
 func WithMessages(messages []Item) Opt {
 	return func(s *Session) {
 		s.Messages = messages
+	}
+}
+
+// WithStepSnapshots seeds the session with the given snapshot steps.
+func WithStepSnapshots(steps []StepSnapshot) Opt {
+	return func(s *Session) {
+		s.StepSnapshots = cloneStepSnapshots(steps)
 	}
 }
 
