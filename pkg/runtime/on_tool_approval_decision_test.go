@@ -15,13 +15,15 @@ import (
 
 // runtimeWithRecordedToolApproval mirrors the runtimeWithRecorded*
 // helpers for the on_tool_approval_decision event. Same pattern: a
-// recording builtin on the runtime's private registry so the test
-// can assert on the dispatched verdict + source without exposing a
-// production Opt that would tempt users to inject builtins ad hoc.
+// recording builtin on an injected hooks registry so the test can
+// assert on the dispatched verdict + source.
 func runtimeWithRecordedToolApproval(t *testing.T) (*LocalRuntime, *recordingBuiltin) {
 	t.Helper()
 
 	rb := &recordingBuiltin{}
+	registry := hooks.NewRegistry()
+	require.NoError(t, registry.RegisterBuiltin("test_record_tool_approval", rb.hook))
+
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 	a := agent.New("root", "instructions",
 		agent.WithModel(prov),
@@ -34,11 +36,8 @@ func runtimeWithRecordedToolApproval(t *testing.T) (*LocalRuntime, *recordingBui
 	)
 	tm := team.New(team.WithAgents(a))
 
-	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}))
+	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}), WithHooksRegistry(registry))
 	require.NoError(t, err)
-
-	require.NoError(t, r.hooksRegistry.RegisterBuiltin("test_record_tool_approval", rb.hook))
-	r.buildHooksExecutors()
 
 	return r, rb
 }

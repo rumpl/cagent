@@ -157,17 +157,10 @@ type LocalRuntime struct {
 	modelSwitcherCfg     *ModelSwitcherConfig
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
-	// every Executor. It carries the runtime-owned builtin hooks
-	// (add_date, add_environment_info) registered once during
-	// NewLocalRuntime, so they're available to every agent without
-	// touching any process-wide state.
+	// every Executor. It carries the runtime-owned hook handlers and
+	// builtins registered during NewLocalRuntime, so they're available to
+	// every agent without touching any process-wide state.
 	hooksRegistry *hooks.Registry
-
-	// builtinsState holds per-session state for the stateful builtins
-	// (loop_detector, max_iterations). The runtime calls
-	// builtinsState.ClearSession from session_end so a long-running
-	// runtime serving many sessions stays bounded.
-	builtinsState *builtins.State
 
 	// hooksExecByAgent holds the per-agent [hooks.Executor], keyed by
 	// agent name. Built once in [NewLocalRuntime.buildHooksExecutors]
@@ -323,6 +316,17 @@ func WithEnv(env []string) Opt {
 	}
 }
 
+// WithHooksRegistry sets the hook registry used by the runtime. NewLocalRuntime
+// registers stock runtime hook handlers on it, including runtime-bound builtins
+// such as cache_response.
+func WithHooksRegistry(registry *hooks.Registry) Opt {
+	return func(r *LocalRuntime) {
+		if registry != nil {
+			r.hooksRegistry = registry
+		}
+	}
+}
+
 // WithClock replaces the runtime's clock. Defaults to time.Now. Tests that
 // need deterministic timestamps (assistant message CreatedAt, fallback
 // cooldown windows, tool-call latency) can pass a fake clock so assertions
@@ -400,13 +404,6 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		return nil, err
 	}
 
-	hooksRegistry := hooks.NewRegistry()
-	builtinsState, err := builtins.Register(hooksRegistry)
-	if err != nil {
-		return nil, fmt.Errorf("register builtin hooks: %w", err)
-	}
-	registerModelHook(hooksRegistry)
-
 	r := &LocalRuntime{
 		toolMap:                make(map[string]ToolHandlerFunc),
 		team:                   agents,
@@ -418,22 +415,12 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 		sessionCompaction:      true,
 		managedOAuth:           true,
 		sessionStore:           session.NewInMemorySessionStore(),
-		hooksRegistry:          hooksRegistry,
-		builtinsState:          builtinsState,
 		fallback:               newFallbackExecutor(),
 		now:                    time.Now,
 		telemetry:              defaultTelemetry{},
 		maxOverflowCompactions: defaultMaxOverflowCompactions,
 	}
 	r.bgAgents = agenttool.NewHandler(r)
-
-	// cache_response is registered here (not in pkg/hooks/builtins) because
-	// it needs to capture the runtime to resolve the agent referenced by
-	// Input.AgentName. The other builtins are stateless and can stay as
-	// package-level functions registered via builtins.Register above.
-	if err := hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
-		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
-	}
 
 	// stripUnsupportedModalitiesTransform captures the runtime closure to
 	// resolve the agent from Input.AgentName, so it lives here rather
@@ -456,6 +443,21 @@ func NewLocalRuntime(agents *team.Team, opts ...Opt) (*LocalRuntime, error) {
 
 	for _, opt := range opts {
 		opt(r)
+	}
+
+	if r.hooksRegistry == nil {
+		r.hooksRegistry = hooks.NewRegistry()
+	}
+	if err := builtins.Register(r.hooksRegistry); err != nil {
+		return nil, fmt.Errorf("register builtin hooks: %w", err)
+	}
+	r.hooksRegistry.Register(hooks.HookTypeModel, hooks.NewModelFactory(providerModelClient{}))
+
+	// cache_response is registered here (not in pkg/hooks/builtins) because
+	// it needs to capture the runtime to resolve the agent referenced by
+	// Input.AgentName.
+	if err := r.hooksRegistry.RegisterBuiltin(BuiltinCacheResponse, r.cacheResponseBuiltin); err != nil {
+		return nil, fmt.Errorf("register %q builtin: %w", BuiltinCacheResponse, err)
 	}
 
 	// Build the cooldown manager and wire the fallback executor's

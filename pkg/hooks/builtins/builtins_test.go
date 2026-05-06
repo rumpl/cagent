@@ -21,8 +21,7 @@ func TestRegisterInstallsAllBuiltins(t *testing.T) {
 	t.Parallel()
 
 	r := hooks.NewRegistry()
-	_, err := builtins.Register(r)
-	require.NoError(t, err)
+	require.NoError(t, builtins.Register(r))
 
 	for _, name := range []string{
 		builtins.AddDate,
@@ -175,8 +174,7 @@ func TestAddPromptFilesNoArgsIsNoop(t *testing.T) {
 func lookup(t *testing.T, name string) hooks.BuiltinFunc {
 	t.Helper()
 	r := hooks.NewRegistry()
-	_, err := builtins.Register(r)
-	require.NoError(t, err)
+	require.NoError(t, builtins.Register(r))
 	fn, ok := r.LookupBuiltin(name)
 	require.True(t, ok, "builtin %q must be registered", name)
 	require.NotNil(t, fn)

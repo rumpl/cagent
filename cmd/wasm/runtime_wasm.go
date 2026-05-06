@@ -161,7 +161,9 @@ func buildRuntime(ctx context.Context, cfg *latest.Config, env environment.Provi
 
 			// Build a hook executor for this agent.
 			registry := hooks.NewRegistry()
-			builtins.Register(registry)
+			if err := builtins.Register(registry); err != nil {
+				return nil, fmt.Errorf("agent %q: registering builtin hooks: %w", agentCfg.Name, err)
+			}
 			hookExec := hooks.NewExecutorWithRegistry(agentCfg.Hooks, "", nil, registry)
 			rt.hookExec[agentCfg.Name] = hookExec
 		}

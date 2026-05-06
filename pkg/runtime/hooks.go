@@ -188,15 +188,12 @@ func contextMessages(result *hooks.Result) []chat.Message {
 	}}
 }
 
-// executeSessionEndHooks fires session_end when the run loop exits
-// and clears any per-session state held by stateful builtins so a
-// long-running runtime stays bounded.
+// executeSessionEndHooks fires session_end when the run loop exits.
 func (r *LocalRuntime) executeSessionEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent) {
 	r.dispatchHook(ctx, a, hooks.EventSessionEnd, &hooks.Input{
 		SessionID: sess.ID,
 		Reason:    "stream_ended",
 	}, nil)
-	r.builtinsState.ClearSession(sess.ID)
 }
 
 // executeStopHooks fires stop hooks when the model finishes responding,
@@ -348,6 +345,7 @@ func (r *LocalRuntime) executeBeforeLLMCallHooks(
 	sess *session.Session,
 	a *agent.Agent,
 	modelID string,
+	modelCallNumber int,
 	messages []chat.Message,
 ) (stop bool, message string, rewritten []chat.Message) {
 	exec := r.hooksExec(a)
@@ -358,10 +356,11 @@ func (r *LocalRuntime) executeBeforeLLMCallHooks(
 	// actually wired — dispatchHook short-circuits before then, but the
 	// JSON-encoded copy of `messages` would still be paid here.
 	result := r.dispatchHook(ctx, a, hooks.EventBeforeLLMCall, &hooks.Input{
-		SessionID: sess.ID,
-		AgentName: a.Name(),
-		ModelID:   modelID,
-		Messages:  messages,
+		SessionID:       sess.ID,
+		AgentName:       a.Name(),
+		ModelID:         modelID,
+		ModelCallNumber: modelCallNumber,
+		Messages:        messages,
 	}, nil)
 	if result == nil {
 		return false, "", nil

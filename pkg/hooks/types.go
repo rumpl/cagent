@@ -185,6 +185,12 @@ type Input struct {
 	// model-call-scoped.
 	ModelID string `json:"model_id,omitempty"`
 
+	// ModelCallNumber is the 1-based model-call count for the current
+	// runtime stream. Populated for before_llm_call so stateless hooks
+	// can enforce budgets such as max_iterations without keeping their
+	// own per-session counters.
+	ModelCallNumber int `json:"model_call_number,omitempty"`
+
 	// LastUserMessage is the text content of the latest user message in
 	// the session at dispatch time. Populated for events that respond to
 	// a user turn (stop, after_llm_call). Empty for events that aren't

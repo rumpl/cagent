@@ -13,13 +13,15 @@ import (
 
 // runtimeWithRecordedSessionResume mirrors runtimeWithRecordedAgentSwitch
 // for the on_session_resume event. Same pattern: register a recording
-// builtin on the runtime's private registry post-construction so the
-// test can assert on dispatched input without exposing a runtime
-// option that production callers shouldn't reach for.
+// builtin on an injected hooks registry so the test can assert on
+// dispatched input.
 func runtimeWithRecordedSessionResume(t *testing.T) (*LocalRuntime, *recordingBuiltin) {
 	t.Helper()
 
 	rb := &recordingBuiltin{}
+	registry := hooks.NewRegistry()
+	require.NoError(t, registry.RegisterBuiltin("test_record_session_resume", rb.hook))
+
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 	a := agent.New("root", "instructions",
 		agent.WithModel(prov),
@@ -32,11 +34,8 @@ func runtimeWithRecordedSessionResume(t *testing.T) (*LocalRuntime, *recordingBu
 	)
 	tm := team.New(team.WithAgents(a))
 
-	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}))
+	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}), WithHooksRegistry(registry))
 	require.NoError(t, err)
-
-	require.NoError(t, r.hooksRegistry.RegisterBuiltin("test_record_session_resume", rb.hook))
-	r.buildHooksExecutors()
 
 	return r, rb
 }

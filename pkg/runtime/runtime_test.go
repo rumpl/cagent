@@ -3176,10 +3176,12 @@ func TestPostToolHookReceivesToolResult(t *testing.T) {
 		}),
 	)
 	tm := team.New(team.WithAgents(root))
-	rt, err := NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := NewLocalRuntime(tm,
+		WithSessionCompaction(false),
+		WithModelStore(mockModelStore{}),
+		WithHooksRegistry(registry),
+	)
 	require.NoError(t, err)
-	rt.hooksRegistry = registry
-	rt.buildHooksExecutors()
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	calls := []tools.ToolCall{{
@@ -3228,10 +3230,12 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 		}),
 	)
 	tm := team.New(team.WithAgents(root))
-	rt, err := NewLocalRuntime(tm, WithSessionCompaction(false), WithModelStore(mockModelStore{}))
+	rt, err := NewLocalRuntime(tm,
+		WithSessionCompaction(false),
+		WithModelStore(mockModelStore{}),
+		WithHooksRegistry(registry),
+	)
 	require.NoError(t, err)
-	rt.hooksRegistry = registry
-	rt.buildHooksExecutors()
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	calls := []tools.ToolCall{{

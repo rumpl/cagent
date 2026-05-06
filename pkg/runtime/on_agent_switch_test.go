@@ -42,15 +42,18 @@ func (rb *recordingBuiltin) snapshot() []*hooks.Input {
 	return out
 }
 
-// runtimeWithRecordedAgentSwitch wires a recording builtin onto the
-// runtime's private hook registry, then registers an on_agent_switch
-// entry on the agent that points at it. This is the most direct way
-// to assert on dispatched input from a runtime test: the builtin
-// system already does the type validation we'd otherwise duplicate.
+// runtimeWithRecordedAgentSwitch wires a recording builtin through an
+// injected hooks registry, then registers an on_agent_switch entry on
+// the agent that points at it. This is the most direct way to assert on
+// dispatched input from a runtime test: the builtin system already does
+// the type validation we'd otherwise duplicate.
 func runtimeWithRecordedAgentSwitch(t *testing.T, agentName string, opts ...agent.Opt) (*LocalRuntime, *recordingBuiltin) {
 	t.Helper()
 
 	rb := &recordingBuiltin{}
+	registry := hooks.NewRegistry()
+	require.NoError(t, registry.RegisterBuiltin("test_record_agent_switch", rb.hook))
+
 	prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 	allOpts := append([]agent.Opt{
 		agent.WithModel(prov),
@@ -64,15 +67,8 @@ func runtimeWithRecordedAgentSwitch(t *testing.T, agentName string, opts ...agen
 	a := agent.New(agentName, "instructions", allOpts...)
 	tm := team.New(team.WithAgents(a))
 
-	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}))
+	r, err := NewLocalRuntime(tm, WithModelStore(mockModelStore{}), WithHooksRegistry(registry))
 	require.NoError(t, err)
-
-	// Register our recording builtin on the runtime's private registry
-	// after construction, then rebuild the per-agent executors so they
-	// pick up the new builtin. This is the smallest test seam that
-	// avoids exporting a WithHooksRegistry option on LocalRuntime.
-	require.NoError(t, r.hooksRegistry.RegisterBuiltin("test_record_agent_switch", rb.hook))
-	r.buildHooksExecutors()
 
 	return r, rb
 }

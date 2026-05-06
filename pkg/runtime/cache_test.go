@@ -171,8 +171,8 @@ func TestCache_StorageIsAStopHookBuiltin(t *testing.T) {
 	require.True(t, exec.Has(hooks.EventStop), "cache-enabled agent must have a stop hook")
 
 	// The cache_response builtin must be registered on the runtime's
-	// private hooks registry; that's the seam that lets the closure
-	// reach back to a.Cache() through Input.AgentName.
+	// hooks registry; that's the seam that lets the closure reach
+	// back to a.Cache() through Input.AgentName.
 	fn, ok := rt.hooksRegistry.LookupBuiltin(BuiltinCacheResponse)
 	require.True(t, ok, "cache_response builtin must be registered")
 	require.NotNil(t, fn)

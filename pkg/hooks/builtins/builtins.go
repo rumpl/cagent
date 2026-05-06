@@ -30,9 +30,8 @@
 //
 // turn_start builtins recompute every turn (date, git state).
 // session_start builtins run once per session for context that's
-// stable for its duration. max_iterations is stateful: its
-// per-session counter lives on the [State] returned by [Register];
-// the runtime clears it via [State.ClearSession] from session_end.
+// stable for its duration. max_iterations is stateless: it reads the
+// model-call number the runtime puts on the hook input.
 //
 // LLM-as-a-judge hooks are NOT shipped here: write `type: model` with
 // `schema: pre_tool_use_decision` instead — see
@@ -45,29 +44,9 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 )
 
-// State holds the per-runtime state of the stateful builtins.
-// It is returned by [Register] so callers can clear per-session
-// entries on session_end. Stateless builtins don't appear here.
-type State struct {
-	maxIterations *maxIterationsBuiltin
-}
-
-// ClearSession drops per-session state from every stateful builtin.
-// A nil receiver is a no-op.
-func (s *State) ClearSession(sessionID string) {
-	if s == nil || sessionID == "" {
-		return
-	}
-	s.maxIterations.clearSession(sessionID)
-}
-
-// Register installs the stock builtin hooks on r and returns a [State]
-// handle the caller must use to clear per-session state on session_end.
-func Register(r *hooks.Registry) (*State, error) {
-	state := &State{
-		maxIterations: newMaxIterations(),
-	}
-	if err := errors.Join(
+// Register installs the stock builtin hooks on r.
+func Register(r *hooks.Registry) error {
+	return errors.Join(
 		r.RegisterBuiltin(AddDate, addDate),
 		r.RegisterBuiltin(AddEnvironmentInfo, addEnvironmentInfo),
 		r.RegisterBuiltin(AddPromptFiles, addPromptFiles),
@@ -76,12 +55,9 @@ func Register(r *hooks.Registry) (*State, error) {
 		r.RegisterBuiltin(AddDirectoryListing, addDirectoryListing),
 		r.RegisterBuiltin(AddUserInfo, addUserInfo),
 		r.RegisterBuiltin(AddRecentCommits, addRecentCommits),
-		r.RegisterBuiltin(MaxIterations, state.maxIterations.hook),
+		r.RegisterBuiltin(MaxIterations, maxIterations),
 		r.RegisterBuiltin(RedactSecrets, redactSecrets),
-	); err != nil {
-		return nil, err
-	}
-	return state, nil
+	)
 }
 
 // AgentDefaults captures the agent-level flags that map onto stock

@@ -76,11 +76,9 @@ func hasEventOfType[E Event](evs []Event) bool {
 // per-decision tests below. Permissions can be supplied to test the
 // interaction between deterministic rules and the hook verdict.
 //
-// We construct the runtime first (so we have access to its private
-// registry), register the verdict builtin on it, and only then exercise
-// the agent — the hooks Executor is built lazily on first use, so by
-// the time the matcher resolves "command" against the registry, our
-// builtin is there.
+// We construct the runtime first, register the verdict builtin on its
+// registry, and only then exercise the agent. Builtin lookup happens
+// at dispatch time, so the pre-built executor sees our builtin.
 func makeJudgedRuntime(
 	t *testing.T,
 	verdict hooks.Decision,

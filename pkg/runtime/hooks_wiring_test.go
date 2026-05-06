@@ -24,7 +24,7 @@ import (
 // The behavior of each builtin (what it puts in AdditionalContext) is
 // covered by pkg/hooks/builtins; this test only asserts the wiring,
 // using a smoke Dispatch to confirm that the registered builtin name
-// actually resolves on the runtime's private registry. That smoke
+// actually resolves through the runtime's hooks registry. That smoke
 // check catches mismatches between the constants used here and those
 // in the builtins package.
 func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
@@ -98,7 +98,7 @@ func TestHooksExecWiresAgentFlagsToBuiltins(t *testing.T) {
 				"session_start activation must match flags")
 
 			// Smoke Dispatch: confirms the builtin name registered by
-			// hooksExec actually resolves on the runtime's private
+			// hooksExec actually resolves through the runtime's hooks
 			// registry. This catches mismatches between the constants used
 			// in runtime.go and those in pkg/hooks/builtins.
 			if tc.wantTurnStart {

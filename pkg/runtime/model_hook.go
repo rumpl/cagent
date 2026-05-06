@@ -10,12 +10,11 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
-	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
-// providerModelClient is the runtime's [hooks.ModelClient]. It builds a
+// providerModelClient is the runtime's model hook client. It builds a
 // fresh [provider.Provider] per call from the model spec and a default
 // environment, then streams the assistant's reply.
 //
@@ -75,11 +74,4 @@ func (providerModelClient) Ask(
 		}
 	}
 	return sb.String(), nil
-}
-
-// registerModelHook installs the [hooks.HookTypeModel] factory on r
-// using the runtime's default [hooks.ModelClient]. It is called once
-// from [NewLocalRuntime] alongside the builtins.
-func registerModelHook(r *hooks.Registry) {
-	r.Register(hooks.HookTypeModel, hooks.NewModelFactory(providerModelClient{}))
 }
