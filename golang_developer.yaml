@@ -47,7 +47,7 @@ models:
 
 agents:
   root:
-    model: gpt
+    model: sonnet
     description: Expert Golang developer specializing in the docker agent multi-agent AI system architecture
     instruction: |
       <golang_developer>

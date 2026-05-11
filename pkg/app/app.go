@@ -670,6 +670,28 @@ func (a *App) reEmitStartupInfo(ctx context.Context) {
 	}()
 }
 
+// InjectInput delivers a user message to the App as if the user had typed it
+// in the editor and pressed Enter. The message is emitted onto the App's
+// event bus as a [messages.SendMsg]; the TUI receives it via its subscription
+// and routes it through the normal user-input path.
+//
+// Used by remote-control bridges (e.g. cloudbridge) to forward prompts
+// received from a network peer into the running session. Non-blocking: if
+// the events channel is full, the prompt is dropped and a warning is logged
+// — callers should not rely on synchronous acceptance.
+func (a *App) InjectInput(content string) {
+	if a == nil || content == "" {
+		return
+	}
+	msg := messages.SendMsg{Content: content}
+	select {
+	case a.events <- msg:
+	default:
+		slog.Warn("App.InjectInput: events channel full, dropping remote prompt",
+			"session_id", a.session.ID, "content_len", len(content))
+	}
+}
+
 func (a *App) Session() *session.Session {
 	return a.session
 }

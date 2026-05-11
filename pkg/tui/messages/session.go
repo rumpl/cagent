@@ -100,4 +100,14 @@ type (
 
 	// SendAttachmentMsg is a message for the first message with an attachment.
 	SendAttachmentMsg struct{ Content *session.Message }
+
+	// RemoteControlMsg toggles cloud-side remote control for the current
+	// session. Emitted by the /remote-control slash command and handled by
+	// the chat page, which has the App reference needed to wire the
+	// prompt-injection callback.
+	RemoteControlMsg struct {
+		// Enable true => activate (register on AP, replay history, accept
+		// remote prompts). false => deactivate.
+		Enable bool
+	}
 )

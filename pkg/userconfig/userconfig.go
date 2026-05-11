@@ -112,6 +112,22 @@ func (s *Settings) SnapshotsEnabled() bool {
 	return s != nil && s.Snapshot != nil && *s.Snapshot
 }
 
+// CloudConfig configures the optional Agentic Platform bridge.
+//
+// When Enabled is true and credentials are present under
+// ~/.config/cagent/credentials.json, docker-agent mirrors session lifecycle
+// events to AP and long-polls AP for remote prompts addressed to local
+// sessions on this host.
+type CloudConfig struct {
+	// Enabled toggles the AP bridge. Defaults to true when the block is
+	// omitted entirely; set this to false to disable the bridge while keeping
+	// the credentials file on disk.
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Endpoint overrides the AP base URL. Empty falls back to the URL stored
+	// in credentials.json (set at login time).
+	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
 // CredentialHelper contains configuration for a credential helper command
 // that retrieves Docker credentials (DOCKER_TOKEN) from an external source.
 type CredentialHelper struct {
@@ -143,6 +159,8 @@ type Config struct {
 	Settings *Settings `yaml:"settings,omitempty"`
 	// CredentialHelper configures an external command to retrieve Docker credentials
 	CredentialHelper *CredentialHelper `yaml:"credential_helper,omitempty"`
+	// Cloud configures the Agentic Platform bridge.
+	Cloud *CloudConfig `yaml:"cloud,omitempty"`
 }
 
 // Path returns the path to the config file

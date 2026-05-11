@@ -336,6 +336,8 @@ func builtInSessionCommands() []Item {
 
 func builtInSettingsCommands() []Item {
 	return []Item{
+		cloudCommand(),
+		remoteControlCommand(),
 		{
 			ID:           "settings.split-diff",
 			Label:        "Split Diff",

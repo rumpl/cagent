@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/docker/docker-agent/pkg/cli"
+	"github.com/docker/docker-agent/pkg/cloudbridge"
 	"github.com/docker/docker-agent/pkg/config"
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/server"
@@ -109,6 +110,12 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 	sessionStore, err := session.NewSQLiteSessionStore(sessionDB)
 	if err != nil {
 		return fmt.Errorf("creating session store: %w", err)
+	}
+	if cloudbridge.Enabled() {
+		sessionStore = cloudbridge.Wrap(sessionStore)
+		if perr := cloudbridge.StartPuller(ctx, nil); perr != nil {
+			slog.WarnContext(ctx, "cloudbridge: failed to start puller", "error", perr)
+		}
 	}
 	defer func() {
 		if err := sessionStore.Close(); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/cloudbridge"
 	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
@@ -368,6 +369,9 @@ func (p *chatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		slog.Debug(msg.Content)
 		return p.handleSendMsg(msg)
 
+	case msgtypes.RemoteControlMsg:
+		return p.handleRemoteControl(msg)
+
 	case msgtypes.ToggleHideToolResultsMsg:
 		// Forward to messages component to invalidate cache and trigger redraw
 		model, cmd := p.messages.Update(messages.ToggleHideToolResultsMsg{})
@@ -607,6 +611,34 @@ func (p *chatPage) cancelStream(showCancelMessage bool) tea.Cmd {
 
 // handleSendMsg handles incoming messages from the editor, either processing
 // them immediately or queuing them if the agent is busy.
+// handleRemoteControl toggles cloud mirroring for the current session.
+// Emitted by the /remote-control slash command, it wires up (or tears down)
+// the cloudbridge prompt handler for the App and flips the per-session
+// activation flag on the MirrorStore so subsequent operations are mirrored.
+func (p *chatPage) handleRemoteControl(msg msgtypes.RemoteControlMsg) (layout.Model, tea.Cmd) {
+	sess := p.app.Session()
+	if sess == nil || sess.ID == "" {
+		return p, tea.Printf("No active session.\n")
+	}
+	store, ok := p.app.SessionStore().(*cloudbridge.MirrorStore)
+	if !ok {
+		return p, tea.Printf("Cloud bridge is not active (sign in with /cloud first).\n")
+	}
+	if msg.Enable {
+		cloudbridge.RegisterPromptHandler(sess.ID, func(prompt, _ string) {
+			p.app.InjectInput(prompt)
+		})
+		if err := store.ActivateSession(context.Background(), sess.ID); err != nil {
+			cloudbridge.UnregisterPromptHandler(sess.ID)
+			return p, tea.Printf("✗ Failed to enable remote control: %v\n", err)
+		}
+		return p, tea.Printf("✓ Remote control enabled. The session is now visible at Agentic Platform; prompts sent there will arrive here.\n")
+	}
+	store.DeactivateSession(sess.ID)
+	cloudbridge.UnregisterPromptHandler(sess.ID)
+	return p, tea.Printf("✓ Remote control disabled. Future updates stay local.\n")
+}
+
 func (p *chatPage) handleSendMsg(msg msgtypes.SendMsg) (layout.Model, tea.Cmd) {
 	// Handle "exit", "quit", and ":q" as special keywords to quit the session
 	// immediately, equivalent to the /exit slash command.

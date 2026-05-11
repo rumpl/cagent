@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/cli"
+	"github.com/docker/docker-agent/pkg/cloudbridge"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
@@ -394,11 +395,25 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 		return nil, nil, fmt.Errorf("creating session store: %w", err)
 	}
 
+	// Wrap with the Agentic Platform mirror store when the user is signed in.
+	// Mirroring + remote-prompt pulling is best-effort and non-blocking.
+	var cloudMirror *cloudbridge.MirrorStore
+	if cloudbridge.Enabled() {
+		cloudMirror = cloudbridge.Wrap(sessStore)
+		sessStore = cloudMirror
+		if perr := cloudbridge.StartPuller(ctx, nil); perr != nil {
+			slog.WarnContext(ctx, "cloudbridge: failed to start puller", "error", perr)
+		}
+	}
+
 	rtOpts, ctrl, err := f.snapshotRuntimeOpts()
 	if err != nil {
 		return nil, nil, err
 	}
 	runtimeOpts := append(f.runtimeOpts(loadResult, &f.runConfig, sessStore, agentName), rtOpts...)
+	if cloudMirror != nil {
+		runtimeOpts = append(runtimeOpts, runtime.WithEventObserver(cloudbridge.NewEventObserver(cloudMirror)))
+	}
 	localRt, err := runtime.New(t, runtimeOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating runtime: %w", err)
@@ -563,6 +578,9 @@ func (f *runExecFlags) createSessionSpawner(agentSource config.Source, sessStore
 			return nil, nil, nil, err
 		}
 		runtimeOpts := append(f.runtimeOpts(loadResult, runConfigCopy, sessStore, agt.Name()), rtOpts...)
+		if ms, ok := sessStore.(*cloudbridge.MirrorStore); ok {
+			runtimeOpts = append(runtimeOpts, runtime.WithEventObserver(cloudbridge.NewEventObserver(ms)))
+		}
 		localRt, err := runtime.New(t, runtimeOpts...)
 		if err != nil {
 			return nil, nil, nil, err
