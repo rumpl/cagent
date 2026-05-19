@@ -333,7 +333,7 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 		go a.generateTitle(ctx, []string{message})
 	}
 
-	go func() { //nolint:gosec // background processing intentionally continues after request ctx ends; uses context.Background() only to forward StreamStoppedEvent
+	go func() {
 		if len(attachments) > 0 {
 			// Build a single text string with the user's message and inlined text files.
 			// Keeping everything in one text block ensures the model sees file content
@@ -372,25 +372,39 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, message string
 		} else {
 			a.session.AddMessage(session.UserMessage(message))
 		}
-		for event := range a.runtime.RunStream(ctx, a.session) {
-			// If context is cancelled, continue draining but don't forward events
-			// — except StreamStoppedEvent, which must always propagate so the
-			// supervisor can mark the session as no longer running.
-			if ctx.Err() != nil {
-				if _, ok := event.(*runtime.StreamStoppedEvent); ok {
-					a.sendEvent(context.Background(), event)
-				}
-				continue
-			}
-
-			// Clear titleGenerating flag when title is generated (from server for remote runtime)
-			if _, ok := event.(*runtime.SessionTitleEvent); ok {
-				a.titleGenerating.Store(false)
-			}
-
-			a.sendEvent(ctx, event)
-		}
+		a.forwardRuntimeEvents(ctx)
 	}()
+}
+
+// ResumePendingToolCalls continues a restored session whose tail contains
+// assistant tool calls that do not have tool responses yet.
+func (a *App) ResumePendingToolCalls(ctx context.Context, cancel context.CancelFunc) {
+	if a.session == nil || !a.session.HasPendingToolCalls() {
+		return
+	}
+	a.cancel = cancel
+	go a.forwardRuntimeEvents(ctx) //nolint:gosec // forwardRuntimeEvents must still surface StreamStopped after caller cancellation.
+}
+
+func (a *App) forwardRuntimeEvents(ctx context.Context) {
+	for event := range a.runtime.RunStream(ctx, a.session) {
+		// If context is cancelled, continue draining but don't forward events
+		// — except StreamStoppedEvent, which must always propagate so the
+		// supervisor can mark the session as no longer running.
+		if ctx.Err() != nil {
+			if _, ok := event.(*runtime.StreamStoppedEvent); ok {
+				a.sendEvent(context.Background(), event)
+			}
+			continue
+		}
+
+		// Clear titleGenerating flag when title is generated (from server for remote runtime)
+		if _, ok := event.(*runtime.SessionTitleEvent); ok {
+			a.titleGenerating.Store(false)
+		}
+
+		a.sendEvent(ctx, event)
+	}
 }
 
 // processFileAttachment reads a file from disk, classifies it, and either
@@ -520,26 +534,9 @@ func (a *App) RunWithMessage(ctx context.Context, cancel context.CancelFunc, msg
 		go a.generateTitle(ctx, []string{userMessage})
 	}
 
-	go func() { //nolint:gosec // background processing intentionally continues after request ctx ends; uses context.Background() only to forward StreamStoppedEvent
+	go func() {
 		a.session.AddMessage(msg)
-		for event := range a.runtime.RunStream(ctx, a.session) {
-			// If context is cancelled, continue draining but don't forward events
-			// — except StreamStoppedEvent, which must always propagate so the
-			// supervisor can mark the session as no longer running.
-			if ctx.Err() != nil {
-				if _, ok := event.(*runtime.StreamStoppedEvent); ok {
-					a.sendEvent(context.Background(), event)
-				}
-				continue
-			}
-
-			// Clear titleGenerating flag when title is generated (from server for remote runtime)
-			if _, ok := event.(*runtime.SessionTitleEvent); ok {
-				a.titleGenerating.Store(false)
-			}
-
-			a.sendEvent(ctx, event)
-		}
+		a.forwardRuntimeEvents(ctx)
 	}()
 }
 

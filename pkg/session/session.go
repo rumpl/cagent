@@ -715,6 +715,13 @@ func (s *Session) IsSubSession() bool {
 	return s.ParentID != ""
 }
 
+// PendingToolCall is a tool call from the tail of a session that does not
+// have a matching tool-response message yet.
+type PendingToolCall struct {
+	ToolCall       tools.ToolCall
+	ToolDefinition tools.Tool
+}
+
 // MessageCount returns the number of items that contain a message.
 func (s *Session) MessageCount() int {
 	s.mu.RLock()
@@ -727,6 +734,63 @@ func (s *Session) MessageCount() int {
 		}
 	}
 	return n
+}
+
+// PendingToolCalls returns unresolved tool calls from the latest assistant
+// tool-call turn, but only when that turn is still at the tail of the session.
+// If a user or assistant message has been appended after the tool-call turn,
+// the old calls are no longer resumable and this returns nil.
+func (s *Session) PendingToolCalls() []PendingToolCall {
+	items := s.snapshotItems()
+	if len(items) == 0 {
+		return nil
+	}
+
+	resultIDs := make(map[string]bool)
+	for i := range slices.Backward(items) {
+		item := items[i]
+		if !item.IsMessage() || item.Message == nil {
+			continue
+		}
+
+		msg := item.Message.Message
+		switch msg.Role {
+		case chat.MessageRoleTool:
+			if msg.ToolCallID != "" {
+				resultIDs[msg.ToolCallID] = true
+			}
+
+		case chat.MessageRoleAssistant:
+			if len(msg.ToolCalls) == 0 {
+				return nil
+			}
+
+			pending := make([]PendingToolCall, 0, len(msg.ToolCalls))
+			for idx, tc := range msg.ToolCalls {
+				if tc.ID != "" && resultIDs[tc.ID] {
+					continue
+				}
+
+				entry := PendingToolCall{ToolCall: tc}
+				if idx < len(msg.ToolDefinitions) {
+					entry.ToolDefinition = msg.ToolDefinitions[idx]
+				}
+				pending = append(pending, entry)
+			}
+			return pending
+
+		case chat.MessageRoleUser, chat.MessageRoleSystem:
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// HasPendingToolCalls reports whether PendingToolCalls would return at least
+// one unresolved tool call.
+func (s *Session) HasPendingToolCalls() bool {
+	return len(s.PendingToolCalls()) > 0
 }
 
 // TotalCost computes the total cost of a session by walking all messages,

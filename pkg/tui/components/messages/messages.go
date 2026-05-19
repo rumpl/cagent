@@ -1292,8 +1292,12 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 	}
 
 	// addStandaloneToolCall adds a tool call as a standalone message (not in a reasoning block)
-	addStandaloneToolCall := func(agentName string, tc tools.ToolCall, toolDef tools.Tool, toolResults map[string]string) {
-		toolMsg := types.ToolCallMessage(agentName, tc, toolDef, types.ToolStatusCompleted)
+	addStandaloneToolCall := func(agentName string, tc tools.ToolCall, toolDef tools.Tool, toolResults map[string]string, pendingToolCalls map[string]bool) {
+		status := types.ToolStatusCompleted
+		if pendingToolCalls[tc.ID] {
+			status = types.ToolStatusConfirmation
+		}
+		toolMsg := types.ToolCallMessage(agentName, tc, toolDef, status)
 		// Apply tool result if available
 		if result, ok := toolResults[tc.ID]; ok {
 			toolMsg.Content = strings.ReplaceAll(result, "\t", "    ")
@@ -1325,6 +1329,10 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 		if smsg.Message.Role == chat.MessageRoleTool && smsg.Message.ToolCallID != "" {
 			toolResults[smsg.Message.ToolCallID] = smsg.Message.Content
 		}
+	}
+	pendingToolCalls := make(map[string]bool)
+	for _, pending := range sess.PendingToolCalls() {
+		pendingToolCalls[pending.ToolCall.ID] = true
 	}
 
 	for pos, item := range sess.Messages {
@@ -1378,7 +1386,11 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 					}
 
 					if attachToReasoning {
-						toolMsg := types.ToolCallMessage(smsg.AgentName, tc, toolDef, types.ToolStatusCompleted)
+						status := types.ToolStatusCompleted
+						if pendingToolCalls[tc.ID] {
+							status = types.ToolStatusConfirmation
+						}
+						toolMsg := types.ToolCallMessage(smsg.AgentName, tc, toolDef, status)
 						reasoningBlock.AddToolCall(toolMsg)
 						if result, ok := toolResults[tc.ID]; ok {
 							reasoningBlock.UpdateToolResult(tc.ID, result, types.ToolStatusCompleted, nil)
@@ -1386,7 +1398,7 @@ func (m *model) LoadFromSession(sess *session.Session) tea.Cmd {
 						continue
 					}
 
-					addStandaloneToolCall(smsg.AgentName, tc, toolDef, toolResults)
+					addStandaloneToolCall(smsg.AgentName, tc, toolDef, toolResults, pendingToolCalls)
 				}
 			}
 		case chat.MessageRoleTool:

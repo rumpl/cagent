@@ -238,11 +238,11 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// signal here too: "a real user prompt is at the tail of the session".
 	if sess.SendUserMessage && len(messages) > 0 {
 		lastMsg := messages[len(messages)-1]
-		sink.Emit(UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, len(sess.Messages)-1))
-
-		// user_prompt_submit fires once per real user message, after
-		// session_start and before the first model call.
 		if lastMsg.Role == chat.MessageRoleUser {
+			sink.Emit(UserMessage(lastMsg.Content, sess.ID, lastMsg.MultiContent, len(sess.Messages)-1))
+
+			// user_prompt_submit fires once per real user message, after
+			// session_start and before the first model call.
 			stop, msg, ctxMsgs := r.executeUserPromptSubmitHooks(ctx, sess, a, lastMsg.Content, sink)
 			if stop {
 				slog.WarnContext(ctx, "user_prompt_submit hook signalled run termination",
@@ -263,6 +263,11 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	defer func() {
 		r.finalizeEventChannel(ctx, sess, streamReason, prevElicitationCh, events)
 	}()
+
+	if r.processPendingToolCalls(ctx, sess, a, agentTools, sessionSpan, ls, sink) == turnExit {
+		streamReason = ls.exitReason
+		return
+	}
 
 	// Response cache lookup. On a hit, replay the stored answer and
 	// skip the model entirely. The matching storage half is
@@ -433,6 +438,48 @@ type loopState struct {
 	sessionStartMsgs    []chat.Message
 	userPromptMsgs      []chat.Message
 	exitReason          string
+}
+
+func (r *LocalRuntime) processPendingToolCalls(
+	ctx context.Context,
+	sess *session.Session,
+	a *agent.Agent,
+	agentTools []tools.Tool,
+	sessionSpan trace.Span,
+	ls *loopState,
+	events EventSink,
+) turnControl {
+	pending := sess.PendingToolCalls()
+	if len(pending) == 0 {
+		return turnContinue
+	}
+
+	calls := make([]tools.ToolCall, len(pending))
+	for i, p := range pending {
+		calls[i] = p.ToolCall
+	}
+
+	slog.DebugContext(ctx, "Resuming pending tool calls from session", "agent", a.Name(), "session_id", sess.ID, "call_count", len(calls))
+
+	stopRun, stopMsg := r.processToolCalls(ctx, sess, calls, agentTools, events)
+	if ctx.Err() != nil {
+		return turnExit
+	}
+
+	r.reprobe(ctx, sess, a, agentTools, sessionSpan, events)
+
+	if stopRun {
+		slog.WarnContext(ctx, "post_tool_use hook signalled run termination while resuming pending tool calls",
+			"agent", a.Name(), "session_id", sess.ID, "reason", stopMsg)
+		r.emitHookDrivenShutdown(ctx, a, sess, stopMsg, events)
+		ls.exitReason = turnEndReasonHookBlocked
+		return turnExit
+	}
+
+	ls.toolModelOverride = toolexec.ResolveModelOverride(calls, agentTools)
+
+	r.drainAndEmitSteered(ctx, sess, events)
+	return turnContinue
 }
 
 // runTurn performs one iteration of the run-stream loop, from

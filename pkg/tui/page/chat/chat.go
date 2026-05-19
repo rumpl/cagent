@@ -305,6 +305,12 @@ func (p *chatPage) Init() tea.Cmd {
 		if len(sess.Messages) > 0 {
 			cmds = append(cmds, p.messages.LoadFromSession(sess))
 		}
+		if sess.HasPendingToolCalls() {
+			var ctx context.Context
+			ctx, p.msgCancel = context.WithCancel(context.Background())
+			p.app.ResumePendingToolCalls(ctx, p.msgCancel)
+			cmds = append(cmds, p.setWorking(true))
+		}
 	}
 
 	return tea.Batch(cmds...)
