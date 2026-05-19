@@ -43,10 +43,32 @@ func SSRFDialControl(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// NewSSRFSafeTransport returns a clone of [http.DefaultTransport] whose
-// dialer enforces [SSRFDialControl] on every connection. All other settings
-// — proxy, idle pool, HTTP/2, timeouts — are inherited so the transport
-// keeps up with future stdlib changes.
+var defaultTransportTemplate = cloneDefaultTransport()
+
+func cloneDefaultTransport() *http.Transport {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// NewSSRFSafeTransport returns an HTTP transport whose dialer enforces
+// [SSRFDialControl] on every connection.
+//
+// When [http.DefaultTransport] is the stdlib [*http.Transport], it is cloned so
+// proxy, idle-pool, HTTP/2, and timeout settings are inherited. If the process
+// has replaced the global default with a wrapper (for example otelhttp), this
+// falls back to a clone of the stdlib default captured at package init: the SSRF
+// check must be installed on a concrete transport dialer, and wrappers do not
+// expose one.
 //
 // Use this for outbound HTTP that may follow attacker-influenced URLs
 // (OpenAPI specs whose servers[] list is taken from the spec body,
@@ -54,7 +76,10 @@ func SSRFDialControl(_, address string, _ syscall.RawConn) error {
 // callers that require it must validate the request URL themselves
 // and/or supply a CheckRedirect on the surrounding *http.Client.
 func NewSSRFSafeTransport() *http.Transport {
-	t := http.DefaultTransport.(*http.Transport).Clone()
+	t := defaultTransportTemplate.Clone()
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = defaultTransport.Clone()
+	}
 	t.DialContext = (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

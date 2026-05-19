@@ -11,6 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type wrappedDefaultTransport struct {
+	base http.RoundTripper
+}
+
+func (w wrappedDefaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return w.base.RoundTrip(req)
+}
+
 func TestIsPublicIP(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +182,28 @@ func TestNewSSRFSafeTransport_RefusesPrivateIP(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestNewSSRFSafeTransport_DoesNotPanicWhenDefaultTransportWrapped(t *testing.T) {
+	originalDefaultTransport := http.DefaultTransport
+	http.DefaultTransport = wrappedDefaultTransport{base: originalDefaultTransport}
+	t.Cleanup(func() { http.DefaultTransport = originalDefaultTransport })
+
+	var transport *http.Transport
+	require.NotPanics(t, func() {
+		transport = NewSSRFSafeTransport()
+	})
+	require.NotNil(t, transport)
+
+	client := &http.Client{Transport: transport}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1/", http.NoBody)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-public address")
 }
 
 // TestIsPublicIP_IPv4MappedIPv6 is a regression test that pins Go's

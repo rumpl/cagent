@@ -17,6 +17,14 @@ import (
 	"github.com/docker/docker-agent/pkg/version"
 )
 
+type wrappedDefaultTransport struct {
+	base http.RoundTripper
+}
+
+func (w wrappedDefaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return w.base.RoundTrip(req)
+}
+
 // newFetchToolForTest constructs a FetchTool that bypasses SSRF dial-time
 // protection so tests can talk to httptest.NewServer (which binds to
 // 127.0.0.1). It is defined in a *_test.go file so it is not compiled
@@ -910,4 +918,24 @@ func TestFetch_AllowPrivateIPsRestoresLegacyBehaviour(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "internal service response",
 		"WithAllowPrivateIPs(true) must permit dialling 127.0.0.1")
+}
+
+func TestFetch_AllowPrivateIPsWithWrappedDefaultTransport(t *testing.T) {
+	originalDefaultTransport := http.DefaultTransport
+	http.DefaultTransport = wrappedDefaultTransport{base: originalDefaultTransport}
+	t.Cleanup(func() { http.DefaultTransport = originalDefaultTransport })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "internal service response")
+	}))
+	t.Cleanup(server.Close)
+
+	tool := New(WithAllowPrivateIPs(true))
+	result, err := tool.handler.CallTool(t.Context(), ToolArgs{
+		URLs:   []string{server.URL},
+		Format: "text",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "internal service response")
 }
