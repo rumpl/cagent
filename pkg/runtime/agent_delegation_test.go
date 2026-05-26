@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
+	"github.com/docker/docker-agent/pkg/team"
+	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
 
 func TestBuildTaskSystemMessage(t *testing.T) {
@@ -249,4 +252,100 @@ func TestSubSessionWithoutAttachedFilesOmitsBlock(t *testing.T) {
 	for _, m := range msgs {
 		assert.NotContains(t, m.Content, "<attached_files>")
 	}
+}
+
+// TestRunAgent_ResumeAfterIdleSteer verifies that send_message_background_agent
+// can wake an idle (completed) background task by calling the Resume closure
+// captured via RunParams.OnRuntimeReady. The first RunStream returns after a
+// single turn; a steer message is then enqueued and Resume is invoked,
+// causing a second RunStream that delivers the steered message to the model.
+func TestRunAgent_ResumeAfterIdleSteer(t *testing.T) {
+	t.Parallel()
+
+	// Two streams: the first turn produces a short "done" message and
+	// stops; the second turn (triggered by the steer + resume) produces
+	// "got steered" and stops.
+	stream1 := newStreamBuilder().
+		AddContent("done").
+		AddStopWithUsage(5, 3).
+		Build()
+	stream2 := newStreamBuilder().
+		AddContent("got steered").
+		AddStopWithUsage(5, 3).
+		Build()
+
+	prov := &messageRecordingProvider{
+		id:      "test/mock-model",
+		streams: []*mockStream{stream1, stream2},
+	}
+
+	worker := agent.New("worker", "You are the worker", agent.WithModel(prov))
+	root := agent.New("root", "You are the root", agent.WithModel(prov), agent.WithSubAgents(worker))
+	tm := team.New(team.WithAgents(root, worker))
+
+	rt, err := NewLocalRuntime(tm,
+		WithCurrentAgent("root"),
+		WithSessionCompaction(false),
+		WithModelStore(mockModelStore{}),
+	)
+	require.NoError(t, err)
+
+	parent := session.New(session.WithUserMessage("kick off"))
+
+	var (
+		mu         sync.Mutex
+		taskRt     agenttool.TaskRuntime
+		readyOnce  sync.Once
+		readyChan  = make(chan struct{})
+		collected  strings.Builder
+	)
+
+	result := rt.RunAgent(t.Context(), agenttool.RunParams{
+		AgentName:     "worker",
+		Task:          "do the thing",
+		ParentSession: parent,
+		OnContent: func(c string) {
+			mu.Lock()
+			collected.WriteString(c)
+			mu.Unlock()
+		},
+		OnRuntimeReady: func(rt agenttool.TaskRuntime) {
+			taskRt = rt
+			readyOnce.Do(func() { close(readyChan) })
+		},
+	})
+
+	require.Empty(t, result.ErrMsg, "first turn must complete cleanly")
+	assert.Equal(t, "done", result.Result, "first turn returns the model's last message")
+
+	// OnRuntimeReady must have fired during RunAgent.
+	select {
+	case <-readyChan:
+	default:
+		t.Fatal("OnRuntimeReady was not invoked")
+	}
+	require.NotNil(t, taskRt.Steerable, "Steerable must be set")
+	require.NotNil(t, taskRt.Resume, "Resume must be set")
+
+	// Simulate send_message_background_agent on an idle task: enqueue a
+	// steer message, then invoke Resume to re-drive the same sub-session.
+	require.NoError(t, taskRt.Steerable.Steer("please rewind"))
+
+	resumeResult := taskRt.Resume(t.Context())
+	require.Empty(t, resumeResult.ErrMsg, "resume must complete cleanly")
+	assert.Equal(t, "got steered", resumeResult.Result, "resume returns the second turn's last message")
+
+	// The second model call must have received the steered content.
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	require.GreaterOrEqual(t, len(prov.recordedMessages), 2, "model must be called at least twice")
+
+	var foundSteer bool
+	for _, m := range prov.recordedMessages[len(prov.recordedMessages)-1] {
+		if strings.Contains(m.Content, "please rewind") {
+			foundSteer = true
+			break
+		}
+	}
+	assert.True(t, foundSteer, "second model call must include the steered content")
 }

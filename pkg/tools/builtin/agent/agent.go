@@ -72,6 +72,16 @@ type Steerable interface {
 	Steer(content string) error
 }
 
+// TaskRuntime bundles the per-task control surface exposed to the
+// background agent handler. Steerable enqueues a message on the child
+// runtime's steer queue; Resume re-drives the child sub-session,
+// picking up any steer messages waiting at the top of runStreamLoop.
+// Both are populated by [Runner.RunAgent] via RunParams.OnRuntimeReady.
+type TaskRuntime struct {
+	Steerable Steerable
+	Resume    func(ctx context.Context) *RunResult
+}
+
 // RunParams holds the parameters for running a sub-agent.
 type RunParams struct {
 	AgentName      string
@@ -80,11 +90,13 @@ type RunParams struct {
 	ParentSession  *session.Session
 	OnContent      func(content string)
 	// OnRuntimeReady, when non-nil, is invoked by the runner with the
-	// child runtime once it has been constructed but before the run
-	// loop starts blocking. Background tasks use this to capture a
-	// per-task Steerable so send_message_background_agent can target
-	// the right task's queue.
-	OnRuntimeReady func(r Steerable)
+	// per-task control surface once the child runtime and sub-session
+	// have been constructed but before the run loop starts blocking.
+	// Background tasks use this to capture a per-task Steerable (so
+	// send_message_background_agent can target the right task's queue)
+	// and a Resume closure (so an idle, completed task can be woken
+	// for another turn).
+	OnRuntimeReady func(rt TaskRuntime)
 }
 
 // RunResult holds the outcome of a sub-agent execution.
@@ -144,6 +156,17 @@ type task struct {
 	// the child runtime; HandleSendMessage handles that race by
 	// returning a transient error.
 	runtime Steerable
+
+	// resume re-drives the child sub-session. send_message uses it to
+	// wake an idle (completed) task for another turn: enqueue the new
+	// message via runtime.Steer, then call resume in a fresh goroutine.
+	resume func(ctx context.Context) *RunResult
+
+	// ctx is the task-scoped context originally created by HandleRun.
+	// Held so resumeTask can drive a new RunStream under the same
+	// cancellation tree (stop_background_agent still works on resumed
+	// tasks).
+	ctx context.Context //nolint:containedctx // task lifecycle owns this context
 
 	// outputMu protects output, outputBytes, viewCount, and lastViewedOutputBytes.
 	outputMu              sync.RWMutex
@@ -334,6 +357,7 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 		taskDesc:  params.Task,
 		cancel:    cancel,
 		startTime: time.Now(),
+		ctx:       taskCtx,
 	}
 	t.storeStatus(taskRunning)
 	h.tasks.Store(taskID, t)
@@ -349,32 +373,50 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 			ExpectedOutput: params.ExpectedOutput,
 			ParentSession:  sess,
 			OnContent:      t.writeOutput,
-			OnRuntimeReady: func(r Steerable) { t.runtime = r },
+			OnRuntimeReady: func(rt TaskRuntime) {
+				t.runtime = rt.Steerable
+				t.resume = rt.Resume
+			},
 		})
 
-		if result.ErrMsg != "" {
-			t.errMsg = result.ErrMsg
-			t.storeStatus(taskFailed)
-			slog.DebugContext(ctx, "Background agent task failed", "task_id", taskID, "agent", params.Agent, "error", result.ErrMsg)
-			return
-		}
-
-		if taskCtx.Err() != nil && t.loadStatus() == taskRunning {
-			t.storeStatus(taskStopped)
-			slog.DebugContext(ctx, "Background agent task stopped", "task_id", taskID)
-			return
-		}
-
-		// Write result before CAS so readers who observe taskCompleted
-		// always see the populated result field.
-		t.result = result.Result
-		if t.casStatus(taskRunning, taskCompleted) {
-			slog.DebugContext(ctx, "Background agent task completed", "task_id", taskID, "agent", params.Agent)
-		}
+		h.finishTaskRun(ctx, t, taskCtx, result)
 	})
 
 	return tools.ResultSuccess(fmt.Sprintf("Background agent task started with ID: %s\nAgent: %s\nTask: %s",
 		taskID, params.Agent, params.Task)), nil
+}
+
+// finishTaskRun applies the terminal-state transition for a single
+// RunAgent or resume invocation. Shared between HandleRun's initial
+// goroutine and resumeTask so the bookkeeping stays consistent.
+func (h *Handler) finishTaskRun(ctx context.Context, t *task, taskCtx context.Context, result *RunResult) {
+	if result.ErrMsg != "" {
+		t.errMsg = result.ErrMsg
+		t.storeStatus(taskFailed)
+		slog.DebugContext(ctx, "Background agent task failed", "task_id", t.id, "agent", t.agentName, "error", result.ErrMsg)
+		return
+	}
+
+	if taskCtx.Err() != nil && t.loadStatus() == taskRunning {
+		t.storeStatus(taskStopped)
+		slog.DebugContext(ctx, "Background agent task stopped", "task_id", t.id)
+		return
+	}
+
+	// Write result before CAS so readers who observe taskCompleted
+	// always see the populated result field.
+	t.result = result.Result
+	if t.casStatus(taskRunning, taskCompleted) {
+		slog.DebugContext(ctx, "Background agent task completed", "task_id", t.id, "agent", t.agentName)
+	}
+}
+
+// resumeTask re-drives an idle (completed) task after a steer message
+// has been enqueued by HandleSendMessage. The caller must have already
+// CAS'd the task status from taskCompleted back to taskRunning.
+func (h *Handler) resumeTask(t *task) {
+	result := t.resume(t.ctx)
+	h.finishTaskRun(t.ctx, t, t.ctx, result)
 }
 
 // HandleList lists all background agent tasks.
@@ -419,10 +461,15 @@ func (h *Handler) HandleView(_ context.Context, _ *session.Session, toolCall too
 	return tools.ResultSuccess(t.formatView(status, elapsed)), nil
 }
 
-// HandleSendMessage sends a follow-up or steering message to a running
+// HandleSendMessage sends a follow-up or steering message to a
 // background agent task by enqueuing it on the task's dedicated runtime
-// steer queue. The message is injected into the agent loop at its next
-// natural steering point (between tool calls).
+// steer queue.
+//
+// When the task is still running, the message is injected into the
+// agent loop at its next natural steering point (between tool calls).
+// When the task has gone idle after completing its last turn, the
+// message is enqueued and a fresh goroutine re-drives the same
+// sub-session so the agent can act on it.
 func (h *Handler) HandleSendMessage(_ context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
 	var params SendMessageBackgroundAgentArgs
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
@@ -438,15 +485,43 @@ func (h *Handler) HandleSendMessage(_ context.Context, _ *session.Session, toolC
 	if !exists {
 		return tools.ResultError("task not found: " + params.TaskID), nil
 	}
-	if s := t.loadStatus(); s != taskRunning {
-		return tools.ResultError(fmt.Sprintf("task %s is not running (status: %s)", params.TaskID, s)), nil
+
+	switch t.loadStatus() {
+	case taskRunning:
+		if t.runtime == nil {
+			return tools.ResultError("task runtime not available yet"), nil
+		}
+		if err := t.runtime.Steer(params.Message); err != nil {
+			return tools.ResultError("failed to send message: " + err.Error()), nil
+		}
+
+	case taskCompleted:
+		if t.runtime == nil || t.resume == nil {
+			return tools.ResultError("task runtime not available"), nil
+		}
+		if !t.casStatus(taskCompleted, taskRunning) {
+			// Lost the race — another caller already transitioned the
+			// task. Re-read and dispatch accordingly.
+			if s := t.loadStatus(); s == taskRunning {
+				if err := t.runtime.Steer(params.Message); err != nil {
+					return tools.ResultError("failed to send message: " + err.Error()), nil
+				}
+				return tools.ResultSuccess(fmt.Sprintf("Message sent to background agent task %s.", params.TaskID)), nil
+			}
+			return tools.ResultError(fmt.Sprintf("task %s cannot receive messages (status: %s)", params.TaskID, t.loadStatus())), nil
+		}
+		if err := t.runtime.Steer(params.Message); err != nil {
+			// Roll back the status transition so the task stays
+			// observable as completed if we can't deliver the message.
+			t.storeStatus(taskCompleted)
+			return tools.ResultError("failed to send message: " + err.Error()), nil
+		}
+		h.wg.Go(func() { h.resumeTask(t) })
+
+	default:
+		return tools.ResultError(fmt.Sprintf("task %s cannot receive messages (status: %s)", params.TaskID, t.loadStatus())), nil
 	}
-	if t.runtime == nil {
-		return tools.ResultError("task runtime not available yet"), nil
-	}
-	if err := t.runtime.Steer(params.Message); err != nil {
-		return tools.ResultError("failed to send message: " + err.Error()), nil
-	}
+
 	return tools.ResultSuccess(fmt.Sprintf("Message sent to background agent task %s.", params.TaskID)), nil
 }
 

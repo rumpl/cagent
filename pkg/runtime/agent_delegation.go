@@ -314,7 +314,17 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	}
 
 	s := newSubSession(parent, cfg, child)
+	return r.runCollectingOnSession(ctx, parent, s, cfg, onContent, true)
+}
 
+// runCollectingOnSession is the resumable core of runCollecting: it
+// drives an already-built sub-session via RunStream. The first call from
+// runCollecting performs the initial run and links the sub-session into
+// the parent (linkToParent=true); subsequent calls via the Resume
+// closure (see RunAgent) re-enter the same sub-session with
+// linkToParent=false, picking up any steer messages that were enqueued
+// while the agent was idle.
+func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent *session.Session, s *session.Session, cfg SubSessionConfig, onContent func(string), linkToParent bool) *agenttool.RunResult {
 	// subagent_stop fires after the background sub-session has fully
 	// drained — success or failure. The parent agent at the time of
 	// dispatch (whoever called run_background_agent) owns the executor;
@@ -352,9 +362,20 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	}
 
 	result := s.GetLastAssistantMessageContent()
-	parent.AddSubSession(s)
+	if linkToParent {
+		parent.AddSubSession(s)
+	}
 
 	return &agenttool.RunResult{Result: result}
+}
+
+// resumeCollecting re-drives an existing sub-session that previously
+// completed. It is used by send_message_background_agent to wake an
+// idle background task: the new steer message is already enqueued on
+// this runtime's steerQueue and runStreamLoop drains it at the top of
+// its loop.
+func (r *LocalRuntime) resumeCollecting(ctx context.Context, parent *session.Session, s *session.Session, cfg SubSessionConfig, onContent func(string)) *agenttool.RunResult {
+	return r.runCollectingOnSession(ctx, parent, s, cfg, onContent, false)
 }
 
 // CurrentAgentSubAgentNames implements agenttool.Runner.
@@ -440,11 +461,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("failed to create child runtime: %s", err)}
 	}
 
-	if params.OnRuntimeReady != nil {
-		params.OnRuntimeReady(steerableRuntime{rt: childRuntime})
-	}
-
-	return childRuntime.runCollecting(ctx, params.ParentSession, SubSessionConfig{
+	cfg := SubSessionConfig{
 		Task:           params.Task,
 		ExpectedOutput: params.ExpectedOutput,
 		AgentName:      params.AgentName,
@@ -452,7 +469,31 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 		ToolsApproved:  true,
 		NonInteractive: true,
 		PinAgent:       true,
-	}, params.OnContent)
+	}
+
+	if params.OnRuntimeReady != nil {
+		// Build the child sub-session up front so the resume closure can
+		// re-drive it without recreating it. The Resume closure is what
+		// send_message_background_agent calls when the task has gone idle:
+		// it enqueues the new message on the runtime's steerQueue (via the
+		// Steerable) and then invokes Resume, which calls RunStream again
+		// on the same sub-session — runStreamLoop drains steerQueue at the
+		// top of its first iteration.
+		child, err := r.team.Agent(params.AgentName)
+		if err != nil {
+			return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
+		}
+		s := newSubSession(params.ParentSession, cfg, child)
+		params.OnRuntimeReady(agenttool.TaskRuntime{
+			Steerable: steerableRuntime{rt: childRuntime},
+			Resume: func(resumeCtx context.Context) *agenttool.RunResult {
+				return childRuntime.resumeCollecting(resumeCtx, params.ParentSession, s, cfg, params.OnContent)
+			},
+		})
+		return childRuntime.runCollectingOnSession(ctx, params.ParentSession, s, cfg, params.OnContent, true)
+	}
+
+	return childRuntime.runCollecting(ctx, params.ParentSession, cfg, params.OnContent)
 }
 
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink) (*tools.ToolCallResult, error) {

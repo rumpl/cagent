@@ -675,7 +675,6 @@ func TestHandleSendMessage_NotRunning(t *testing.T) {
 		name   string
 		status taskStatus
 	}{
-		{"completed", taskCompleted},
 		{"stopped", taskStopped},
 		{"failed", taskFailed},
 	}
@@ -688,10 +687,59 @@ func TestHandleSendMessage_NotRunning(t *testing.T) {
 			result, err := h.HandleSendMessage(t.Context(), nil, tc)
 			require.NoError(t, err)
 			assert.True(t, result.IsError)
-			assert.Contains(t, result.Output, "not running")
+			assert.Contains(t, result.Output, "cannot receive messages")
 			assert.Contains(t, result.Output, c.status.String())
 		})
 	}
+}
+
+func TestHandleSendMessage_CompletedTaskResumes(t *testing.T) {
+	h := newTestHandler()
+	tk := insertTask(h, "t1", "sub", taskCompleted)
+	ms := &mockSteerable{}
+	tk.runtime = ms
+
+	resumed := make(chan struct{}, 1)
+	tk.resume = func(context.Context) *RunResult {
+		resumed <- struct{}{}
+		return &RunResult{Result: "after resume"}
+	}
+	tk.ctx = t.Context()
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "wake up"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Output, "Message sent")
+
+	// The CAS to taskRunning happens synchronously; the resume goroutine
+	// runs the resume closure asynchronously and we then expect the task
+	// to transition back to taskCompleted.
+	select {
+	case <-resumed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resume closure was not invoked")
+	}
+	h.wg.Wait()
+
+	require.Len(t, ms.steered, 1)
+	assert.Equal(t, "wake up", ms.steered[0])
+	assert.Equal(t, taskCompleted, tk.loadStatus())
+	assert.Equal(t, "after resume", tk.result)
+}
+
+func TestHandleSendMessage_CompletedTaskNoResume(t *testing.T) {
+	h := newTestHandler()
+	tk := insertTask(h, "t1", "sub", taskCompleted)
+	tk.runtime = &mockSteerable{}
+	// resume is nil — simulating a runner that never populated the closure.
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "runtime not available")
+	assert.Equal(t, taskCompleted, tk.loadStatus(), "status must not change when resume is unavailable")
 }
 
 func TestHandleSendMessage_RuntimeNotReady(t *testing.T) {
