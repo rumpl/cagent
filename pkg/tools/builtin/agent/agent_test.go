@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -591,11 +592,11 @@ func TestHandler_ConcurrentAccess(t *testing.T) {
 
 // --- Tools ---
 
-func TestNewToolSet_ReturnsFourTools(t *testing.T) {
+func TestNewToolSet_ReturnsFiveTools(t *testing.T) {
 	ts := New()
 	toolsList, err := ts.Tools(t.Context())
 	require.NoError(t, err)
-	assert.Len(t, toolsList, 4)
+	assert.Len(t, toolsList, 5)
 
 	names := make([]string, len(toolsList))
 	for i, tl := range toolsList {
@@ -605,6 +606,7 @@ func TestNewToolSet_ReturnsFourTools(t *testing.T) {
 	assert.Contains(t, names, ToolNameListBackgroundAgents)
 	assert.Contains(t, names, ToolNameViewBackgroundAgent)
 	assert.Contains(t, names, ToolNameStopBackgroundAgent)
+	assert.Contains(t, names, ToolNameSendMessageBackgroundAgent)
 }
 
 func TestNewToolSet_Instructions(t *testing.T) {
@@ -618,4 +620,118 @@ func TestNewToolSet_Instructions(t *testing.T) {
 	assert.Contains(t, instructions, "list_background_agents")
 	assert.Contains(t, instructions, "view_background_agent")
 	assert.Contains(t, instructions, "stop_background_agent")
+	assert.Contains(t, instructions, "send_message_background_agent")
+}
+
+// --- HandleSendMessage ---
+
+// mockSteerable records calls to Steer for assertion in tests.
+type mockSteerable struct {
+	steered []string
+	err     error
+}
+
+func (m *mockSteerable) Steer(msg string) error {
+	m.steered = append(m.steered, msg)
+	return m.err
+}
+
+func TestHandleSendMessage_InvalidJSON(t *testing.T) {
+	h := newTestHandler()
+	bad := tools.ToolCall{Function: tools.FunctionCall{Arguments: "not-json"}}
+	_, err := h.HandleSendMessage(t.Context(), nil, bad)
+	require.Error(t, err, "invalid JSON should return an error")
+}
+
+func TestHandleSendMessage_EmptyTaskID(t *testing.T) {
+	h := newTestHandler()
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "  ", Message: "hello"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "task_id must not be empty")
+}
+
+func TestHandleSendMessage_EmptyMessage(t *testing.T) {
+	h := newTestHandler()
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "  "})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "message must not be empty")
+}
+
+func TestHandleSendMessage_NotFound(t *testing.T) {
+	h := newTestHandler()
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "ghost", Message: "hello"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "task not found")
+}
+
+func TestHandleSendMessage_NotRunning(t *testing.T) {
+	cases := []struct {
+		name   string
+		status taskStatus
+	}{
+		{"completed", taskCompleted},
+		{"stopped", taskStopped},
+		{"failed", taskFailed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newTestHandler()
+			insertTask(h, "t1", "sub", c.status)
+
+			tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+			result, err := h.HandleSendMessage(t.Context(), nil, tc)
+			require.NoError(t, err)
+			assert.True(t, result.IsError)
+			assert.Contains(t, result.Output, "not running")
+			assert.Contains(t, result.Output, c.status.String())
+		})
+	}
+}
+
+func TestHandleSendMessage_RuntimeNotReady(t *testing.T) {
+	h := newTestHandler()
+	tk := insertTask(h, "t1", "sub", taskRunning)
+	require.Nil(t, tk.runtime, "precondition: runtime must be nil")
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "runtime not available")
+}
+
+func TestHandleSendMessage_Success(t *testing.T) {
+	h := newTestHandler()
+	tk := insertTask(h, "t1", "sub", taskRunning)
+	ms := &mockSteerable{}
+	tk.runtime = ms
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "change direction"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Output, "Message sent")
+	assert.Contains(t, result.Output, "t1")
+	require.Len(t, ms.steered, 1)
+	assert.Equal(t, "change direction", ms.steered[0])
+}
+
+func TestHandleSendMessage_SteerError(t *testing.T) {
+	h := newTestHandler()
+	tk := insertTask(h, "t1", "sub", taskRunning)
+	ms := &mockSteerable{err: errors.New("queue full")}
+	tk.runtime = ms
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	result, err := h.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Output, "failed to send message")
+	assert.Contains(t, result.Output, "queue full")
 }

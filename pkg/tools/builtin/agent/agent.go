@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	ToolNameRunBackgroundAgent   = "run_background_agent"
-	ToolNameListBackgroundAgents = "list_background_agents"
-	ToolNameViewBackgroundAgent  = "view_background_agent"
-	ToolNameStopBackgroundAgent  = "stop_background_agent"
+	ToolNameRunBackgroundAgent         = "run_background_agent"
+	ToolNameListBackgroundAgents       = "list_background_agents"
+	ToolNameViewBackgroundAgent        = "view_background_agent"
+	ToolNameStopBackgroundAgent        = "stop_background_agent"
+	ToolNameSendMessageBackgroundAgent = "send_message_background_agent"
 )
 
 const (
@@ -56,6 +57,21 @@ type StopBackgroundAgentArgs struct {
 	TaskID string `json:"task_id" jsonschema:"The ID of the background agent task to stop."`
 }
 
+// SendMessageBackgroundAgentArgs specifies the parameters for sending a
+// follow-up or steering message to a running background agent task.
+type SendMessageBackgroundAgentArgs struct {
+	TaskID  string `json:"task_id" jsonschema:"The ID of the background agent task to send a message to."`
+	Message string `json:"message" jsonschema:"The message to send to the background agent."`
+}
+
+// Steerable is the minimal subset of a runtime that a background task
+// needs in order to accept steering messages. Defined here (rather than
+// imported from pkg/runtime) to avoid an import cycle: pkg/runtime
+// already imports this package.
+type Steerable interface {
+	Steer(content string) error
+}
+
 // RunParams holds the parameters for running a sub-agent.
 type RunParams struct {
 	AgentName      string
@@ -63,6 +79,12 @@ type RunParams struct {
 	ExpectedOutput string
 	ParentSession  *session.Session
 	OnContent      func(content string)
+	// OnRuntimeReady, when non-nil, is invoked by the runner with the
+	// child runtime once it has been constructed but before the run
+	// loop starts blocking. Background tasks use this to capture a
+	// per-task Steerable so send_message_background_agent can target
+	// the right task's queue.
+	OnRuntimeReady func(r Steerable)
 }
 
 // RunResult holds the outcome of a sub-agent execution.
@@ -116,6 +138,12 @@ type task struct {
 	status    atomic.Int32
 	result    string
 	errMsg    string
+
+	// runtime is the per-task Steerable, set once via
+	// RunParams.OnRuntimeReady. nil until the runner has constructed
+	// the child runtime; HandleSendMessage handles that race by
+	// returning a transient error.
+	runtime Steerable
 
 	// outputMu protects output, outputBytes, viewCount, and lastViewedOutputBytes.
 	outputMu              sync.RWMutex
@@ -321,6 +349,7 @@ func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall
 			ExpectedOutput: params.ExpectedOutput,
 			ParentSession:  sess,
 			OnContent:      t.writeOutput,
+			OnRuntimeReady: func(r Steerable) { t.runtime = r },
 		})
 
 		if result.ErrMsg != "" {
@@ -390,6 +419,37 @@ func (h *Handler) HandleView(_ context.Context, _ *session.Session, toolCall too
 	return tools.ResultSuccess(t.formatView(status, elapsed)), nil
 }
 
+// HandleSendMessage sends a follow-up or steering message to a running
+// background agent task by enqueuing it on the task's dedicated runtime
+// steer queue. The message is injected into the agent loop at its next
+// natural steering point (between tool calls).
+func (h *Handler) HandleSendMessage(_ context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
+	var params SendMessageBackgroundAgentArgs
+	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if strings.TrimSpace(params.TaskID) == "" {
+		return tools.ResultError("task_id must not be empty"), nil
+	}
+	if strings.TrimSpace(params.Message) == "" {
+		return tools.ResultError("message must not be empty"), nil
+	}
+	t, exists := h.tasks.Load(params.TaskID)
+	if !exists {
+		return tools.ResultError("task not found: " + params.TaskID), nil
+	}
+	if s := t.loadStatus(); s != taskRunning {
+		return tools.ResultError(fmt.Sprintf("task %s is not running (status: %s)", params.TaskID, s)), nil
+	}
+	if t.runtime == nil {
+		return tools.ResultError("task runtime not available yet"), nil
+	}
+	if err := t.runtime.Steer(params.Message); err != nil {
+		return tools.ResultError("failed to send message: " + err.Error()), nil
+	}
+	return tools.ResultSuccess(fmt.Sprintf("Message sent to background agent task %s.", params.TaskID)), nil
+}
+
 // HandleStop cancels a running background agent task.
 func (h *Handler) HandleStop(_ context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
 	var params StopBackgroundAgentArgs
@@ -430,6 +490,7 @@ func (h *Handler) RegisterHandlers(register func(name string, fn func(context.Co
 	register(ToolNameListBackgroundAgents, h.HandleList)
 	register(ToolNameViewBackgroundAgent, h.HandleView)
 	register(ToolNameStopBackgroundAgent, h.HandleStop)
+	register(ToolNameSendMessageBackgroundAgent, h.HandleSendMessage)
 }
 
 // New returns a lightweight ToolSet for registering background agent
@@ -455,6 +516,7 @@ Use background agent tasks to dispatch work to sub-agents concurrently.
 - **list_background_agents**: Show all tasks with status and runtime
 - **view_background_agent**: Get output and status of a task by task_id
 - **stop_background_agent**: Terminate a task by task_id
+- **send_message_background_agent**: Send a follow-up or steering message to a running task by task_id; the message is injected at the next natural steering point
 
 **Notes**: Output capped at 10MB per task. All tasks auto-terminate when the agent stops.`
 }
@@ -498,6 +560,13 @@ view_background_agent and collect results once the task is complete.`,
 			Annotations: tools.ToolAnnotations{
 				Title: "Stop Background Agent",
 			},
+		},
+		{
+			Name:        ToolNameSendMessageBackgroundAgent,
+			Category:    "transfer",
+			Description: `Send a follow-up or steering message to a running background agent task. The message is injected into the agent's loop at its next natural steering point (between tool calls). Use this to redirect, correct, or provide additional context to a background agent without stopping it.`,
+			Parameters:  tools.MustSchemaFor[SendMessageBackgroundAgentArgs](),
+			Annotations: tools.ToolAnnotations{Title: "Send Message to Background Agent"},
 		},
 	}
 }

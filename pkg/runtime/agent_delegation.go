@@ -366,8 +366,28 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 	return agentNames(a.SubAgents())
 }
 
+// steerableRuntime adapts a *LocalRuntime to the agenttool.Steerable
+// interface, translating the string content passed by
+// send_message_background_agent into a [QueuedMessage]. Defined here
+// (rather than in pkg/tools/builtin/agent) so the agent package can
+// stay free of the QueuedMessage type and avoid an import cycle.
+type steerableRuntime struct{ rt *LocalRuntime }
+
+func (s steerableRuntime) Steer(content string) error {
+	return s.rt.Steer(QueuedMessage{Content: content})
+}
+
 // RunAgent implements agenttool.Runner. It starts a sub-agent synchronously
 // and blocks until completion or cancellation.
+//
+// Each background task gets its own child [LocalRuntime] so that
+// send_message_background_agent can target one specific task's
+// [LocalRuntime.steerQueue] instead of the parent's shared queue. The
+// child inherits every applicable knob from the parent (working dir,
+// env, tracer, telemetry, clock, hooks registry, observers, transforms,
+// auto-injectors, model switcher config, retry-on-rate-limit, ...) so
+// behaviour is otherwise identical to running the sub-agent under the
+// parent runtime.
 //
 // Background tasks run with tools pre-approved because there is no user
 // present to respond to interactive approval prompts during async
@@ -380,7 +400,51 @@ func (r *LocalRuntime) CurrentAgentSubAgentNames() []string {
 // runtime supports per-session permission scoping rather than a single
 // shared ToolsApproved flag.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
-	return r.runCollecting(ctx, params.ParentSession, SubSessionConfig{
+	if _, err := r.team.Agent(params.AgentName); err != nil {
+		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
+	}
+
+	opts := []Opt{
+		WithCurrentAgent(params.AgentName),
+		WithWorkingDir(r.workingDir),
+		WithEnv(r.env),
+		WithNonInteractive(true),
+		WithSessionStore(r.sessionStore),
+		WithTracer(r.tracer),
+		WithTelemetry(r.telemetry),
+		WithClock(r.now),
+		WithSessionCompaction(r.sessionCompaction),
+		WithManagedOAuth(r.managedOAuth),
+		WithMaxOverflowCompactions(r.maxOverflowCompactions),
+		WithHooksRegistry(r.hooksRegistry),
+		WithModelStore(r.modelsStore),
+	}
+	if r.modelSwitcherCfg != nil {
+		opts = append(opts, WithModelSwitcherConfig(r.modelSwitcherCfg))
+	}
+	if r.fallback != nil && r.fallback.retryOnRateLimit {
+		opts = append(opts, WithRetryOnRateLimit())
+	}
+	for _, obs := range r.observers {
+		opts = append(opts, WithEventObserver(obs))
+	}
+	for _, t := range r.transforms {
+		opts = append(opts, WithMessageTransform(t.name, t.fn))
+	}
+	for _, inj := range r.autoInjectors {
+		opts = append(opts, WithAutoInjector(inj))
+	}
+
+	childRuntime, err := NewLocalRuntime(r.team, opts...)
+	if err != nil {
+		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("failed to create child runtime: %s", err)}
+	}
+
+	if params.OnRuntimeReady != nil {
+		params.OnRuntimeReady(steerableRuntime{rt: childRuntime})
+	}
+
+	return childRuntime.runCollecting(ctx, params.ParentSession, SubSessionConfig{
 		Task:           params.Task,
 		ExpectedOutput: params.ExpectedOutput,
 		AgentName:      params.AgentName,
