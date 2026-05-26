@@ -149,6 +149,24 @@ func New(ctx context.Context, rt runtime.Runtime, sess *session.Session, opts ..
 	return app
 }
 
+// RunBackgroundSession drives a single child-runtime RunStream invocation
+// supplied by the background-agent runner. Each event the runtime emits
+// is pushed into the App's event bus so the supervisor's existing tab
+// routing displays the stream just like for any other session.
+//
+// The runFn closure is supplied by [runtime.BackgroundAgentStart.RunBackground].
+// It returns when one RunStream invocation completes; callers typically
+// invoke it in a goroutine that loops over the corresponding
+// ResumeSignal channel.
+func (a *App) RunBackgroundSession(ctx context.Context, runFn func(ctx context.Context, eventSink func(runtime.Event))) {
+	if runFn == nil {
+		return
+	}
+	runFn(ctx, func(ev runtime.Event) {
+		a.sendEvent(ctx, ev)
+	})
+}
+
 func (a *App) SendFirstMessage() tea.Cmd {
 	if a.firstMessage == nil {
 		return nil
@@ -775,6 +793,11 @@ func (a *App) reEmitStartupInfo(ctx context.Context) {
 
 func (a *App) Session() *session.Session {
 	return a.session
+}
+
+// Runtime returns the runtime this app wraps.
+func (a *App) Runtime() runtime.Runtime {
+	return a.runtime
 }
 
 // PermissionsInfo returns combined permissions info from team and session.

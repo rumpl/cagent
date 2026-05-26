@@ -334,6 +334,21 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 	// Add the initial session to the supervisor
 	sv.AddSession(ctx, initialApp, initialApp.Session(), initialWorkingDir, cleanup)
 
+	// When a background sub-agent task is started, open the child
+	// session as a new tab without stealing focus from the parent. The
+	// callback fires from the runtime goroutine; SendMsg blocks until
+	// the Bubble Tea program is ready so no early event is dropped.
+	initialApp.Runtime().OnBackgroundAgentStarted(func(start runtime.BackgroundAgentStart) {
+		sv.SendMsg(ctx, messages.BackgroundAgentStartedMsg{
+			SessionID:     start.SessionID,
+			AgentName:     start.AgentName,
+			Runtime:       start.Runtime,
+			Session:       start.Session,
+			RunBackground: start.RunBackground,
+			ResumeSignal:  start.ResumeSignal,
+		})
+	})
+
 	// Restore persisted tabs or persist the initial one.
 	m.restoreTabs(ctx, ts, sv, spawner, initialApp, sessID, initialWorkingDir)
 
@@ -500,7 +515,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case messages.SpawnSessionMsg, messages.SwitchTabMsg,
 			messages.CloseTabMsg, messages.ReorderTabMsg,
-			messages.ToggleSidebarMsg:
+			messages.ToggleSidebarMsg, messages.BackgroundAgentStartedMsg:
 			return m, nil
 		}
 	}
@@ -548,6 +563,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case messages.SpawnSessionMsg:
 		return m.handleSpawnSession(msg.WorkingDir)
+
+	case messages.BackgroundAgentStartedMsg:
+		return m.handleBackgroundAgentStarted(msg)
 
 	case messages.SwitchTabMsg:
 		return m.handleSwitchTab(msg.SessionID)

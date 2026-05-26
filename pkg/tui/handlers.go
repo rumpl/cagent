@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/browser"
 	"github.com/docker/docker-agent/pkg/evaluation"
+	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -140,6 +141,74 @@ func (m *appModel) handleForkSession() (tea.Model, tea.Cmd) {
 	}
 
 	return m.handleSwitchTab(forkedSession.ID)
+}
+
+// handleBackgroundAgentStarted opens the child session of a newly
+// dispatched run_background_agent task as a new tab in the supervisor,
+// without switching focus away from the parent, and drives the child's
+// run loop through that tab's App so its events flow through the
+// supervisor's existing routing.
+func (m *appModel) handleBackgroundAgentStarted(msg messages.BackgroundAgentStartedMsg) (tea.Model, tea.Cmd) {
+	ctx := context.Background()
+
+	rt, ok := msg.Runtime.(runtime.Runtime)
+	if !ok || rt == nil {
+		slog.WarnContext(ctx, "background agent started: missing or invalid runtime", "session_id", msg.SessionID)
+		return m, nil
+	}
+	sess, ok := msg.Session.(*session.Session)
+	if !ok || sess == nil {
+		slog.WarnContext(ctx, "background agent started: missing or invalid session", "session_id", msg.SessionID)
+		return m, nil
+	}
+	runBackground, ok := msg.RunBackground.(func(context.Context, func(runtime.Event)))
+	if !ok || runBackground == nil {
+		slog.WarnContext(ctx, "background agent started: missing RunBackground closure", "session_id", msg.SessionID)
+		return m, nil
+	}
+	resumeSignal, ok := msg.ResumeSignal.(<-chan struct{})
+	if !ok || resumeSignal == nil {
+		slog.WarnContext(ctx, "background agent started: missing ResumeSignal channel", "session_id", msg.SessionID)
+		return m, nil
+	}
+
+	// Inherit the parent's working directory so the new tab's title
+	// fallback (basename of working dir) and any path-relative UI
+	// matches what the parent agent sees.
+	workingDir := ""
+	if active := m.supervisor.ActiveRunner(); active != nil {
+		workingDir = active.WorkingDir
+	}
+
+	childApp := app.New(ctx, rt, sess)
+	m.supervisor.AddSession(ctx, childApp, sess, workingDir, nil)
+
+	// Driver goroutine: every signal on resumeSignal asks for one
+	// RunStream invocation on the child session. App.RunBackgroundSession
+	// pumps every event into childApp.events, which the supervisor's
+	// subscribeWithRouting consumes and forwards as a RoutedMsg for this
+	// tab.
+	go func() {
+		for {
+			select {
+			case _, ok := <-resumeSignal:
+				if !ok {
+					return
+				}
+				childApp.RunBackgroundSession(ctx, runBackground)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	if m.tuiStore != nil {
+		if err := m.tuiStore.AddTab(ctx, sess.ID, workingDir); err != nil {
+			slog.WarnContext(ctx, "Failed to persist background agent tab", "error", err)
+		}
+	}
+
+	return m, nil
 }
 
 func (m *appModel) handleToggleSessionStar(sessionID string) (tea.Model, tea.Cmd) {

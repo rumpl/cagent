@@ -14,50 +14,141 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/concurrent"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// mockRunner implements Runner for testing.
+// mockRunner implements Runner for testing. It mirrors the runtime's
+// new contract: RunAgent returns immediately after setup; an internal
+// goroutine drives runs in response to params.ResumeSignal and pushes
+// results on params.Completed.
 type mockRunner struct {
 	subAgentNames []string
 	runResult     *RunResult
 	runDelay      time.Duration // optional delay to simulate work
+	setupErr      string        // when non-empty, RunAgent reports a setup failure
+	lastCtxDone   <-chan struct{}
+	runs          atomic.Int32 // number of times the driver invoked a run
 }
 
 func (m *mockRunner) CurrentAgentSubAgentNames() []string { return m.subAgentNames }
 func (m *mockRunner) RunAgent(ctx context.Context, params RunParams) *RunResult {
-	if m.runDelay > 0 {
-		select {
-		case <-time.After(m.runDelay):
-		case <-ctx.Done():
-			return &RunResult{}
+	if m.setupErr != "" {
+		return &RunResult{ErrMsg: m.setupErr}
+	}
+	m.lastCtxDone = ctx.Done()
+	go func() {
+		for {
+			select {
+			case _, ok := <-params.ResumeSignal:
+				if !ok {
+					return
+				}
+				if m.runDelay > 0 {
+					select {
+					case <-time.After(m.runDelay):
+					case <-ctx.Done():
+						return
+					}
+				}
+				result := m.runResult
+				if result == nil {
+					result = &RunResult{}
+				}
+				if result.Result != "" && params.OnContent != nil {
+					params.OnContent(result.Result)
+				}
+				m.runs.Add(1)
+				select {
+				case params.Completed <- result:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
-	}
-	// Call OnContent if result has content, to simulate streaming.
-	if m.runResult != nil && m.runResult.Result != "" && params.OnContent != nil {
-		params.OnContent(m.runResult.Result)
-	}
-	if m.runResult != nil {
-		return m.runResult
-	}
+	}()
 	return &RunResult{}
 }
 
 func newTestHandler() *Handler {
-	return &Handler{
-		tasks: concurrent.NewMap[string, *task](),
-	}
+	return NewHandler(nil)
 }
 
 func newTestHandlerWithRunner(r Runner) *Handler {
 	return NewHandler(r)
 }
 
+// waitForTaskStatus polls until every task in h reaches one of the
+// expected statuses (or the test times out). Used in tests because the
+// per-task driver goroutines live until StopAll is called, so we can't
+// rely on h.wg.Wait() to signal end-of-run anymore.
+func waitForTaskStatus(t *testing.T, h *Handler, want ...taskStatus) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		all := true
+		h.tasks.Range(func(_ string, tk *task) bool {
+			s := tk.loadStatus()
+			matched := false
+			for _, w := range want {
+				if s == w {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				all = false
+				return false
+			}
+			return true
+		})
+		if all {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("tasks did not reach status %v in time", want)
+}
+
+func TestNewHandlerSharingTasks_SharesTaskControl(t *testing.T) {
+	parent := NewHandler(&mockRunner{subAgentNames: []string{"parent-child"}})
+	child := NewHandlerSharingTasks(&mockRunner{subAgentNames: []string{"child-child"}}, parent)
+
+	tk := insertTask(parent, "shared-session", "worker", taskRunning)
+	ms := &mockSteerable{}
+	tk.runtime = ms
+
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "shared-session", Message: "hello from sibling"})
+	result, err := child.HandleSendMessage(t.Context(), nil, tc)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	require.Len(t, ms.steered, 1)
+	assert.Equal(t, "hello from sibling", ms.steered[0])
+}
+
+func TestNewHandlerSharingTasks_UsesOwnRunnerForNewTasks(t *testing.T) {
+	parentRunner := &mockRunner{subAgentNames: []string{"parent-child"}}
+	childRunner := &mockRunner{subAgentNames: []string{"child-child"}, runResult: &RunResult{Result: "done"}}
+	parent := NewHandler(parentRunner)
+	child := NewHandlerSharingTasks(childRunner, parent)
+	t.Cleanup(child.StopAll)
+
+	tc := makeToolCall(t, RunBackgroundAgentArgs{Agent: "child-child", Task: "do work"})
+	result, err := child.HandleRun(t.Context(), session.New(), tc)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	waitForTaskStatus(t, child, taskCompleted)
+
+	assert.Equal(t, 1, child.totalTaskCount())
+	assert.Nil(t, parentRunner.lastCtxDone, "shared handler must start tasks through the child runner")
+	assert.NotNil(t, childRunner.lastCtxDone)
+}
+
 func insertTask(h *Handler, id, agentName string, status taskStatus) *task {
 	t := &task{
-		id:        id,
+		sessionID: id,
 		agentName: agentName,
 		taskDesc:  "test task",
 		cancel:    func() {},
@@ -75,22 +166,17 @@ func makeToolCall(t *testing.T, args any) tools.ToolCall {
 	return tools.ToolCall{Function: tools.FunctionCall{Arguments: string(b)}}
 }
 
-// --- newTaskID ---
+// --- newSessionID ---
 
-func TestNewTaskID_IsUnique(t *testing.T) {
+func TestNewSessionID_IsUnique(t *testing.T) {
 	ids := make(map[string]struct{})
 	for range 100 {
-		id := newTaskID()
+		id := newSessionID()
 		assert.NotEmpty(t, id)
 		_, dup := ids[id]
-		assert.False(t, dup, "duplicate task ID: %s", id)
+		assert.False(t, dup, "duplicate session ID: %s", id)
 		ids[id] = struct{}{}
 	}
-}
-
-func TestNewTaskID_HasPrefix(t *testing.T) {
-	id := newTaskID()
-	assert.True(t, strings.HasPrefix(id, "agent_task_"), "ID should start with agent_task_ prefix, got: %s", id)
 }
 
 // --- statusToString ---
@@ -151,7 +237,7 @@ func TestHandleList_Empty(t *testing.T) {
 	h := newTestHandler()
 	result, err := h.HandleList(t.Context(), nil, tools.ToolCall{})
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "No background agent tasks found")
+	assert.Contains(t, result.Output, "No background agents found")
 }
 
 func TestHandleList_ShowsTasks(t *testing.T) {
@@ -171,11 +257,11 @@ func TestHandleList_ShowsTasks(t *testing.T) {
 
 func TestHandleView_NotFound(t *testing.T) {
 	h := newTestHandler()
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "nonexistent"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "nonexistent"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Output, "task not found")
+	assert.Contains(t, result.Output, "background agent session not found")
 }
 
 func TestHandleView_Completed(t *testing.T) {
@@ -183,7 +269,7 @@ func TestHandleView_Completed(t *testing.T) {
 	tk := insertTask(h, "t1", "researcher", taskCompleted)
 	tk.result = "Here is my research."
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -196,7 +282,7 @@ func TestHandleView_Failed(t *testing.T) {
 	tk := insertTask(h, "t1", "researcher", taskFailed)
 	tk.errMsg = "model unavailable"
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "task failed")
@@ -207,7 +293,7 @@ func TestHandleView_Running_NoOutputYet(t *testing.T) {
 	h := newTestHandler()
 	insertTask(h, "t1", "researcher", taskRunning)
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "no output yet")
@@ -218,7 +304,7 @@ func TestHandleView_Running_WithProgress(t *testing.T) {
 	tk := insertTask(h, "t1", "researcher", taskRunning)
 	tk.output.WriteString("Partial research so far...")
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "Partial research so far...")
@@ -229,7 +315,7 @@ func TestHandleView_Stopped(t *testing.T) {
 	h := newTestHandler()
 	insertTask(h, "t1", "researcher", taskStopped)
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -241,7 +327,7 @@ func TestHandleView_Completed_EmptyResult(t *testing.T) {
 	h := newTestHandler()
 	insertTask(h, "t1", "researcher", taskCompleted)
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -254,7 +340,7 @@ func TestHandleView_OutputBufferTruncated(t *testing.T) {
 	tk.output.WriteString(strings.Repeat("x", maxOutputBytes))
 	tk.outputBytes = maxOutputBytes
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleView(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "truncated", "should show truncation notice when buffer is full")
@@ -272,7 +358,7 @@ func TestHandleView_RepeatedPolling_NoNewOutput(t *testing.T) {
 	h := newTestHandler()
 	insertTask(h, "t1", "researcher", taskRunning)
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 
 	// First view should not include poll marker.
 	result1, err := h.HandleView(t.Context(), nil, tc)
@@ -297,7 +383,7 @@ func TestHandleView_RepeatedPolling_OutputGrows(t *testing.T) {
 	h := newTestHandler()
 	tk := insertTask(h, "t1", "researcher", taskRunning)
 
-	tc := makeToolCall(t, ViewBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, ViewBackgroundAgentArgs{SessionID: "t1"})
 
 	// First view.
 	_, err := h.HandleView(t.Context(), nil, tc)
@@ -325,18 +411,18 @@ func TestHandleView_RepeatedPolling_OutputGrows(t *testing.T) {
 
 func TestHandleStop_NotFound(t *testing.T) {
 	h := newTestHandler()
-	tc := makeToolCall(t, StopBackgroundAgentArgs{TaskID: "ghost"})
+	tc := makeToolCall(t, StopBackgroundAgentArgs{SessionID: "ghost"})
 	result, err := h.HandleStop(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Output, "task not found")
+	assert.Contains(t, result.Output, "background agent session not found")
 }
 
 func TestHandleStop_AlreadyCompleted(t *testing.T) {
 	h := newTestHandler()
 	insertTask(h, "t1", "researcher", taskCompleted)
 
-	tc := makeToolCall(t, StopBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, StopBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleStop(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -349,7 +435,7 @@ func TestHandleStop_Running(t *testing.T) {
 	tk := insertTask(h, "t1", "researcher", taskRunning)
 	tk.cancel = func() { cancelled = true }
 
-	tc := makeToolCall(t, StopBackgroundAgentArgs{TaskID: "t1"})
+	tc := makeToolCall(t, StopBackgroundAgentArgs{SessionID: "t1"})
 	result, err := h.HandleStop(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -444,23 +530,29 @@ func TestHandleRun_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleRun_StartsTask(t *testing.T) {
-	h := newTestHandlerWithRunner(&mockRunner{
+	r := &mockRunner{
 		subAgentNames: []string{"sub"},
 		runResult:     &RunResult{Result: "done"},
-	})
+	}
+	h := newTestHandlerWithRunner(r)
+	t.Cleanup(h.StopAll)
 
 	tc := makeToolCall(t, RunBackgroundAgentArgs{Agent: "sub", Task: "write a poem"})
 	result, err := h.HandleRun(t.Context(), session.New(), tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Output, "agent_task_")
+	assert.Contains(t, result.Output, "Session ID:")
 	assert.Contains(t, result.Output, "sub")
 
-	h.wg.Wait()
+	waitForTaskStatus(t, h, taskCompleted)
 
 	assert.Equal(t, 1, h.totalTaskCount())
 	h.tasks.Range(func(_ string, tk *task) bool {
-		assert.Equal(t, taskCompleted, tk.loadStatus())
+		select {
+		case <-tk.ctx.Done():
+			t.Fatal("task lifetime context was canceled after normal completion; completed tasks must remain resumable")
+		default:
+		}
 		return true
 	})
 }
@@ -470,16 +562,16 @@ func TestHandleRun_ProviderError_TaskFails(t *testing.T) {
 		subAgentNames: []string{"sub"},
 		runResult:     &RunResult{ErrMsg: "model unavailable"},
 	})
+	t.Cleanup(h.StopAll)
 
 	tc := makeToolCall(t, RunBackgroundAgentArgs{Agent: "sub", Task: "do something"})
 	result, err := h.HandleRun(t.Context(), session.New(), tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError, "HandleRun should start successfully before provider error")
 
-	h.wg.Wait()
+	waitForTaskStatus(t, h, taskFailed)
 
 	h.tasks.Range(func(_ string, tk *task) bool {
-		assert.Equal(t, taskFailed, tk.loadStatus(), "task should be marked failed on provider error")
 		assert.NotEmpty(t, tk.errMsg)
 		return true
 	})
@@ -490,6 +582,7 @@ func TestHandleRun_WithExpectedOutput(t *testing.T) {
 		subAgentNames: []string{"sub"},
 		runResult:     &RunResult{Result: "result"},
 	})
+	t.Cleanup(h.StopAll)
 
 	tc := makeToolCall(t, RunBackgroundAgentArgs{
 		Agent:          "sub",
@@ -500,12 +593,7 @@ func TestHandleRun_WithExpectedOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
-	h.wg.Wait()
-
-	h.tasks.Range(func(_ string, tk *task) bool {
-		assert.Equal(t, taskCompleted, tk.loadStatus())
-		return true
-	})
+	waitForTaskStatus(t, h, taskCompleted)
 }
 
 func TestHandleRun_TotalCapAutoPruneAdmits(t *testing.T) {
@@ -513,6 +601,7 @@ func TestHandleRun_TotalCapAutoPruneAdmits(t *testing.T) {
 		subAgentNames: []string{"sub"},
 		runResult:     &RunResult{Result: "done"},
 	})
+	t.Cleanup(h.StopAll)
 
 	for i := range maxTotalTasks {
 		insertTask(h, fmt.Sprintf("done%d", i), "sub", taskCompleted)
@@ -523,8 +612,6 @@ func TestHandleRun_TotalCapAutoPruneAdmits(t *testing.T) {
 	result, err := h.HandleRun(t.Context(), session.New(), tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError, "task should be admitted after auto-prune of completed tasks")
-
-	h.wg.Wait()
 }
 
 func TestHandleRun_TotalCapExhaustion_ConcurrencyCapFiresFirst(t *testing.T) {
@@ -555,11 +642,11 @@ func TestHandler_ConcurrentAccess(t *testing.T) {
 
 	viewTCs := make([]tools.ToolCall, 5)
 	for i := range 5 {
-		viewTCs[i] = makeToolCall(t, ViewBackgroundAgentArgs{TaskID: fmt.Sprintf("task%d", i%10)})
+		viewTCs[i] = makeToolCall(t, ViewBackgroundAgentArgs{SessionID: fmt.Sprintf("task%d", i%10)})
 	}
 	stopTCs := make([]tools.ToolCall, 3)
 	for i := range 3 {
-		stopTCs[i] = makeToolCall(t, StopBackgroundAgentArgs{TaskID: fmt.Sprintf("task%d", i)})
+		stopTCs[i] = makeToolCall(t, StopBackgroundAgentArgs{SessionID: fmt.Sprintf("task%d", i)})
 	}
 
 	var wg sync.WaitGroup
@@ -643,18 +730,18 @@ func TestHandleSendMessage_InvalidJSON(t *testing.T) {
 	require.Error(t, err, "invalid JSON should return an error")
 }
 
-func TestHandleSendMessage_EmptyTaskID(t *testing.T) {
+func TestHandleSendMessage_EmptySessionID(t *testing.T) {
 	h := newTestHandler()
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "  ", Message: "hello"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "  ", Message: "hello"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Output, "task_id must not be empty")
+	assert.Contains(t, result.Output, "session_id must not be empty")
 }
 
 func TestHandleSendMessage_EmptyMessage(t *testing.T) {
 	h := newTestHandler()
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "  "})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "  "})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -663,11 +750,11 @@ func TestHandleSendMessage_EmptyMessage(t *testing.T) {
 
 func TestHandleSendMessage_NotFound(t *testing.T) {
 	h := newTestHandler()
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "ghost", Message: "hello"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "ghost", Message: "hello"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Output, "task not found")
+	assert.Contains(t, result.Output, "background agent session not found")
 }
 
 func TestHandleSendMessage_NotRunning(t *testing.T) {
@@ -683,7 +770,7 @@ func TestHandleSendMessage_NotRunning(t *testing.T) {
 			h := newTestHandler()
 			insertTask(h, "t1", "sub", c.status)
 
-			tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+			tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "hello"})
 			result, err := h.HandleSendMessage(t.Context(), nil, tc)
 			require.NoError(t, err)
 			assert.True(t, result.IsError)
@@ -693,53 +780,43 @@ func TestHandleSendMessage_NotRunning(t *testing.T) {
 	}
 }
 
-func TestHandleSendMessage_CompletedTaskResumes(t *testing.T) {
+func TestHandleSendMessage_CompletedTaskSignalsResume(t *testing.T) {
 	h := newTestHandler()
 	tk := insertTask(h, "t1", "sub", taskCompleted)
 	ms := &mockSteerable{}
 	tk.runtime = ms
+	tk.needsRun = make(chan struct{}, 4)
 
-	resumed := make(chan struct{}, 1)
-	tk.resume = func(context.Context) *RunResult {
-		resumed <- struct{}{}
-		return &RunResult{Result: "after resume"}
-	}
-	tk.ctx = t.Context()
-
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "wake up"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "wake up"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Output, "Message sent")
 
-	// The CAS to taskRunning happens synchronously; the resume goroutine
-	// runs the resume closure asynchronously and we then expect the task
-	// to transition back to taskCompleted.
-	select {
-	case <-resumed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("resume closure was not invoked")
-	}
-	h.wg.Wait()
-
 	require.Len(t, ms.steered, 1)
 	assert.Equal(t, "wake up", ms.steered[0])
-	assert.Equal(t, taskCompleted, tk.loadStatus())
-	assert.Equal(t, "after resume", tk.result)
+	assert.Equal(t, taskRunning, tk.loadStatus(), "status must flip back to running so a new RunStream can start")
+
+	select {
+	case <-tk.needsRun:
+		// expected: HandleSendMessage signalled the driver.
+	case <-time.After(time.Second):
+		t.Fatal("HandleSendMessage did not signal needsRun for the resumed task")
+	}
 }
 
-func TestHandleSendMessage_CompletedTaskNoResume(t *testing.T) {
+func TestHandleSendMessage_CompletedTaskNoNeedsRun(t *testing.T) {
 	h := newTestHandler()
 	tk := insertTask(h, "t1", "sub", taskCompleted)
 	tk.runtime = &mockSteerable{}
-	// resume is nil — simulating a runner that never populated the closure.
+	// needsRun is nil — simulating a runner that never populated the channel.
 
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "hello"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Output, "runtime not available")
-	assert.Equal(t, taskCompleted, tk.loadStatus(), "status must not change when resume is unavailable")
+	assert.Equal(t, taskCompleted, tk.loadStatus(), "status must not change when driver wiring is unavailable")
 }
 
 func TestHandleSendMessage_RuntimeNotReady(t *testing.T) {
@@ -747,7 +824,7 @@ func TestHandleSendMessage_RuntimeNotReady(t *testing.T) {
 	tk := insertTask(h, "t1", "sub", taskRunning)
 	require.Nil(t, tk.runtime, "precondition: runtime must be nil")
 
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "hello"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -760,7 +837,7 @@ func TestHandleSendMessage_Success(t *testing.T) {
 	ms := &mockSteerable{}
 	tk.runtime = ms
 
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "change direction"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "change direction"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -776,7 +853,7 @@ func TestHandleSendMessage_SteerError(t *testing.T) {
 	ms := &mockSteerable{err: errors.New("queue full")}
 	tk.runtime = ms
 
-	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{TaskID: "t1", Message: "hello"})
+	tc := makeToolCall(t, SendMessageBackgroundAgentArgs{SessionID: "t1", Message: "hello"})
 	result, err := h.HandleSendMessage(t.Context(), nil, tc)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)

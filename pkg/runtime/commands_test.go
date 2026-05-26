@@ -83,6 +83,7 @@ func (m *mockRuntime) SetAgentModel(context.Context, string, string) error { ret
 func (m *mockRuntime) AvailableModels(context.Context) []ModelChoice       { return nil }
 func (m *mockRuntime) SupportsModelSwitching() bool                        { return false }
 func (m *mockRuntime) OnToolsChanged(func(Event))                          {}
+func (m *mockRuntime) OnBackgroundAgentStarted(func(BackgroundAgentStart)) {}
 
 func (m *mockRuntime) RegenerateTitle(context.Context, *session.Session, chan Event) {
 }

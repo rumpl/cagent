@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -53,7 +54,11 @@ func validateAgentInList(currentAgent, targetAgent, action, listDesc string, age
 // attached to the parent conversation; they are surfaced to the sub-agent so
 // it can use them directly without scanning the workspace or guessing from a
 // bare filename.
-func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string) string {
+//
+// When sessionID is non-empty the sub-agent is a background agent; an
+// identity block is appended so the agent knows its own session ID, who
+// started it, and how to communicate back.
+func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string, sessionID, parentAgentName string) string {
 	var b strings.Builder
 	b.WriteString("You are a member of a team of agents. Your goal is to complete the following task:")
 	fmt.Fprintf(&b, "\n\n<task>\n%s\n</task>", task)
@@ -68,6 +73,16 @@ func buildTaskSystemMessage(task, expectedOutput string, attachedFiles []string)
 		b.WriteString("\n</attached_files>")
 	}
 	b.WriteString("\n\nIf the task references files, treat any absolute paths in <task> as authoritative and use them as-is. If a referenced file is given by name only (e.g. \"foo.go\"), do not guess: search the workspace or ask the calling agent for the absolute path before reading or modifying the file.")
+	if sessionID != "" {
+		b.WriteString("\n\nYou are running as a background agent.")
+		fmt.Fprintf(&b, "\n- Your session ID is: %s", sessionID)
+		if parentAgentName != "" {
+			fmt.Fprintf(&b, "\n- You were started by agent: %s", parentAgentName)
+		}
+		b.WriteString("\n- Other background agents can address you by this session ID.")
+		b.WriteString("\n- To send a message to another background agent, use send_message_background_agent with that agent's session_id.")
+		b.WriteString("\n- To report back to the parent, write your response normally. The parent can read it via view_background_agent.")
+	}
 	return b.String()
 }
 
@@ -107,6 +122,17 @@ type SubSessionConfig struct {
 	// tool list for the child session. This prevents recursive tool calls
 	// (e.g. run_skill calling itself in a skill sub-session).
 	ExcludedTools []string
+	// SessionID, when non-empty, pre-assigns the child session's ID via
+	// [session.WithID]. Background agent tasks set this so the parent can
+	// refer to the task by session ID before the child session has been
+	// constructed asynchronously. It is also injected into the child's
+	// system prompt as the agent's own identity.
+	SessionID string
+	// ParentAgentName is the name of the agent that initiated this
+	// sub-session. When SessionID is also set (background agent), it is
+	// surfaced in the child's system prompt so the agent knows who started
+	// it.
+	ParentAgentName string
 }
 
 // delegationRequest bundles a [SubSessionConfig] with the single
@@ -149,7 +175,7 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 
 	sysMsg := cfg.SystemMessage
 	if sysMsg == "" {
-		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput, attachedFiles)
+		sysMsg = buildTaskSystemMessage(cfg.Task, cfg.ExpectedOutput, attachedFiles, cfg.SessionID, cfg.ParentAgentName)
 	}
 
 	userMsg := cfg.ImplicitUserMessage
@@ -169,6 +195,9 @@ func newSubSession(parent *session.Session, cfg SubSessionConfig, childAgent *ag
 		session.WithSendUserMessage(false),
 		session.WithParentID(parent.ID),
 		session.WithAttachedFiles(attachedFiles),
+	}
+	if cfg.SessionID != "" {
+		opts = append(opts, session.WithID(cfg.SessionID))
 	}
 	if cfg.PinAgent {
 		opts = append(opts, session.WithAgentName(cfg.AgentName))
@@ -298,33 +327,17 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	return tools.ResultSuccess(s.GetLastAssistantMessageContent()), nil
 }
 
-// runCollecting runs a child session and collects its output via an
-// optional content callback instead of forwarding events. This is the
-// non-interactive path used by background agents: there's no live UI, so
-// events are dropped and only the final assistant message (or the first
-// error) matters.
+// runCollectingOnSession drives one RunStream invocation on s.
 //
-// Unlike runForwarding it does not emit AgentSwitching/AgentInfo events:
-// callers like background agents PinAgent the child session so the
-// runtime never mutates the shared currentAgent state.
-func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Session, cfg SubSessionConfig, onContent func(string)) *agenttool.RunResult {
-	child, err := r.team.Agent(cfg.AgentName)
-	if err != nil {
-		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", cfg.AgentName, err)}
-	}
-
-	s := newSubSession(parent, cfg, child)
-	return r.runCollectingOnSession(ctx, parent, s, cfg, onContent, true)
-}
-
-// runCollectingOnSession is the resumable core of runCollecting: it
-// drives an already-built sub-session via RunStream. The first call from
-// runCollecting performs the initial run and links the sub-session into
-// the parent (linkToParent=true); subsequent calls via the Resume
-// closure (see RunAgent) re-enter the same sub-session with
-// linkToParent=false, picking up any steer messages that were enqueued
-// while the agent was idle.
-func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent *session.Session, s *session.Session, cfg SubSessionConfig, onContent func(string), linkToParent bool) *agenttool.RunResult {
+// eventSink, if non-nil, receives every event the runtime emits before
+// the usual content/error handling. Background-agent tabs use this to
+// forward events into the consumer App's event bus so the supervisor's
+// existing tab routing displays the stream.
+//
+// linkToParent is true for the first invocation against a given child
+// session (so the parent session records the sub-session) and false
+// for every subsequent resume invocation.
+func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent, s *session.Session, cfg SubSessionConfig, onContent func(string), linkToParent bool, eventSink func(Event)) *agenttool.RunResult {
 	// subagent_stop fires after the background sub-session has fully
 	// drained — success or failure. The parent agent at the time of
 	// dispatch (whoever called run_background_agent) owns the executor;
@@ -336,9 +349,26 @@ func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent *sessi
 		r.executeSubagentStopHooks(ctx, parent, s, r.CurrentAgent(), cfg.AgentName, s.GetLastAssistantMessageContent())
 	}()
 
+	forward := func(event Event) {
+		if eventSink != nil {
+			eventSink(event)
+		}
+	}
+
+	slog.DebugContext(ctx, "Background agent stream starting", "session_id", s.ID, "parent_session_id", parent.ID, "agent", cfg.AgentName, "link_to_parent", linkToParent, "max_iterations", s.MaxIterations, "non_interactive", s.NonInteractive)
+
 	var errMsg string
 	events := r.RunStream(ctx, s)
 	for event := range events {
+		forward(event)
+		switch ev := event.(type) {
+		case *StreamStoppedEvent:
+			slog.DebugContext(ctx, "Background agent stream stopped event", "session_id", s.ID, "agent", cfg.AgentName, "reason", ev.Reason)
+		case *MaxIterationsReachedEvent:
+			slog.DebugContext(ctx, "Background agent reached max iterations", "session_id", s.ID, "agent", cfg.AgentName, "max_iterations", ev.MaxIterations)
+		case *ErrorEvent:
+			slog.DebugContext(ctx, "Background agent emitted error", "session_id", s.ID, "agent", cfg.AgentName, "error", ev.Error)
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -354,10 +384,12 @@ func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent *sessi
 	}
 	// Drain remaining events so the RunStream goroutine can complete and
 	// close the channel without blocking on a full buffer.
-	for range events {
+	for event := range events {
+		forward(event)
 	}
 
 	if errMsg != "" {
+		slog.DebugContext(ctx, "Background agent stream finished with error", "session_id", s.ID, "agent", cfg.AgentName, "error", errMsg)
 		return &agenttool.RunResult{ErrMsg: errMsg}
 	}
 
@@ -366,16 +398,8 @@ func (r *LocalRuntime) runCollectingOnSession(ctx context.Context, parent *sessi
 		parent.AddSubSession(s)
 	}
 
+	slog.DebugContext(ctx, "Background agent stream finished", "session_id", s.ID, "agent", cfg.AgentName, "result_length", len(result), "message_count", len(s.Messages), "link_to_parent", linkToParent)
 	return &agenttool.RunResult{Result: result}
-}
-
-// resumeCollecting re-drives an existing sub-session that previously
-// completed. It is used by send_message_background_agent to wake an
-// idle background task: the new steer message is already enqueued on
-// this runtime's steerQueue and runStreamLoop drains it at the top of
-// its loop.
-func (r *LocalRuntime) resumeCollecting(ctx context.Context, parent *session.Session, s *session.Session, cfg SubSessionConfig, onContent func(string)) *agenttool.RunResult {
-	return r.runCollectingOnSession(ctx, parent, s, cfg, onContent, false)
 }
 
 // CurrentAgentSubAgentNames implements agenttool.Runner.
@@ -398,28 +422,33 @@ func (s steerableRuntime) Steer(content string) error {
 	return s.rt.Steer(QueuedMessage{Content: content})
 }
 
-// RunAgent implements agenttool.Runner. It starts a sub-agent synchronously
-// and blocks until completion or cancellation.
+// RunAgent implements agenttool.Runner. It sets up the child runtime
+// and session for a background task and returns immediately. Actual
+// RunStream invocations are driven in response to signals on
+// params.ResumeSignal:
+//
+//   - In TUI mode (a [LocalRuntime.OnBackgroundAgentStarted] handler is
+//     registered) the consumer drives. RunAgent emits a
+//     [BackgroundAgentStart] event that carries the child runtime and
+//     session along with the RunBackground closure and the same
+//     ResumeSignal channel; the consumer reads ResumeSignal and
+//     invokes RunBackground from its own goroutine, typically wrapped
+//     in an App so events flow through the TUI's tab routing.
+//
+//   - In headless mode RunAgent self-drives a goroutine that reads
+//     ResumeSignal and invokes the same closure with a nil event sink.
+//     The OnContent callback is the only output channel in this mode.
+//
+// Every invocation pushes its [agenttool.RunResult] on params.Completed
+// so the Handler can update task status.
 //
 // Each background task gets its own child [LocalRuntime] so that
 // send_message_background_agent can target one specific task's
-// [LocalRuntime.steerQueue] instead of the parent's shared queue. The
-// child inherits every applicable knob from the parent (working dir,
-// env, tracer, telemetry, clock, hooks registry, observers, transforms,
-// auto-injectors, model switcher config, retry-on-rate-limit, ...) so
-// behaviour is otherwise identical to running the sub-agent under the
-// parent runtime.
+// [LocalRuntime.steerQueue] instead of the parent's shared queue.
 //
 // Background tasks run with tools pre-approved because there is no user
 // present to respond to interactive approval prompts during async
-// execution. This is a deliberate design trade-off: the user implicitly
-// authorises all tool calls made by the sub-agent when they approve
-// run_background_agent. Callers should be aware that prompt injection in
-// the sub-agent's context could exploit this gate-bypass.
-//
-// TODO: propagate the parent session's per-tool permission rules once the
-// runtime supports per-session permission scoping rather than a single
-// shared ToolsApproved flag.
+// execution.
 func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams) *agenttool.RunResult {
 	if _, err := r.team.Agent(params.AgentName); err != nil {
 		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
@@ -460,40 +489,94 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 	if err != nil {
 		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("failed to create child runtime: %s", err)}
 	}
+	childRuntime.bgAgents = agenttool.NewHandlerSharingTasks(childRuntime, r.bgAgents)
+	childRuntime.registerDefaultTools()
+
+	// Propagate the background-agent-started hook so the consumer (TUI)
+	// is notified about grandchildren spawned from inside background
+	// agents, not just direct children.
+	if r.onBackgroundAgentStarted != nil {
+		childRuntime.OnBackgroundAgentStarted(r.onBackgroundAgentStarted)
+	}
 
 	cfg := SubSessionConfig{
-		Task:           params.Task,
-		ExpectedOutput: params.ExpectedOutput,
-		AgentName:      params.AgentName,
-		Title:          "Background agent task",
-		ToolsApproved:  true,
-		NonInteractive: true,
-		PinAgent:       true,
+		Task:            params.Task,
+		ExpectedOutput:  params.ExpectedOutput,
+		AgentName:       params.AgentName,
+		Title:           "Background agent task",
+		ToolsApproved:   true,
+		NonInteractive:  true,
+		PinAgent:        true,
+		SessionID:       params.SessionID,
+		ParentAgentName: r.CurrentAgentName(),
 	}
+
+	child, err := r.team.Agent(params.AgentName)
+	if err != nil {
+		return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
+	}
+	s := newSubSession(params.ParentSession, cfg, child)
 
 	if params.OnRuntimeReady != nil {
-		// Build the child sub-session up front so the resume closure can
-		// re-drive it without recreating it. The Resume closure is what
-		// send_message_background_agent calls when the task has gone idle:
-		// it enqueues the new message on the runtime's steerQueue (via the
-		// Steerable) and then invokes Resume, which calls RunStream again
-		// on the same sub-session — runStreamLoop drains steerQueue at the
-		// top of its first iteration.
-		child, err := r.team.Agent(params.AgentName)
-		if err != nil {
-			return &agenttool.RunResult{ErrMsg: fmt.Sprintf("agent %q not found: %s", params.AgentName, err)}
-		}
-		s := newSubSession(params.ParentSession, cfg, child)
 		params.OnRuntimeReady(agenttool.TaskRuntime{
 			Steerable: steerableRuntime{rt: childRuntime},
-			Resume: func(resumeCtx context.Context) *agenttool.RunResult {
-				return childRuntime.resumeCollecting(resumeCtx, params.ParentSession, s, cfg, params.OnContent)
-			},
+			SessionID: s.ID,
 		})
-		return childRuntime.runCollectingOnSession(ctx, params.ParentSession, s, cfg, params.OnContent, true)
 	}
 
-	return childRuntime.runCollecting(ctx, params.ParentSession, cfg, params.OnContent)
+	// runOnce is the single driver primitive: one call drives one
+	// RunStream invocation, forwarding events through eventSink, and
+	// pushes the result on params.Completed. linkToParent flips after
+	// the first call so resume invocations don't re-attach the
+	// sub-session to the parent.
+	var (
+		linkedMu sync.Mutex
+		linked   bool
+	)
+	runOnce := func(runCtx context.Context, eventSink func(Event)) {
+		linkedMu.Lock()
+		link := !linked
+		linked = true
+		linkedMu.Unlock()
+		result := childRuntime.runCollectingOnSession(runCtx, params.ParentSession, s, cfg, params.OnContent, link, eventSink)
+		if params.Completed != nil {
+			select {
+			case params.Completed <- result:
+			case <-runCtx.Done():
+			}
+		}
+	}
+
+	if r.onBackgroundAgentStarted != nil {
+		// TUI mode: hand off driving to the consumer. The consumer reads
+		// ResumeSignal and invokes RunBackground from its own goroutine.
+		r.emitBackgroundAgentStarted(BackgroundAgentStart{
+			SessionID:     s.ID,
+			AgentName:     params.AgentName,
+			Runtime:       childRuntime,
+			Session:       s,
+			RunBackground: runOnce,
+			ResumeSignal:  params.ResumeSignal,
+		})
+		return &agenttool.RunResult{}
+	}
+
+	// Headless mode: drive the loop ourselves. The goroutine lives
+	// until ctx is canceled (HandleStop or runtime shutdown).
+	go func() {
+		for {
+			select {
+			case _, ok := <-params.ResumeSignal:
+				if !ok {
+					return
+				}
+				runOnce(ctx, nil)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &agenttool.RunResult{}
 }
 
 func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink) (*tools.ToolCallResult, error) {

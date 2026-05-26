@@ -672,6 +672,11 @@ func (r *RemoteRuntime) TogglePause(ctx context.Context) (bool, error) {
 // than via an out-of-band callback.
 func (r *RemoteRuntime) OnToolsChanged(func(Event)) {}
 
+// OnBackgroundAgentStarted is a no-op for remote runtimes; background
+// agent task lifecycle is managed server-side and there is no local
+// runtime to surface to the embedder.
+func (r *RemoteRuntime) OnBackgroundAgentStarted(func(BackgroundAgentStart)) {}
+
 // Close is a no-op for remote runtimes.
 func (r *RemoteRuntime) Close() error {
 	return nil

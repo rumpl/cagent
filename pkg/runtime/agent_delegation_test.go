@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,28 +13,46 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
+	"github.com/docker/docker-agent/pkg/tools"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
 )
 
 func TestBuildTaskSystemMessage(t *testing.T) {
 	t.Run("with expected output", func(t *testing.T) {
-		msg := buildTaskSystemMessage("do the thing", "a result", nil)
+		msg := buildTaskSystemMessage("do the thing", "a result", nil, "", "")
 		assert.Contains(t, msg, "<task>\ndo the thing\n</task>")
 		assert.Contains(t, msg, "<expected_output>\na result\n</expected_output>")
 		assert.NotContains(t, msg, "<attached_files>")
+		assert.NotContains(t, msg, "background agent")
 	})
 
 	t.Run("without expected output", func(t *testing.T) {
-		msg := buildTaskSystemMessage("do the thing", "", nil)
+		msg := buildTaskSystemMessage("do the thing", "", nil, "", "")
 		assert.Contains(t, msg, "<task>\ndo the thing\n</task>")
 		assert.NotContains(t, msg, "expected_output")
 		assert.NotContains(t, msg, "<attached_files>")
 	})
 
 	t.Run("with attached files", func(t *testing.T) {
-		msg := buildTaskSystemMessage("do the thing", "", []string{"/abs/foo.go", "/abs/bar.go"})
+		msg := buildTaskSystemMessage("do the thing", "", []string{"/abs/foo.go", "/abs/bar.go"}, "", "")
 		assert.Contains(t, msg, "<task>\ndo the thing\n</task>")
 		assert.Contains(t, msg, "<attached_files>\n- /abs/foo.go\n- /abs/bar.go\n</attached_files>")
+	})
+
+	t.Run("with background agent identity", func(t *testing.T) {
+		msg := buildTaskSystemMessage("do the thing", "", nil, "sess-42", "orchestrator")
+		assert.Contains(t, msg, "You are running as a background agent.")
+		assert.Contains(t, msg, "Your session ID is: sess-42")
+		assert.Contains(t, msg, "You were started by agent: orchestrator")
+		assert.Contains(t, msg, "Other background agents can address you by this session ID")
+		assert.Contains(t, msg, "send_message_background_agent")
+		assert.Contains(t, msg, "with that agent's session_id")
+	})
+
+	t.Run("background agent without parent name", func(t *testing.T) {
+		msg := buildTaskSystemMessage("do the thing", "", nil, "sess-99", "")
+		assert.Contains(t, msg, "Your session ID is: sess-99")
+		assert.NotContains(t, msg, "You were started by agent")
 	})
 }
 
@@ -150,6 +170,29 @@ func TestNewSubSession(t *testing.T) {
 		// When SystemMessage is set, the default task-based message should not be used.
 		// We can verify the user message is still the default.
 		assert.Equal(t, "Please proceed.", s.GetLastUserMessageContent())
+	})
+
+	t.Run("session id forces session ID and injects identity", func(t *testing.T) {
+		cfg := SubSessionConfig{
+			Task:            "do work",
+			AgentName:       "worker",
+			Title:           "Background",
+			SessionID:       "pre-assigned-id",
+			ParentAgentName: "root",
+		}
+
+		s := newSubSession(parent, cfg, childAgent)
+		assert.Equal(t, "pre-assigned-id", s.ID)
+
+		msgs := s.GetMessages(childAgent)
+		require.NotEmpty(t, msgs)
+		var joined strings.Builder
+		for _, m := range msgs {
+			joined.WriteString(m.Content)
+			joined.WriteString("\n")
+		}
+		assert.Contains(t, joined.String(), "Your session ID is: pre-assigned-id")
+		assert.Contains(t, joined.String(), "You were started by agent: root")
 	})
 }
 
@@ -293,11 +336,11 @@ func TestRunAgent_ResumeAfterIdleSteer(t *testing.T) {
 	parent := session.New(session.WithUserMessage("kick off"))
 
 	var (
-		mu         sync.Mutex
-		taskRt     agenttool.TaskRuntime
-		readyOnce  sync.Once
-		readyChan  = make(chan struct{})
-		collected  strings.Builder
+		mu        sync.Mutex
+		taskRt    agenttool.TaskRuntime
+		readyOnce sync.Once
+		readyChan = make(chan struct{})
+		collected strings.Builder
 	)
 
 	result := rt.RunAgent(t.Context(), agenttool.RunParams{
@@ -348,4 +391,69 @@ func TestRunAgent_ResumeAfterIdleSteer(t *testing.T) {
 		}
 	}
 	assert.True(t, foundSteer, "second model call must include the steered content")
+}
+
+func TestBackgroundAgentChildRuntimeCanMessageSibling(t *testing.T) {
+	t.Parallel()
+
+	prov := &blockingProvider{id: "test/blocking-model"}
+	alice := agent.New("alice", "Alice worker", agent.WithModel(prov))
+	bob := agent.New("bob", "Bob worker", agent.WithModel(prov))
+	root := agent.New("root", "Root coordinator", agent.WithModel(prov), agent.WithSubAgents(alice, bob))
+	tm := team.New(team.WithAgents(root, alice, bob))
+
+	rt, err := NewLocalRuntime(tm,
+		WithCurrentAgent("root"),
+		WithSessionCompaction(false),
+		WithModelStore(mockModelStore{}),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rt.Close()) })
+
+	started := make(chan BackgroundAgentStart, 2)
+	rt.OnBackgroundAgentStarted(func(start BackgroundAgentStart) {
+		started <- start
+	})
+
+	parent := session.New(session.WithUserMessage("start both workers"))
+	startAgent := func(name string) {
+		t.Helper()
+		args, err := json.Marshal(agenttool.RunBackgroundAgentArgs{Agent: name, Task: "wait for messages"})
+		require.NoError(t, err)
+		result, err := rt.bgAgents.HandleRun(t.Context(), parent, tools.ToolCall{Function: tools.FunctionCall{Arguments: string(args)}})
+		require.NoError(t, err)
+		require.False(t, result.IsError, result.Output)
+	}
+
+	startAgent("alice")
+	startAgent("bob")
+
+	starts := make(map[string]BackgroundAgentStart)
+	for len(starts) < 2 {
+		select {
+		case start := <-started:
+			starts[start.AgentName] = start
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for background agents to start; got %v", starts)
+		}
+	}
+
+	aliceRuntime, ok := starts["alice"].Runtime.(*LocalRuntime)
+	require.True(t, ok, "expected alice runtime to be local")
+
+	select {
+	case ev := <-starts["alice"].Events:
+		require.IsType(t, &TeamInfoEvent{}, ev)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for forwarded background agent events")
+	}
+
+	args, err := json.Marshal(agenttool.SendMessageBackgroundAgentArgs{
+		SessionID: starts["bob"].SessionID,
+		Message:   "ping from alice",
+	})
+	require.NoError(t, err)
+	result, err := aliceRuntime.bgAgents.HandleSendMessage(t.Context(), starts["alice"].Session, tools.ToolCall{Function: tools.FunctionCall{Arguments: string(args)}})
+	require.NoError(t, err)
+	require.False(t, result.IsError, result.Output)
 }

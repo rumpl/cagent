@@ -56,3 +56,20 @@ type WorkingStateChangedMsg struct {
 // BellMsg is sent when the terminal bell should be rung to notify the user.
 // This is used when an inactive tab needs attention (e.g., tool confirmation).
 type BellMsg struct{}
+
+// BackgroundAgentStartedMsg is sent when run_background_agent has
+// constructed a child session. The TUI opens a new tab for the child
+// without switching focus away from the parent, and drives the child's
+// run loop via RunBackground in response to signals on ResumeSignal.
+//
+// Runtime, Session, RunBackground, and ResumeSignal are typed as any
+// to keep this package free of a runtime import; the TUI layer asserts
+// the concrete types when handling the message.
+type BackgroundAgentStartedMsg struct {
+	SessionID     string
+	AgentName     string
+	Runtime       any // runtime.Runtime
+	Session       any // *session.Session
+	RunBackground any // func(ctx context.Context, eventSink func(runtime.Event))
+	ResumeSignal  any // <-chan struct{}
+}

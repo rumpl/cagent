@@ -140,6 +140,13 @@ type Runtime interface {
 	// can implement this as a no-op.
 	OnToolsChanged(handler func(Event))
 
+	// OnBackgroundAgentStarted registers a handler invoked when a
+	// background sub-agent task has been constructed and is about to
+	// start streaming. Used by the TUI to open the child session as a
+	// new tab without stealing focus. Runtimes that don't support
+	// background agents can implement this as a no-op.
+	OnBackgroundAgentStarted(handler func(BackgroundAgentStart))
+
 	// QueueStatus returns the current depth and capacity of message queues
 	QueueStatus() QueueStatus
 
@@ -246,6 +253,13 @@ type LocalRuntime struct {
 
 	// onToolsChanged is called when an MCP toolset reports a tool list change.
 	onToolsChanged func(Event)
+
+	// onBackgroundAgentStarted is called from RunAgent when a background
+	// sub-agent has been constructed and is about to start streaming.
+	// It carries the child runtime and session so the caller (typically
+	// the TUI) can wrap them in its own surface (e.g. an *app.App tab)
+	// without ever switching focus away from the parent session.
+	onBackgroundAgentStarted func(BackgroundAgentStart)
 
 	bgAgents *agenttool.Handler
 
@@ -1005,6 +1019,47 @@ func (r *LocalRuntime) emitToolsChanged() {
 		return
 	}
 	r.onToolsChanged(ToolsetInfo(len(agentTools), false, r.CurrentAgentName()))
+}
+
+// BackgroundAgentStart describes a freshly-spawned background agent
+// task. It is delivered to the handler registered via
+// [LocalRuntime.OnBackgroundAgentStarted] so the embedding application
+// (typically the TUI) can surface the child session — e.g. open it as
+// a new tab — without ever stealing focus from the parent.
+//
+// The consumer drives the run loop: read ResumeSignal, then call
+// RunBackground with an event sink that pumps events into wherever
+// they need to surface (e.g. an App's event bus). RunBackground
+// returns after each RunStream invocation; the runtime internally
+// pushes the resulting RunResult into the channel the Handler is
+// reading, so the consumer doesn't need to track results.
+type BackgroundAgentStart struct {
+	SessionID     string
+	AgentName     string
+	Runtime       Runtime
+	Session       *session.Session
+	RunBackground func(ctx context.Context, eventSink func(Event))
+	ResumeSignal  <-chan struct{}
+}
+
+// OnBackgroundAgentStarted registers a handler that is called from
+// [LocalRuntime.RunAgent] when a background sub-agent has been
+// constructed. The handler receives the child runtime and session so
+// callers can wrap them in their own surface (e.g. an *app.App tab).
+// Only one handler is supported; later calls overwrite earlier ones.
+func (r *LocalRuntime) OnBackgroundAgentStarted(handler func(BackgroundAgentStart)) {
+	r.onBackgroundAgentStarted = handler
+}
+
+// emitBackgroundAgentStarted fires the handler registered via
+// [LocalRuntime.OnBackgroundAgentStarted], if any. It is a no-op when
+// no handler is registered — the background-agent feature works
+// without a TUI consumer.
+func (r *LocalRuntime) emitBackgroundAgentStarted(start BackgroundAgentStart) {
+	if r.onBackgroundAgentStarted == nil {
+		return
+	}
+	r.onBackgroundAgentStarted(start)
 }
 
 // EmitStartupInfo emits initial agent, team, and toolset information for immediate sidebar display.

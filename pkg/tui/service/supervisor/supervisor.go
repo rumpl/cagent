@@ -69,6 +69,25 @@ func (s *Supervisor) SetProgram(p *tea.Program) {
 	})
 }
 
+// SendMsg forwards a tea.Msg to the supervisor's Bubble Tea program.
+// It blocks until the program has been set via [Supervisor.SetProgram]
+// (or the supplied context is cancelled), so callers can fire it from
+// any goroutine — e.g. a runtime callback that fires before the TUI
+// finishes booting — without dropping events.
+func (s *Supervisor) SendMsg(ctx context.Context, msg tea.Msg) {
+	select {
+	case <-s.programReady:
+	case <-ctx.Done():
+		return
+	}
+	s.mu.RLock()
+	p := s.program
+	s.mu.RUnlock()
+	if p != nil {
+		p.Send(msg)
+	}
+}
+
 // AddSession adds an existing session to the supervisor.
 func (s *Supervisor) AddSession(ctx context.Context, a *app.App, sess *session.Session, workingDir string, cleanup func()) string {
 	s.mu.Lock()
