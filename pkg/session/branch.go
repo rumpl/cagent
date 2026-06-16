@@ -78,6 +78,7 @@ func (s *Session) Clone() *Session {
 		ExcludedTools:           cloneStringSlice(s.ExcludedTools),
 		AgentName:               s.AgentName,
 		ParentID:                s.ParentID,
+		PersistLive:             s.PersistLive,
 		MessageUsageHistory:     slices.Clone(s.MessageUsageHistory),
 	}
 

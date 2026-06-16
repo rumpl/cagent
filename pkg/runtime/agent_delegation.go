@@ -262,6 +262,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	}
 
 	s := newSubSession(parent, req.SubSessionConfig, child)
+	s.PersistLive = true
 
 	// subagent_stop fires after the child's stream has fully drained,
 	// using the *parent* agent's executor so handlers configured on the

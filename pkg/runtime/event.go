@@ -784,6 +784,8 @@ type SubSessionCompletedEvent struct {
 	SubSession      any    `json:"sub_session"` // *session.Session
 }
 
+func (e *SubSessionCompletedEvent) GetSessionID() string { return e.ParentSessionID }
+
 func SubSessionCompleted(parentSessionID string, subSession any, agentName string) Event {
 	return &SubSessionCompletedEvent{
 		Type:            "sub_session_completed",

@@ -166,9 +166,16 @@ type Session struct {
 	AgentName string `json:"-"`
 
 	// ParentID indicates this is a sub-session created by task transfer.
-	// Sub-sessions are not persisted as standalone entries; they are embedded
-	// within the parent session's Messages array.
+	// Persisted stores keep sub-sessions as separate rows linked back to
+	// their parent so nested transcripts can be loaded without appearing in
+	// the top-level session list.
 	ParentID string `json:"-"`
+
+	// PersistLive marks forwarded sub-sessions (transfer_task and forked
+	// skills) whose stream should be mirrored to the session store while it
+	// is still running. Background/pinned sub-sessions leave this false so
+	// they are not persisted as orphan rows before their owner records them.
+	PersistLive bool `json:"-"`
 
 	// MessageUsageHistory stores per-message usage data for remote mode.
 	// In remote mode, messages are managed server-side, so we track usage separately.
@@ -744,7 +751,6 @@ func WithAgentName(name string) Opt {
 }
 
 // WithParentID marks this session as a sub-session of the given parent.
-// Sub-sessions are not persisted as standalone entries in the session store.
 func WithParentID(parentID string) Opt {
 	return func(s *Session) {
 		s.ParentID = parentID

@@ -309,18 +309,39 @@ func (s *InMemorySessionStore) UpdateMessage(_ context.Context, messageID int64,
 	return nil
 }
 
-// AddSubSession creates a sub-session and links it to the parent.
+// AddSubSession creates or updates a sub-session and links it to the parent.
 func (s *InMemorySessionStore) AddSubSession(_ context.Context, parentSessionID string, subSession *Session) error {
-	if parentSessionID == "" {
+	if parentSessionID == "" || subSession == nil || subSession.ID == "" {
 		return ErrEmptyID
 	}
 	parent, exists := s.sessions.Load(parentSessionID)
 	if !exists {
 		return ErrNotFound
 	}
-	subSession.ParentID = parentSessionID
-	s.sessions.Store(subSession.ID, subSession)
-	parent.AddSubSession(subSession)
+
+	child := subSession.Clone()
+	child.ParentID = parentSessionID
+	child.Cost = child.OwnCost()
+	if existing, exists := s.sessions.Load(child.ID); exists {
+		existingSnapshot := existing.Clone()
+		if len(existingSnapshot.Messages) < len(child.Messages) {
+			existingSnapshot.Messages = append(existingSnapshot.Messages, child.Messages[len(existingSnapshot.Messages):]...)
+		}
+		child.Messages = existingSnapshot.Messages
+		child.Cost = child.OwnCost()
+	}
+	s.sessions.Store(child.ID, child)
+
+	parent.mu.Lock()
+	defer parent.mu.Unlock()
+	for i := range parent.Messages {
+		if parent.Messages[i].SubSession == nil || parent.Messages[i].SubSession.ID != child.ID {
+			continue
+		}
+		parent.Messages[i].SubSession = child
+		return nil
+	}
+	parent.Messages = append(parent.Messages, NewSubSessionItem(child))
 	return nil
 }
 
@@ -891,19 +912,25 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		return ErrEmptyID
 	}
 
-	fields, err := sessionPersistedFieldsOf(session)
-	if err != nil {
-		return err
-	}
-
-	// Use a transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Use INSERT OR REPLACE for upsert behavior - creates if not exists, updates if exists
+	if err := s.upsertSessionTx(ctx, tx, session); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLiteSessionStore) upsertSessionTx(ctx context.Context, tx *sql.Tx, session *Session) error {
+	fields, err := sessionPersistedFieldsOf(session)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sessions (
 			id, tools_approved, input_tokens, output_tokens, title, cost, send_user_message,
@@ -930,14 +957,7 @@ func (s *SQLiteSessionStore) UpdateSession(ctx context.Context, session *Session
 		session.Title, session.Cost, session.SendUserMessage, session.MaxIterations, session.WorkingDir,
 		session.CreatedAt.Format(time.RFC3339), session.Starred, fields.PermissionsJSON, fields.AgentModelOverridesJSON,
 		fields.CustomModelsUsedJSON, false, fields.ParentID)
-	if err != nil {
-		return err
-	}
-
-	// Note: Messages are NOT persisted here. They are persisted via events
-	// (UserMessageEvent, MessageAddedEvent, etc.) to avoid duplication.
-
-	return tx.Commit()
+	return err
 }
 
 // SetSessionStarred sets the starred status of a session.
@@ -1024,9 +1044,9 @@ func (s *SQLiteSessionStore) UpdateMessage(ctx context.Context, messageID int64,
 	return nil
 }
 
-// AddSubSession creates a sub-session and links it to the parent.
+// AddSubSession creates or updates a sub-session and links it to the parent.
 func (s *SQLiteSessionStore) AddSubSession(ctx context.Context, parentSessionID string, subSession *Session) error {
-	if parentSessionID == "" || subSession.ID == "" {
+	if parentSessionID == "" || subSession == nil || subSession.ID == "" {
 		return ErrEmptyID
 	}
 
@@ -1038,31 +1058,60 @@ func (s *SQLiteSessionStore) AddSubSession(ctx context.Context, parentSessionID 
 		_ = tx.Rollback()
 	}()
 
-	// 1. Set parent_id on sub-session
 	subSession.ParentID = parentSessionID
-
-	// 2. Insert sub-session as a new session row
-	if err := s.addSessionTx(ctx, tx, subSession); err != nil {
-		return fmt.Errorf("inserting sub-session: %w", err)
+	persisted := subSession.Clone()
+	persisted.ParentID = parentSessionID
+	persisted.Cost = persisted.OwnCost()
+	if err := s.upsertSessionTx(ctx, tx, persisted); err != nil {
+		return fmt.Errorf("upserting sub-session: %w", err)
 	}
 
-	// 3. Recursively add all items from the sub-session
-	for i, item := range subSession.Messages {
-		if err := s.addItemTx(ctx, tx, subSession.ID, i, item); err != nil {
+	existingPositions, err := s.sessionItemPositionsTx(ctx, tx, persisted.ID)
+	if err != nil {
+		return fmt.Errorf("loading sub-session item positions: %w", err)
+	}
+	for i, item := range persisted.Messages {
+		if _, exists := existingPositions[i]; exists {
+			continue
+		}
+		if err := s.addItemTx(ctx, tx, persisted.ID, i, item); err != nil {
 			return fmt.Errorf("inserting sub-session item %d: %w", i, err)
 		}
 	}
 
-	// 4. Add reference in parent's items
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO session_items (session_id, position, item_type, subsession_id)
-		 VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'subsession', ?)`,
-		parentSessionID, parentSessionID, subSession.ID)
+		 SELECT ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM session_items WHERE session_id = ?), 'subsession', ?
+		 WHERE NOT EXISTS (
+			 SELECT 1 FROM session_items WHERE session_id = ? AND item_type = 'subsession' AND subsession_id = ?
+		 )`,
+		parentSessionID, parentSessionID, persisted.ID, parentSessionID, persisted.ID)
 	if err != nil {
 		return fmt.Errorf("inserting subsession reference: %w", err)
 	}
 
 	return tx.Commit()
+}
+
+func (s *SQLiteSessionStore) sessionItemPositionsTx(ctx context.Context, tx *sql.Tx, sessionID string) (map[int]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT position FROM session_items WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	positions := make(map[int]struct{})
+	for rows.Next() {
+		var position int
+		if err := rows.Scan(&position); err != nil {
+			return nil, err
+		}
+		positions[position] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return positions, nil
 }
 
 // addSessionTx inserts a session within a transaction.
