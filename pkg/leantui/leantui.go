@@ -144,7 +144,7 @@ type pendingBlock struct {
 }
 
 type model struct {
-	app  *app.App
+	app  leanApp
 	term *terminal
 	r    *renderer
 
