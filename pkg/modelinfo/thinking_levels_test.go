@@ -132,10 +132,10 @@ func TestSupportedThinkingLevels(t *testing.T) {
 			want:     []effort.Level{effort.None, effort.Minimal, effort.Low, effort.Medium, effort.High, effort.XHigh},
 		},
 		{
-			name:     "o-series tops out at high",
+			name:     "o-series starts at low because older models do not accept minimal",
 			provider: "openai",
 			modelID:  "o3",
-			want:     []effort.Level{effort.None, effort.Minimal, effort.Low, effort.Medium, effort.High},
+			want:     []effort.Level{effort.None, effort.Low, effort.Medium, effort.High},
 		},
 		{
 			name:     "gemini 3 pro has no xhigh",

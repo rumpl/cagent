@@ -241,6 +241,16 @@ func TestApplyProviderDefaults(t *testing.T) {
 
 // TestApplyProviderDefaults_DoesNotModifyOriginal verifies that applyProviderDefaults
 // does not mutate the input config's ProviderOpts map.
+func TestApplyProviderDefaults_PreservesOpenAINoneThinkingBudget(t *testing.T) {
+	t.Parallel()
+
+	cfg := &latest.ModelConfig{Provider: "openai", Model: "gpt-5", ThinkingBudget: &latest.ThinkingBudget{Effort: "none"}}
+	got := applyProviderDefaults(cfg, nil)
+
+	require.NotNil(t, got.ThinkingBudget)
+	assert.Equal(t, "none", got.ThinkingBudget.Effort)
+}
+
 func TestApplyProviderDefaults_DoesNotModifyOriginal(t *testing.T) {
 	t.Parallel()
 

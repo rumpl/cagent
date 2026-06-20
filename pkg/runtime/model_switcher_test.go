@@ -304,6 +304,28 @@ func TestCycleAgentThinkingLevel_Gemini25EffortAffectsTokenBudget(t *testing.T) 
 	assert.Zero(t, budget.Tokens, "Gemini provider maps effort to tokens at request build time")
 }
 
+func TestCycleAgentThinkingLevel_OpenAIONoneDisablesReasoning(t *testing.T) {
+	t.Parallel()
+
+	model := newConfigProvider(latest.ModelConfig{Provider: "openai", Model: "gpt-5", ThinkingBudget: &latest.ThinkingBudget{Effort: "high"}})
+	root := agent.New("root", "test", agent.WithModel(model))
+	r := &LocalRuntime{
+		team: team.New(team.WithAgents(root)),
+		modelSwitcherCfg: &ModelSwitcherConfig{
+			ProviderRegistry: testProviderRegistry(),
+			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "test"}),
+		},
+	}
+
+	level, err := r.CycleAgentThinkingLevel(t.Context(), "root")
+	require.NoError(t, err)
+	assert.Equal(t, effort.None, level)
+
+	budget := root.Model(t.Context()).BaseConfig().ModelConfig.ThinkingBudget
+	require.NotNil(t, budget)
+	assert.Equal(t, "none", budget.Effort)
+}
+
 func TestCycleAgentThinkingLevel_AnthropicTokenModelUsesTokenBudget(t *testing.T) {
 	t.Parallel()
 

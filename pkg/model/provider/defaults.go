@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"log/slog"
 	"maps"
+	"strings"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/modelinfo"
@@ -210,15 +211,21 @@ func cloneModelConfig(cfg *latest.ModelConfig) *latest.ModelConfig {
 //
 // NOTE: max_tokens is NOT set here; see teamloader and runtime/model_switcher.
 func applyModelDefaults(cfg *latest.ModelConfig) {
+	providerType := resolveProviderType(cfg)
+
 	// Explicitly disabled → normalise to nil so providers never see it.
+	// OpenAI reasoning models are the exception: the API accepts
+	// reasoning_effort=none, which is the only way runtime cycling can make
+	// the visible "off" state affect subsequent requests.
 	if cfg.ThinkingBudget.IsDisabled() {
+		if isOpenAICompatibleProvider(providerType) && modelinfo.UsesReasoningEffort(cfg.Model) && strings.EqualFold(cfg.ThinkingBudget.Effort, "none") {
+			return
+		}
 		cfg.ThinkingBudget = nil
 		slog.Debug("Thinking explicitly disabled",
 			"provider", cfg.Provider, "model", cfg.Model)
 		return
 	}
-
-	providerType := resolveProviderType(cfg)
 
 	// User already set a real thinking_budget — just apply side-effects.
 	if cfg.ThinkingBudget != nil {

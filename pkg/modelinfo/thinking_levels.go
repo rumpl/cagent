@@ -30,6 +30,9 @@ func thinkingLevelMap(provider, modelID string) effort.LevelMap {
 		}
 		return m
 	case "openai":
+		if isOSeries(normalize(modelID)) {
+			return effort.LevelMap{effort.Minimal: false}
+		}
 		if openAISupportsXHighEffort(modelID) {
 			return effort.LevelMap{effort.XHigh: true}
 		}

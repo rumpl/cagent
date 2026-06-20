@@ -168,10 +168,10 @@ func NextSupportedLevel(supported []Level, current Level) Level {
 // ---------------------------------------------------------------------------
 
 // ForOpenAI returns the OpenAI reasoning_effort string for l.
-// OpenAI accepts: minimal, low, medium, high, xhigh.
+// OpenAI accepts: none, minimal, low, medium, high, xhigh.
 func ForOpenAI(l Level) (string, bool) {
 	switch l {
-	case Minimal, Low, Medium, High, XHigh:
+	case None, Minimal, Low, Medium, High, XHigh:
 		return string(l), true
 	default:
 		return "", false
