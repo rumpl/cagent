@@ -217,7 +217,7 @@ func (r *LocalRuntime) CycleAgentThinkingLevel(ctx context.Context, agentName st
 	for _, m := range models {
 		mc := m.BaseConfig().ModelConfig
 		cfg := mc.Clone()
-		cfg.ThinkingBudget = &latest.ThinkingBudget{Effort: string(next)}
+		cfg.ThinkingBudget = thinkingBudgetForLevel(cfg, next)
 		prov, err := r.createProviderFromConfig(ctx, cfg)
 		if err != nil {
 			return "", fmt.Errorf("failed to apply thinking level: %w", err)
@@ -228,6 +228,42 @@ func (r *LocalRuntime) CycleAgentThinkingLevel(ctx context.Context, agentName st
 	a.SetModelOverride(newProviders...)
 	slog.InfoContext(ctx, "Cycled agent thinking level", "agent", agentName, "level", next)
 	return next, nil
+}
+
+func thinkingBudgetForLevel(cfg *latest.ModelConfig, level effort.Level) *latest.ThinkingBudget {
+	if level == effort.None {
+		return &latest.ThinkingBudget{Effort: string(effort.None)}
+	}
+	if cfg != nil && providerUsesAnthropicTokenThinking(cfg.Provider, cfg.Model) {
+		if tokens, ok := effort.BedrockTokens(level); ok {
+			return &latest.ThinkingBudget{Tokens: tokens}
+		}
+	}
+	return &latest.ThinkingBudget{Effort: string(level)}
+}
+
+func providerUsesAnthropicTokenThinking(provider, model string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	if p != "anthropic" {
+		return false
+	}
+	return !anthropicSupportsEffortThinking(model)
+}
+
+func anthropicSupportsEffortThinking(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if modelinfo.RejectsTokenThinking(m) {
+		return true
+	}
+	if strings.Contains(m, "fable") || strings.Contains(m, "mythos") {
+		return true
+	}
+	for _, marker := range []string{"sonnet-4-6", "sonnet-4.6", "opus-4-6", "opus-4.6"} {
+		if strings.Contains(m, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // modelSupportsThinking reports whether cfg names a model that accepts a
@@ -258,14 +294,29 @@ func (r *LocalRuntime) modelSupportsThinking(ctx context.Context, cfg *latest.Mo
 }
 
 // currentThinkingLevel maps a model config's thinking_budget onto an
-// [effort.Level]. A nil, disabled, token-based, or adaptive budget is
-// reported as [effort.None] so the first cycle step lands on a concrete
-// effort level.
+// [effort.Level]. A nil, disabled, adaptive, token budget that doesn't match
+// a preset, or unknown effort is reported as [effort.None] so the first cycle
+// step lands on a concrete effort level.
 func currentThinkingLevel(cfg *latest.ModelConfig) effort.Level {
 	if l, ok := cfg.ThinkingBudget.EffortLevel(); ok {
 		return l
 	}
+	if l, ok := thinkingLevelFromTokens(cfg.ThinkingBudget); ok {
+		return l
+	}
 	return effort.None
+}
+
+func thinkingLevelFromTokens(budget *latest.ThinkingBudget) (effort.Level, bool) {
+	if budget == nil || budget.IsDisabled() || budget.Effort != "" {
+		return "", false
+	}
+	for _, level := range []effort.Level{effort.Minimal, effort.Low, effort.Medium, effort.High, effort.XHigh, effort.Max} {
+		if tokens, ok := effort.BedrockTokens(level); ok && tokens == budget.Tokens {
+			return level, true
+		}
+	}
+	return "", false
 }
 
 // setAgentModelInternal applies modelRef as the agent's model override and

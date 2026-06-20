@@ -73,7 +73,9 @@ func TestCurrentThinkingLevel(t *testing.T) {
 		{"disabled zero tokens", &latest.ThinkingBudget{Tokens: 0}, effort.None},
 		{"effort high", &latest.ThinkingBudget{Effort: "high"}, effort.High},
 		{"effort medium", &latest.ThinkingBudget{Effort: "medium"}, effort.Medium},
-		{"token budget treated as none", &latest.ThinkingBudget{Tokens: 4096}, effort.None},
+		{"token budget treated as none when not an effort preset", &latest.ThinkingBudget{Tokens: 4096}, effort.None},
+		{"token budget maps to medium", &latest.ThinkingBudget{Tokens: 8192}, effort.Medium},
+		{"token budget maps to high", &latest.ThinkingBudget{Tokens: 16384}, effort.High},
 		{"adaptive treated as none", &latest.ThinkingBudget{Effort: "adaptive"}, effort.None},
 	}
 
@@ -219,6 +221,66 @@ func TestCycleAgentThinkingLevel_AdvancesAndOverrides(t *testing.T) {
 
 // TestCycleAgentThinkingLevel_PerModelTopTier verifies that cycling only
 // offers the top effort tiers to the Claude models whose API accepts them.
+func TestThinkingBudgetForLevel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cfg        latest.ModelConfig
+		level      effort.Level
+		wantEffort string
+		wantTokens int
+	}{
+		{
+			name:       "openai uses effort string",
+			cfg:        latest.ModelConfig{Provider: "openai", Model: "gpt-5"},
+			level:      effort.High,
+			wantEffort: "high",
+		},
+		{
+			name:       "anthropic token-thinking model maps effort to tokens",
+			cfg:        latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-5"},
+			level:      effort.High,
+			wantTokens: 16384,
+		},
+		{
+			name:       "anthropic adaptive-only sonnet model keeps effort string",
+			cfg:        latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-6"},
+			level:      effort.High,
+			wantEffort: "high",
+		},
+		{
+			name:       "anthropic adaptive-only opus model keeps effort string",
+			cfg:        latest.ModelConfig{Provider: "anthropic", Model: "claude-opus-4-6"},
+			level:      effort.High,
+			wantEffort: "high",
+		},
+		{
+			name:       "anthropic adaptive-only fable model keeps effort string",
+			cfg:        latest.ModelConfig{Provider: "anthropic", Model: "claude-fable-5"},
+			level:      effort.Max,
+			wantEffort: "max",
+		},
+		{
+			name:       "none stays an effort string",
+			cfg:        latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-5"},
+			level:      effort.None,
+			wantEffort: "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := thinkingBudgetForLevel(&tt.cfg, tt.level)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantEffort, got.Effort)
+			assert.Equal(t, tt.wantTokens, got.Tokens)
+		})
+	}
+}
+
 func TestCycleAgentThinkingLevel_Gemini25EffortAffectsTokenBudget(t *testing.T) {
 	t.Parallel()
 
@@ -240,6 +302,29 @@ func TestCycleAgentThinkingLevel_Gemini25EffortAffectsTokenBudget(t *testing.T) 
 	require.NotNil(t, budget)
 	assert.Equal(t, "minimal", budget.Effort)
 	assert.Zero(t, budget.Tokens, "Gemini provider maps effort to tokens at request build time")
+}
+
+func TestCycleAgentThinkingLevel_AnthropicTokenModelUsesTokenBudget(t *testing.T) {
+	t.Parallel()
+
+	model := newConfigProvider(latest.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-5"})
+	root := agent.New("root", "test", agent.WithModel(model))
+	r := &LocalRuntime{
+		team: team.New(team.WithAgents(root)),
+		modelSwitcherCfg: &ModelSwitcherConfig{
+			ProviderRegistry: testProviderRegistry(),
+			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"ANTHROPIC_API_KEY": "test"}),
+		},
+	}
+
+	level, err := r.CycleAgentThinkingLevel(t.Context(), "root")
+	require.NoError(t, err)
+	assert.Equal(t, effort.Low, level)
+
+	budget := root.Model(t.Context()).BaseConfig().ModelConfig.ThinkingBudget
+	require.NotNil(t, budget)
+	assert.Empty(t, budget.Effort)
+	assert.Equal(t, 2048, budget.Tokens)
 }
 
 func TestCycleAgentThinkingLevel_PerModelTopTier(t *testing.T) {
