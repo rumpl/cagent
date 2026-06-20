@@ -536,6 +536,9 @@ func gemini3ThinkingLevel(effortStr string) (genai.ThinkingLevel, bool) {
 // applyGemini25ThinkingBudget applies token-based thinking for Gemini 2.5 and other models.
 func (c *Client) applyGemini25ThinkingBudget(config *genai.GenerateContentConfig) {
 	tokens := c.ModelConfig.ThinkingBudget.Tokens
+	if mapped, ok := c.ModelConfig.ThinkingBudget.EffortTokens(); ok {
+		tokens = mapped
+	}
 	config.ThinkingConfig.ThinkingBudget = new(int32(tokens)) //nolint:gosec // user-configured thinking budget fits in int32
 	slog.Debug("Gemini request using thinking_budget", "budget_tokens", tokens)
 }

@@ -46,6 +46,20 @@ func TestBuildConfig_Gemini25_ThinkingBudget(t *testing.T) {
 			expectThinkingLevel:  "",
 		},
 		{
+			name:                 "gemini-2.5-flash maps effort high to token budget",
+			model:                "gemini-2.5-flash",
+			thinkingBudget:       &latest.ThinkingBudget{Effort: "high"},
+			expectThinkingBudget: new(int32(16384)),
+			expectThinkingLevel:  "",
+		},
+		{
+			name:                 "gemini-2.5-pro maps effort low to token budget",
+			model:                "gemini-2.5-pro",
+			thinkingBudget:       &latest.ThinkingBudget{Effort: "low"},
+			expectThinkingBudget: new(int32(2048)),
+			expectThinkingLevel:  "",
+		},
+		{
 			name:                 "gemini-2.5-flash with thinking disabled (0)",
 			model:                "gemini-2.5-flash",
 			thinkingBudget:       &latest.ThinkingBudget{Tokens: 0},

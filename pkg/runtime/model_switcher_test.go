@@ -219,6 +219,29 @@ func TestCycleAgentThinkingLevel_AdvancesAndOverrides(t *testing.T) {
 
 // TestCycleAgentThinkingLevel_PerModelTopTier verifies that cycling only
 // offers the top effort tiers to the Claude models whose API accepts them.
+func TestCycleAgentThinkingLevel_Gemini25EffortAffectsTokenBudget(t *testing.T) {
+	t.Parallel()
+
+	model := newConfigProvider(latest.ModelConfig{Provider: "google", Model: "gemini-2.5-flash"})
+	root := agent.New("root", "test", agent.WithModel(model))
+	r := &LocalRuntime{
+		team: team.New(team.WithAgents(root)),
+		modelSwitcherCfg: &ModelSwitcherConfig{
+			ProviderRegistry: testProviderRegistry(),
+			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"GOOGLE_API_KEY": "test"}),
+		},
+	}
+
+	level, err := r.CycleAgentThinkingLevel(t.Context(), "root")
+	require.NoError(t, err)
+	assert.Equal(t, effort.Minimal, level)
+
+	budget := root.Model(t.Context()).BaseConfig().ModelConfig.ThinkingBudget
+	require.NotNil(t, budget)
+	assert.Equal(t, "minimal", budget.Effort)
+	assert.Zero(t, budget.Tokens, "Gemini provider maps effort to tokens at request build time")
+}
+
 func TestCycleAgentThinkingLevel_PerModelTopTier(t *testing.T) {
 	t.Parallel()
 
