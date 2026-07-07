@@ -67,3 +67,38 @@ func TestAutocompleteBuiltinsBeforeAgent(t *testing.T) {
 	assert.Equal(t, "plan", last.Name)
 	assert.Equal(t, CmdAgent, last.Kind)
 }
+
+func TestAutocompleteDismissAndInactiveNavigation(t *testing.T) {
+	t.Parallel()
+	a := NewAutocomplete()
+	a.SetCommands(testCommands())
+	assert.False(t, a.Sync("/missing"))
+	_, ok := a.Current()
+	assert.False(t, ok)
+
+	a.MoveUp()
+	a.MoveDown()
+	assert.False(t, a.Active)
+
+	require.True(t, a.Sync("/"))
+	a.Dismiss()
+	assert.False(t, a.Active)
+	assert.Empty(t, a.matches)
+	assert.Equal(t, 0, a.selected)
+}
+
+func TestAutocompleteKeepsSelectionInRangeAfterMatchesShrink(t *testing.T) {
+	t.Parallel()
+	a := NewAutocomplete()
+	a.SetCommands(testCommands())
+	require.True(t, a.Sync("/"))
+	a.MoveDown()
+	a.MoveDown()
+	a.MoveDown()
+	require.True(t, a.Sync("/he"))
+
+	current, ok := a.Current()
+	require.True(t, ok)
+	assert.Equal(t, "help", current.Name)
+	assert.Equal(t, 0, a.selected)
+}

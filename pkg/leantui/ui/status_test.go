@@ -69,3 +69,21 @@ func TestRenderStatusFitsWidth(t *testing.T) {
 		assert.LessOrEqual(t, DisplayWidth(l), 80)
 	}
 }
+
+func TestRenderContextTokensWithoutLimitAndClampsPercent(t *testing.T) {
+	t.Parallel()
+
+	assert.Contains(t, RenderContext(StatusModel{Tokens: 1234}), "1.2k tokens")
+	ctx := RenderContext(StatusModel{ContextLength: 150, ContextLimit: 100})
+	assert.Contains(t, ctx, "100%")
+	assert.Contains(t, ctx, "150/100")
+}
+
+func TestComposeLineTruncatesRightWhenNeeded(t *testing.T) {
+	t.Parallel()
+
+	out := ComposeLine("left", "very-long-right", 5)
+
+	assert.LessOrEqual(t, DisplayWidth(out), 5)
+	assert.NotContains(t, out, "left")
+}

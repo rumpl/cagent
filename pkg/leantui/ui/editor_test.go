@@ -132,3 +132,70 @@ func TestEditorHistoryDeduplicates(t *testing.T) {
 	e.RememberHistory("same")
 	assert.Len(t, e.history, 1)
 }
+
+func TestEditorResetEmptyAndLineDeletion(t *testing.T) {
+	t.Parallel()
+	e := NewEditor("")
+	assert.True(t, e.IsEmpty())
+
+	e.SetText("first\nsecond")
+	assert.False(t, e.IsEmpty())
+	e.MoveLineStart()
+	e.DeleteToLineStart()
+	assert.Equal(t, "first\nsecond", e.Text())
+
+	e.DeleteToLineEnd()
+	assert.Equal(t, "first\n", e.Text())
+
+	e.InsertNewline()
+	assert.Equal(t, "first\n\n", e.Text())
+	e.Reset()
+	assert.True(t, e.IsEmpty())
+	assert.Equal(t, 0, e.cursor)
+}
+
+func TestEditorRightDownAndNarrowLayout(t *testing.T) {
+	t.Parallel()
+	e := NewEditor("")
+	e.SetText("abcdef")
+	e.MoveLineStart()
+	e.MoveRight()
+	assert.Equal(t, 1, e.cursor)
+
+	require.True(t, e.Down(PromptWidth+3))
+	_, row, col := e.Layout(PromptWidth + 3)
+	assert.Equal(t, 1, row)
+	assert.Equal(t, PromptWidth+1, col)
+
+	e.MoveLineEnd()
+	assert.False(t, e.Down(PromptWidth+3))
+
+	lines, _, _ := e.Layout(0)
+	assert.NotEmpty(t, lines)
+	for _, line := range lines {
+		assert.LessOrEqual(t, DisplayWidth(line), PromptWidth+1)
+	}
+}
+
+func TestEditorNoopBoundaries(t *testing.T) {
+	t.Parallel()
+	e := NewEditor("")
+	e.Backspace()
+	e.DeleteForward()
+	e.DeleteWordBack()
+	e.MoveLeft()
+	e.MoveRight()
+	assert.Empty(t, e.Text())
+
+	e.Insert(nil)
+	assert.Empty(t, e.Text())
+}
+
+func TestEditorHistoryIgnoresEmptyAndNextAtEnd(t *testing.T) {
+	t.Parallel()
+	e := NewEditor("")
+	e.RememberHistory("\n")
+	assert.Empty(t, e.history)
+	e.HistoryNext()
+	assert.Empty(t, e.Text())
+}

@@ -34,6 +34,17 @@ func TestRenderInlineImageIncludesKittyImageSequence(t *testing.T) {
 	assert.Contains(t, joined, "🖼")
 }
 
+func TestRenderInlineImageSkipsInvalidImagesAndDefaultsLabel(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, RenderInlineImage(InlineImage{}, 80))
+	assert.Nil(t, RenderInlineImage(InlineImage{PNGData: []byte("x"), Width: 1}, 80))
+
+	lines := RenderInlineImage(InlineImage{PNGData: testPNGData(t), Width: 2, Height: 1}, 2)
+	assert.NotEmpty(t, lines)
+	assert.Contains(t, strings.Join(lines, "\n"), "image")
+}
+
 func TestKittyImageSequenceChunksLargePayload(t *testing.T) {
 	t.Parallel()
 	data := bytes.Repeat([]byte("x"), 4096)

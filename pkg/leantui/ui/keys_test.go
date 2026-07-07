@@ -90,3 +90,29 @@ func TestParseMixedRun(t *testing.T) {
 	assert.Equal(t, KeyRune, keys[1].Typ)
 	assert.Equal(t, KeyEnter, keys[2].Typ)
 }
+
+func TestParseAdditionalControlAndEscapeKeys(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, KeyCtrlU, singleKey(t, "\x15").Typ)
+	assert.Equal(t, KeyCtrlK, singleKey(t, "\x0b").Typ)
+	assert.Equal(t, KeyCtrlL, singleKey(t, "\x0c").Typ)
+	assert.Equal(t, KeyCtrlW, singleKey(t, "\x1b\x7f").Typ)
+	assert.Equal(t, KeyHome, singleKey(t, "\x1bOH").Typ)
+	assert.Equal(t, KeyEnd, singleKey(t, "\x1bOF").Typ)
+	assert.Equal(t, KeyHome, singleKey(t, "\x1b[1~").Typ)
+	assert.Equal(t, KeyEnd, singleKey(t, "\x1b[4~").Typ)
+	assert.Equal(t, KeyWordRight, singleKey(t, "\x1b[1;2C").Typ)
+	assert.Equal(t, KeyWordLeft, singleKey(t, "\x1b[1;3D").Typ)
+}
+
+func TestParseIgnoresUnhandledAndIncompleteSequences(t *testing.T) {
+	t.Parallel()
+	p := &InputParser{}
+	assert.Empty(t, p.Feed([]byte("\x00\x1bx\xff")))
+	assert.Empty(t, parseChunk([]byte("\x1b[999~")))
+
+	keys := parseChunk([]byte("\x1bOP"))
+	require.Len(t, keys, 2)
+	assert.Equal(t, KeyEsc, keys[0].Typ)
+	assert.Equal(t, KeyRune, keys[1].Typ)
+}

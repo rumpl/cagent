@@ -128,3 +128,34 @@ func TestRendererEraseBelow(t *testing.T) {
 	assert.Contains(t, out, seqShowCursor)
 	assert.Equal(t, 2, r.cursorRow)
 }
+
+func TestRendererRepaintAndViewportTop(t *testing.T) {
+	t.Parallel()
+	r, buf := newTestRenderer(2)
+	r.Frame([]string{"a", "b", "c"}, 2, 0)
+	assert.Equal(t, 1, r.ViewportTop())
+	buf.Reset()
+
+	r.Repaint()
+	r.Frame([]string{"a", "b", "c"}, 2, 0)
+	assert.Contains(t, buf.String(), seqClearScreen)
+}
+
+func TestRendererEmptyFrameUsesBlankLine(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRenderer(5)
+
+	r.Frame(nil, 0, 0)
+
+	assert.Equal(t, []string{""}, r.prev)
+}
+
+func TestRendererEraseBelowClampsLineToViewport(t *testing.T) {
+	t.Parallel()
+	r, _ := newTestRenderer(2)
+	r.Frame([]string{"a", "b", "c"}, 2, 0)
+
+	r.EraseBelow(99)
+
+	assert.Equal(t, 2, r.cursorRow)
+}
