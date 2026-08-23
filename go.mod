@@ -241,3 +241,7 @@ require (
 replace github.com/charmbracelet/ultraviolet => github.com/dgageot/ultraviolet v0.0.0-20260313154905-9451997d56b6
 
 replace github.com/cyphar/filepath-securejoin => github.com/cyphar/filepath-securejoin v0.4.1
+
+replace github.com/anthropics/anthropic-sdk-go => ./thin/anthropic-sdk-go
+
+replace github.com/openai/openai-go/v3 => ./thin/openai-go
