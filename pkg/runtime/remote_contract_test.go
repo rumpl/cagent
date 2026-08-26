@@ -45,11 +45,11 @@ func (s *stubRemoteClient) ResumeElicitation(context.Context, string, tools.Elic
 	return nil
 }
 
-func (s *stubRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan Event, error) {
+func (s *stubRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan SessionStreamFrame, error) {
 	panic("RunAgent not exercised by the contract test")
 }
 
-func (s *stubRemoteClient) RunAgentWithAgentName(context.Context, string, string, string, []api.Message, string) (<-chan Event, error) {
+func (s *stubRemoteClient) RunAgentWithAgentName(context.Context, string, string, string, []api.Message, string) (<-chan SessionStreamFrame, error) {
 	panic("RunAgentWithAgentName not exercised by the contract test")
 }
 
@@ -71,6 +71,14 @@ func (s *stubRemoteClient) GetAgentToolCount(context.Context, string, string) (i
 
 func (s *stubRemoteClient) StreamSessionEvents(context.Context, string) (<-chan Event, error) {
 	panic("StreamSessionEvents not exercised by the contract test")
+}
+
+func (s *stubRemoteClient) StreamSessionEventsFrom(context.Context, string, uint64) (<-chan SessionStreamFrame, error) {
+	panic("StreamSessionEventsFrom not exercised by the contract test")
+}
+
+func (s *stubRemoteClient) GetSessionSnapshot(context.Context, string) (*api.SessionSnapshotResponse, error) {
+	return &api.SessionSnapshotResponse{}, nil
 }
 
 func (s *stubRemoteClient) GetAllSessions(context.Context) ([]session.Session, error) {

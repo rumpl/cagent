@@ -126,3 +126,102 @@ func TestClient_StreamSessionEvents_StopsWhenContextCancelled(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_StreamSessionEventsFrom_CarriesSequenceAndControlFrames covers
+// the resumable shape of the shared session stream: each event carries the
+// server's sequence number (so a reconnect can resume from it), the resume
+// point is forwarded as ?since=, and the two control frames are surfaced as
+// such rather than parsed as events.
+func TestClient_StreamSessionEventsFrom_CarriesSequenceAndControlFrames(t *testing.T) {
+	t.Parallel()
+
+	gotSince := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSince <- r.URL.Query().Get("since")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "data: {\"type\":\"gap\"}\n\n")
+		fmt.Fprint(w, "id: 8\ndata: {\"type\":\"session_title\",\"session_id\":\"s\",\"title\":\"t\"}\n\n")
+		fmt.Fprint(w, "id: 9\ndata: {\"type\":\"session_exited\"}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL)
+	require.NoError(t, err)
+
+	frames, err := c.StreamSessionEventsFrom(t.Context(), "s", 7)
+	require.NoError(t, err)
+
+	var got []SessionStreamFrame
+	for frame := range frames {
+		got = append(got, frame)
+	}
+
+	require.Len(t, got, 3)
+	assert.Equal(t, "7", <-gotSince)
+
+	assert.Equal(t, SessionStreamGap, got[0].Control)
+	assert.Zero(t, got[0].Seq, "a control frame outside the sequenced stream carries no sequence number")
+
+	require.NotNil(t, got[1].Event)
+	assert.Equal(t, uint64(8), got[1].Seq)
+	titleEvent, ok := got[1].Event.(*SessionTitleEvent)
+	require.True(t, ok, "expected a session title event, got %T", got[1].Event)
+	assert.Equal(t, "t", titleEvent.Title)
+
+	assert.Equal(t, SessionStreamExited, got[2].Control)
+	assert.Nil(t, got[2].Event)
+}
+
+// TestClient_RunAgent_CarriesSharedStreamPositions verifies that a turn's own
+// response reports where each of its events landed on the session's shared
+// event stream. A client watching both streams needs those positions to tell
+// its own turn from another client's.
+func TestClient_RunAgent_CarriesSharedStreamPositions(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "id: 4\ndata: {\"type\":\"stream_started\",\"session_id\":\"s\",\"agent_name\":\"root\"}\n\n")
+		fmt.Fprint(w, "id: 5\ndata: {\"type\":\"stream_stopped\",\"session_id\":\"s\",\"agent_name\":\"root\"}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL)
+	require.NoError(t, err)
+
+	frames, err := c.RunAgent(t.Context(), "s", "agent.yaml", nil, "")
+	require.NoError(t, err)
+
+	var seqs []uint64
+	var types []string
+	for frame := range frames {
+		seqs = append(seqs, frame.Seq)
+		types = append(types, fmt.Sprintf("%T", frame.Event))
+	}
+
+	assert.Equal(t, []uint64{4, 5}, seqs)
+	assert.Equal(t, []string{"*runtime.StreamStartedEvent", "*runtime.StreamStoppedEvent"}, types)
+}
+
+// TestClient_RunAgent_ReportsBusySessionTypedError pins the typed error a
+// client needs to react to another client already running a turn on the
+// session (rather than string-matching the message).
+func TestClient_RunAgent_ReportsBusySessionTypedError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"message":"session is already processing a request"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL)
+	require.NoError(t, err)
+
+	_, err = c.RunAgent(t.Context(), "s", "agent.yaml", nil, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRemoteSessionBusy)
+}

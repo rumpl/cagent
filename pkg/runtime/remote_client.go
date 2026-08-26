@@ -19,6 +19,12 @@ type RemoteClient interface {
 	// CreateSession creates a new session
 	CreateSession(ctx context.Context, sessTemplate *session.Session) (*session.Session, error)
 
+	// GetSessionSnapshot returns an existing session's full state (messages,
+	// title, usage) together with the event-stream sequence number it
+	// corresponds to, so a client can attach to a session someone else
+	// created and then tail it without a gap.
+	GetSessionSnapshot(ctx context.Context, id string) (*api.SessionSnapshotResponse, error)
+
 	// ResumeSession resumes a paused session with optional rejection reason or tool name
 	ResumeSession(ctx context.Context, id, confirmation, reason, toolName string) error
 
@@ -28,13 +34,14 @@ type RemoteClient interface {
 	// [Runtime.ResumeElicitation]: at most one value is meaningful.
 	ResumeElicitation(ctx context.Context, sessionID string, action tools.ElicitationAction, content map[string]any, elicitationID ...string) error
 
-	// RunAgent executes an agent and returns a channel of streaming events.
-	// model, when non-empty, is applied as a persistent override on the
-	// session's current agent before the turn starts.
-	RunAgent(ctx context.Context, sessionID, agent string, messages []api.Message, model string) (<-chan Event, error)
+	// RunAgent executes an agent and returns a channel of the turn's frames:
+	// its events, each tagged with its position in the session's event
+	// stream. model, when non-empty, is applied as a persistent override on
+	// the session's current agent before the turn starts.
+	RunAgent(ctx context.Context, sessionID, agent string, messages []api.Message, model string) (<-chan SessionStreamFrame, error)
 
-	// RunAgentWithAgentName executes an agent with a specific agent name. See RunAgent for the meaning of model.
-	RunAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan Event, error)
+	// RunAgentWithAgentName executes an agent with a specific agent name. See RunAgent for what comes back and the meaning of model.
+	RunAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan SessionStreamFrame, error)
 
 	// SteerSession injects user messages into a running session mid-turn
 	SteerSession(ctx context.Context, sessionID string, messages []api.Message) error
@@ -50,6 +57,10 @@ type RemoteClient interface {
 
 	// StreamSessionEvents streams runtime events for a session as they occur
 	StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error)
+
+	// StreamSessionEventsFrom streams a session's events with sequence
+	// numbers, replaying everything newer than since before tailing live.
+	StreamSessionEventsFrom(ctx context.Context, sessionID string, since uint64) (<-chan SessionStreamFrame, error)
 
 	// GetAllSessions retrieves all sessions from the remote store
 	GetAllSessions(ctx context.Context) ([]session.Session, error)

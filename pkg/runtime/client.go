@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/docker/docker-agent/pkg/api"
@@ -18,6 +20,11 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
+
+// ErrRemoteSessionBusy reports that the server refused to start a turn
+// because the session is already running one — typically another client
+// attached to the same session got there first.
+var ErrRemoteSessionBusy = errors.New("remote session is already processing a turn")
 
 // Client is an HTTP client for the docker agent server API
 type Client struct {
@@ -296,6 +303,18 @@ func (c *Client) GetSession(ctx context.Context, id string) (*api.SessionRespons
 	return &sess, err
 }
 
+// GetSessionSnapshot returns a session's full state in one call: its stored
+// messages plus the sequence number they correspond to on the event stream.
+// Reading it and then tailing [Client.StreamSessionEventsFrom] from
+// LastEventSeq rebuilds the session without missing anything in between.
+func (c *Client) GetSessionSnapshot(ctx context.Context, id string) (*api.SessionSnapshotResponse, error) {
+	var snapshot api.SessionSnapshotResponse
+	if err := c.doRequest(ctx, http.MethodGet, "/api/sessions/"+id+"/snapshot", nil, &snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
 // CreateSession creates a new session
 func (c *Client) CreateSession(ctx context.Context, sessTemplate *session.Session) (*session.Session, error) {
 	var sess session.Session
@@ -333,22 +352,23 @@ func (c *Client) GetDesktopToken(ctx context.Context) (*api.DesktopTokenResponse
 	return &resp, err
 }
 
-// RunAgent executes an agent and returns a channel of streaming events. The
-// optional model override is persisted on the session's current agent before
-// the user messages are appended; pass an empty string to leave the existing
-// override (if any) untouched.
-func (c *Client) RunAgent(ctx context.Context, sessionID, agent string, messages []api.Message, model string) (<-chan Event, error) {
+// RunAgent executes an agent and returns a channel of streaming frames: the
+// turn's events, each tagged with its position in the session's event stream
+// so a caller tailing that stream too can recognise them (see
+// [SessionStreamFrame]). The optional model override is persisted on the
+// session's current agent before the user messages are appended; pass an
+// empty string to leave the existing override (if any) untouched.
+func (c *Client) RunAgent(ctx context.Context, sessionID, agent string, messages []api.Message, model string) (<-chan SessionStreamFrame, error) {
 	return c.runAgentWithAgentName(ctx, sessionID, agent, "", messages, model)
 }
 
-// RunAgentWithAgentName executes an agent with a specific agent name and
-// returns a channel of streaming events. See [Client.RunAgent] for the
-// semantics of model.
-func (c *Client) RunAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan Event, error) {
+// RunAgentWithAgentName executes an agent with a specific agent name. See
+// [Client.RunAgent] for what comes back and for the semantics of model.
+func (c *Client) RunAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan SessionStreamFrame, error) {
 	return c.runAgentWithAgentName(ctx, sessionID, agent, agentName, messages, model)
 }
 
-func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan Event, error) {
+func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, agentName string, messages []api.Message, model string) (<-chan SessionStreamFrame, error) {
 	endpoint := "/api/sessions/" + sessionID + "/agent/" + agent
 	if agentName != "" {
 		endpoint += "/" + agentName
@@ -375,7 +395,7 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 
-	resp, err := c.httpClient.Do(req) //nolint:bodyclose // body is closed in the goroutine below
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("performing request: %w", err)
 	}
@@ -388,72 +408,106 @@ func (c *Client) runAgentWithAgentName(ctx context.Context, sessionID, agent, ag
 		}
 
 		var errResp ErrorResponse
+		detail := string(respBody)
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+			detail = errResp.Error
 		}
-		return nil, fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(respBody))
+		if resp.StatusCode == http.StatusConflict {
+			// Another client is running a turn on this session right now.
+			// Typed so the caller can react instead of parsing the message.
+			return nil, fmt.Errorf("%w: %s", ErrRemoteSessionBusy, detail)
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, detail)
 	}
 
-	eventChan := make(chan Event, defaultEventChannelCapacity)
+	frames := make(chan SessionStreamFrame, defaultEventChannelCapacity)
+	go c.readSSEFrames(ctx, resp.Body, frames)
+	return frames, nil
+}
 
-	go func() {
-		defer close(eventChan)
-		defer resp.Body.Close()
+// readSSEFrames decodes an SSE body into frames until it ends, then closes
+// out. It serves both event streams the server exposes — a turn's own
+// response and the session-scoped stream — which carry the same framing:
+// an optional "id: <seq>" line followed by a "data: <event>" line.
+//
+// done, when non-nil, reports whether the stream was shut down deliberately;
+// a read error is then not surfaced as an event.
+func (c *Client) readSSEFrames(ctx context.Context, body io.ReadCloser, out chan<- SessionStreamFrame, done ...func() bool) {
+	defer close(out)
+	defer body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
-		// A single SSE line can carry a large tool response; raise the cap
-		// above bufio's 64 KiB default so an oversized line does not silently
-		// truncate the stream (bufio.ErrTooLong).
-		scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxSSELineBytes)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 || line[0] == ':' {
-				continue
-			}
+	scanner := bufio.NewScanner(body)
+	// A single SSE line can carry a large tool response; raise the cap
+	// above bufio's 64 KiB default so an oversized line does not silently
+	// truncate the stream (bufio.ErrTooLong).
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxSSELineBytes)
 
-			after, ok := bytes.CutPrefix(line, []byte("data: "))
-			if !ok {
-				continue
-			}
-
-			slog.DebugContext(ctx, "event", "event", string(after))
-
-			// First unmarshal to get the type
-			var baseEvent struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(after, &baseEvent); err != nil {
-				slog.DebugContext(ctx, "event", "error", err)
-				continue
-			}
-
-			// Then unmarshal the full event
-			createEvent, found := c.registry[baseEvent.Type]
-			if !found {
-				slog.DebugContext(ctx, "event", "invalid_type", baseEvent.Type)
-				continue
-			}
-
-			e := createEvent()
-			if err := json.Unmarshal(after, &e); err != nil {
-				slog.DebugContext(ctx, "event", "error", err)
-				continue
-			}
-
-			eventChan <- e
+	var seq uint64
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 || line[0] == ':' {
+			continue
 		}
 
-		// Surface a read failure (e.g. an over-long line) instead of ending
-		// the stream silently — otherwise the run appears to stop with no
-		// error after the last event that fit.
-		if err := scanner.Err(); err != nil {
-			slog.DebugContext(ctx, "event", "scanner_error", err)
-			eventChan <- Error(fmt.Sprintf("reading event stream: %v", err))
+		if rawSeq, ok := bytes.CutPrefix(line, []byte("id: ")); ok {
+			seq, _ = strconv.ParseUint(string(rawSeq), 10, 64)
+			continue
+		}
+
+		data, ok := bytes.CutPrefix(line, []byte("data: "))
+		if !ok {
+			continue
+		}
+		// An event's id line precedes its data line; anything without one
+		// is outside the sequenced stream (a control frame, or a server
+		// that does not sequence this stream).
+		frameSeq := seq
+		seq = 0
+
+		slog.DebugContext(ctx, "received event", "data", string(data))
+
+		var baseEvent struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &baseEvent); err != nil {
+			slog.DebugContext(ctx, "failed to unmarshal event type", "error", err)
+			continue
+		}
+
+		switch baseEvent.Type {
+		case SessionStreamGap:
+			out <- SessionStreamFrame{Control: SessionStreamGap}
+			continue
+		case SessionStreamExited:
+			out <- SessionStreamFrame{Seq: frameSeq, Control: SessionStreamExited}
+			continue
+		}
+
+		createEvent, found := c.registry[baseEvent.Type]
+		if !found {
+			slog.DebugContext(ctx, "unknown event type", "type", baseEvent.Type)
+			continue
+		}
+
+		event := createEvent()
+		if err := json.Unmarshal(data, &event); err != nil {
+			slog.DebugContext(ctx, "failed to unmarshal event", "error", err)
+			continue
+		}
+
+		out <- SessionStreamFrame{Seq: frameSeq, Event: event}
+	}
+
+	// Surface a read failure (e.g. an over-long line) instead of ending the
+	// stream silently — otherwise the run appears to stop with no error after
+	// the last event that fit. A deliberate shutdown is not a failure.
+	if err := scanner.Err(); err != nil {
+		if len(done) > 0 && done[0]() {
 			return
 		}
-	}()
-
-	return eventChan, nil
+		slog.DebugContext(ctx, "scanner error", "error", err)
+		out <- SessionStreamFrame{Event: Error(fmt.Sprintf("reading event stream: %v", err))}
+	}
 }
 
 // GetAllSessions retrieves all sessions from the remote store.
@@ -493,14 +547,73 @@ func (c *Client) GetAgentToolCount(ctx context.Context, agentFilename, agentName
 	return resp.AvailableTools, nil
 }
 
+// SessionStreamFrame is one frame of a session's event flow, as delivered by
+// both streams the server exposes: a turn's own response
+// ([Client.RunAgent]) and the session-scoped stream every attached client
+// tails ([Client.StreamSessionEventsFrom]). Seq is the event's position in
+// that session-scoped stream, identical on both, which is what lets a client
+// recognise its own turn's events when it watches both.
+//
+// Exactly one of Event and Control is set. Control frames are stream
+// bookkeeping rather than session events, and only ever appear on the
+// session-scoped stream:
+//
+//   - [SessionStreamGap]: the requested resume point had already been evicted
+//     from the server's buffer, so events were lost; re-read the snapshot.
+//   - [SessionStreamExited]: the session ended server-side; stop tailing.
+//
+// A client can reconnect with the last Seq it saw to resume exactly where it
+// left off. Seq is 0 for a control frame, and for a turn on a session that
+// has no event log (nobody is watching it).
+type SessionStreamFrame struct {
+	Seq     uint64
+	Event   Event
+	Control string
+}
+
+const (
+	SessionStreamGap    = "gap"
+	SessionStreamExited = "session_exited"
+)
+
 // StreamSessionEvents streams events for a session as they occur via Server-Sent Events.
 // The returned channel is closed when ctx is cancelled, the stream's max
 // duration is reached, or the server closes the connection.
 func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-chan Event, error) {
+	frames, err := c.StreamSessionEventsFrom(ctx, sessionID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	events := make(chan Event, defaultEventChannelCapacity)
+	go func() {
+		defer close(events)
+		for frame := range frames {
+			if frame.Event != nil {
+				events <- frame.Event
+			}
+		}
+	}()
+	return events, nil
+}
+
+// StreamSessionEventsFrom is [Client.StreamSessionEvents] with sequence
+// numbers and replay: events newer than since are replayed before live
+// tailing resumes, so a client that reconnects with the last sequence number
+// it saw misses nothing. Pass since=0 to start from whatever the server still
+// has buffered.
+//
+// A single connection is bounded by the streaming timeout; the channel
+// closing without a [SessionStreamExited] frame means the connection dropped,
+// and the caller should reconnect from the last sequence number it saw.
+func (c *Client) StreamSessionEventsFrom(ctx context.Context, sessionID string, since uint64) (<-chan SessionStreamFrame, error) {
 	endpoint := fmt.Sprintf("/api/sessions/%s/events", sessionID)
 
 	u := *c.baseURL
 	u.Path = path.Join(u.Path, endpoint)
+	if since > 0 {
+		u.RawQuery = url.Values{"since": {strconv.FormatUint(since, 10)}}.Encode()
+	}
 
 	// Bound the maximum lifetime of a single SSE connection. The cancel
 	// must be tied to the goroutine consuming the stream, not to this
@@ -543,66 +656,12 @@ func (c *Client) StreamSessionEvents(ctx context.Context, sessionID string) (<-c
 		return nil, fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	eventChan := make(chan Event, defaultEventChannelCapacity)
-
+	frames := make(chan SessionStreamFrame, defaultEventChannelCapacity)
 	go func() {
 		defer cancel()
-		defer close(eventChan)
-		defer resp.Body.Close()
-
-		scanner := bufio.NewScanner(resp.Body)
-		// A single SSE line can carry a large tool response; raise the cap
-		// above bufio's 64 KiB default so an oversized line does not silently
-		// truncate the stream (bufio.ErrTooLong).
-		scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxSSELineBytes)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 || line[0] == ':' {
-				continue
-			}
-
-			after, ok := bytes.CutPrefix(line, []byte("data: "))
-			if !ok {
-				continue
-			}
-
-			slog.DebugContext(ctx, "received event", "data", string(after))
-
-			// First unmarshal to get the type
-			var baseEvent struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(after, &baseEvent); err != nil {
-				slog.DebugContext(ctx, "failed to unmarshal event type", "error", err)
-				continue
-			}
-
-			// Then unmarshal the full event
-			createEvent, found := c.registry[baseEvent.Type]
-			if !found {
-				slog.DebugContext(ctx, "unknown event type", "type", baseEvent.Type)
-				continue
-			}
-
-			e := createEvent()
-			if err := json.Unmarshal(after, &e); err != nil {
-				slog.DebugContext(ctx, "failed to unmarshal event", "error", err)
-				continue
-			}
-
-			eventChan <- e
-		}
-
-		// Surface a read failure (e.g. an over-long line) instead of ending
-		// the stream silently — otherwise the run appears to stop with no
-		// error after the last event that fit.
-		if err := scanner.Err(); err != nil {
-			slog.DebugContext(ctx, "scanner error", "error", err)
-			eventChan <- Error(fmt.Sprintf("reading event stream: %v", err))
-		}
+		c.readSSEFrames(ctx, resp.Body, frames, func() bool { return streamCtx.Err() != nil })
 	}()
-
-	return eventChan, nil
+	return frames, nil
 }
 
 // GetSessionTools retrieves tools available in a session.
