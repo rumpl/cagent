@@ -24,18 +24,18 @@ type runStreamRecordingClient struct {
 	gotInvocation int
 }
 
-func (c *runStreamRecordingClient) RunAgent(_ context.Context, _, _ string, _ []api.Message, model string) (<-chan Event, error) {
+func (c *runStreamRecordingClient) RunAgent(_ context.Context, _, _ string, _ []api.Message, model string) (<-chan SessionStreamFrame, error) {
 	c.gotInvocation++
 	c.gotModel = model
 	if c.runErr != nil {
 		return nil, c.runErr
 	}
-	ch := make(chan Event)
+	ch := make(chan SessionStreamFrame)
 	close(ch)
 	return ch, nil
 }
 
-func (c *runStreamRecordingClient) RunAgentWithAgentName(ctx context.Context, sessionID, agent, _ string, msgs []api.Message, model string) (<-chan Event, error) {
+func (c *runStreamRecordingClient) RunAgentWithAgentName(ctx context.Context, sessionID, agent, _ string, msgs []api.Message, model string) (<-chan SessionStreamFrame, error) {
 	return c.RunAgent(ctx, sessionID, agent, msgs, model)
 }
 

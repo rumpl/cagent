@@ -28,6 +28,12 @@ import (
 // RemoteRuntime implements the Runtime interface using a remote client.
 // It works with any client that implements the RemoteClient interface,
 // including both HTTP (Client) and Connect-RPC (ConnectRPCClient) clients.
+//
+// The server owns the session: it holds the transcript, runs the turns and
+// publishes every event on the session's shared stream. Several
+// RemoteRuntimes can therefore drive the same session at once — each submits
+// only the messages the server has not seen yet (see submitted) and renders
+// the other clients' turns from the shared stream (see the tail fields).
 type RemoteRuntime struct {
 	client                  RemoteClient
 	currentAgent            string
@@ -43,6 +49,30 @@ type RemoteRuntime struct {
 	// session's per-agent override.
 	pendingMu            sync.Mutex
 	pendingModelOverride string
+
+	// submitted counts the local session's user messages the server already
+	// has. Only the ones beyond it are sent with the next turn: replaying the
+	// whole local history would duplicate it server-side and clobber what
+	// another client attached to the same session contributed.
+	submitMu  sync.Mutex
+	submitted int
+
+	// tail mirrors the session's shared event stream (every client sees the
+	// same one) into background, so turns started elsewhere render here too.
+	// lastSeq is the reconnect point. Events this client's own RunStream
+	// already delivered are skipped: ownStreams counts in-flight local turns
+	// and suppressUpTo is the stream position their echo ends at.
+	// heldFrames parks the shared stream's frames while a local turn is in
+	// flight, when they cannot yet be told apart from that turn's echo.
+	tailOnce     sync.Once
+	tailMu       sync.Mutex
+	tailClosed   bool
+	stopTail     context.CancelFunc
+	lastSeq      uint64
+	suppressUpTo uint64
+	ownStreams   int
+	heldFrames   []SessionStreamFrame
+	background   func(Event)
 
 	// resolvedDefault caches the team's default agent name fetched from the
 	// server after a successful lookup, so [CurrentAgentName] stays an O(1)
@@ -68,6 +98,25 @@ func WithRemoteAgentFilename(filename string) RemoteRuntimeOption {
 	}
 }
 
+// WithRemoteSession binds the runtime to the server-side session it drives.
+// The messages sess already holds are the ones the server has (none for a
+// freshly created session; the snapshot's history when attaching to a session
+// another client started), so only what is added locally from here on is
+// submitted. lastEventSeq is the position sess was read at: the shared event
+// stream is tailed from there, so nothing that happens between the read and
+// the first turn is missed or rendered twice.
+func WithRemoteSession(sess *session.Session, lastEventSeq uint64) RemoteRuntimeOption {
+	return func(r *RemoteRuntime) {
+		if sess == nil {
+			return
+		}
+		r.sessionID = sess.ID
+		r.submitted = countUserMessages(sess)
+		r.lastSeq = lastEventSeq
+		r.suppressUpTo = lastEventSeq
+	}
+}
+
 // NewRemoteRuntime creates a new remote runtime that implements the Runtime interface.
 // It accepts any client that implements the RemoteClient interface.
 func NewRemoteRuntime(client RemoteClient, opts ...RemoteRuntimeOption) (*RemoteRuntime, error) {
@@ -86,6 +135,16 @@ func NewRemoteRuntime(client RemoteClient, opts ...RemoteRuntimeOption) (*Remote
 	}
 
 	return r, nil
+}
+
+func countUserMessages(sess *session.Session) int {
+	n := 0
+	for _, msg := range sess.GetAllMessages() {
+		if msg.Message.Role == chat.MessageRoleUser {
+			n++
+		}
+	}
+	return n
 }
 
 // resolvedAgent returns the active agent's name and config from the remote
@@ -263,8 +322,9 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 	go func() {
 		defer close(events)
 
-		messages := r.convertSessionMessages(sess)
-		r.sessionID = sess.ID
+		r.bindSession(sess)
+		sessionID := r.sessionID
+		messages, rollback := r.pendingMessages(sess)
 
 		// Snapshot the queued override but do NOT clear it yet: if the
 		// request fails before the server can persist it, clearing here
@@ -274,19 +334,38 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 		model := r.pendingModelOverride
 		r.pendingMu.Unlock()
 
-		var streamChan <-chan Event
+		var streamChan <-chan SessionStreamFrame
 		var err error
 
+		// Hold back the shared stream's copy of this turn from here on: the
+		// events below are delivered by the response stream instead. The
+		// window opens before the dispatch so no event of our own can slip
+		// through and render twice; ownTurnEnd is where the turn's echo
+		// provably ends (see endOwnTurn).
+		var ownTurnEnd uint64
+		dispatched := false
+		r.beginOwnTurn()
+		defer func() { r.endOwnTurn(ownTurnEnd, dispatched) }()
+
 		if r.currentAgent != "" {
-			streamChan, err = r.client.RunAgentWithAgentName(ctx, r.sessionID, r.agentFilename, r.currentAgent, messages, model)
+			streamChan, err = r.client.RunAgentWithAgentName(ctx, sessionID, r.agentFilename, r.currentAgent, messages, model)
 		} else {
-			streamChan, err = r.client.RunAgent(ctx, r.sessionID, r.agentFilename, messages, model)
+			streamChan, err = r.client.RunAgent(ctx, sessionID, r.agentFilename, messages, model)
 		}
 
 		if err != nil {
+			if errors.Is(err, ErrRemoteSessionBusy) && r.queueAsFollowUp(ctx, sessionID, messages) {
+				events <- Warning("Another client is running a turn on this session; your message will be picked up when it finishes.", r.currentAgent)
+				return
+			}
+			// The server never saw the messages, so they must be offered
+			// again with the next turn.
+			rollback()
 			events <- Error(fmt.Sprintf("failed to start remote agent: %v", err))
 			return
 		}
+
+		dispatched = true
 
 		// Server accepted the request, so the override (if any) has been
 		// forwarded; clear it but only if no concurrent SetAgentModel
@@ -299,12 +378,22 @@ func (r *RemoteRuntime) RunStream(ctx context.Context, sess *session.Session) <-
 			r.pendingMu.Unlock()
 		}
 
-		// Consume events from the agent stream
-		for streamEvent := range streamChan {
-			if elicitationRequest, ok := streamEvent.(*ElicitationRequestEvent); ok {
+		// Consume the turn's frames. Each carries its position in the
+		// session's shared stream, so the highest one seen here is exactly
+		// where this turn's echo on that stream ends — no guessing, and a
+		// turn whose response stream dies early leaves the rest of its
+		// events to be rendered from the shared stream instead.
+		for frame := range streamChan {
+			if frame.Seq > ownTurnEnd {
+				ownTurnEnd = frame.Seq
+			}
+			if frame.Event == nil {
+				continue
+			}
+			if elicitationRequest, ok := frame.Event.(*ElicitationRequestEvent); ok {
 				r.pendingOAuthElicitation = elicitationRequest
 			}
-			events <- streamEvent
+			events <- frame.Event
 		}
 	}()
 
@@ -377,20 +466,72 @@ func (r *RemoteRuntime) Summarize(ctx context.Context, sess *session.Session, _ 
 	sink.Emit(SessionSummary(sess.ID, "Session compacted successfully", r.currentAgent, 0, 0, "", nil))
 }
 
-func (r *RemoteRuntime) convertSessionMessages(sess *session.Session) []api.Message {
-	sessionMessages := sess.GetAllMessages()
-	messages := make([]api.Message, 0, len(sessionMessages))
-
-	for i := range sessionMessages {
-		if sessionMessages[i].Message.Role == chat.MessageRoleUser || sessionMessages[i].Message.Role == chat.MessageRoleAssistant {
-			messages = append(messages, api.Message{
-				Role:    sessionMessages[i].Message.Role,
-				Content: sessionMessages[i].Message.Content,
-			})
-		}
+// queueAsFollowUp hands messages to the server's follow-up queue after a turn
+// this client wanted to start was refused because another client is already
+// running one. The server gives them their own turn as soon as the current
+// one ends, and its events reach this client through the shared session
+// stream — so a busy session defers input instead of rejecting it. Reports
+// whether the queueing succeeded; the messages stay marked submitted when it
+// did, since the server now owns them.
+func (r *RemoteRuntime) queueAsFollowUp(ctx context.Context, sessionID string, messages []api.Message) bool {
+	if len(messages) == 0 {
+		return false
 	}
+	if err := r.client.FollowUpSession(ctx, sessionID, messages); err != nil {
+		slog.WarnContext(ctx, "Cannot queue messages on a busy remote session", "session_id", sessionID, "error", err)
+		return false
+	}
+	return true
+}
 
-	return messages
+// bindSession points the runtime at the session RunStream was handed. A
+// different ID means the client moved to another session (e.g. /new), of
+// which the server has seen no message yet.
+func (r *RemoteRuntime) bindSession(sess *session.Session) {
+	r.submitMu.Lock()
+	defer r.submitMu.Unlock()
+	if r.sessionID != sess.ID {
+		r.sessionID = sess.ID
+		r.submitted = 0
+	}
+}
+
+// pendingMessages returns the user messages the server has not seen yet and
+// marks them submitted. The returned func un-marks them, so a request that
+// never reached the server can be retried without losing user input.
+//
+// Only user messages are sent: the assistant side of the transcript is
+// produced and stored server-side, and re-posting it would duplicate it.
+func (r *RemoteRuntime) pendingMessages(sess *session.Session) ([]api.Message, func()) {
+	sessionMessages := sess.GetAllMessages()
+
+	r.submitMu.Lock()
+	defer r.submitMu.Unlock()
+
+	prev := r.submitted
+	seen := 0
+	var pending []api.Message
+	for i := range sessionMessages {
+		if sessionMessages[i].Message.Role != chat.MessageRoleUser {
+			continue
+		}
+		seen++
+		if seen <= prev {
+			continue
+		}
+		pending = append(pending, api.Message{
+			Role:         chat.MessageRoleUser,
+			Content:      sessionMessages[i].Message.Content,
+			MultiContent: sessionMessages[i].Message.MultiContent,
+		})
+	}
+	r.submitted = seen
+
+	return pending, func() {
+		r.submitMu.Lock()
+		defer r.submitMu.Unlock()
+		r.submitted = prev
+	}
 }
 
 // ResumeElicitation sends an elicitation response back to a waiting elicitation request
@@ -713,9 +854,16 @@ func (r *RemoteRuntime) TogglePause(ctx context.Context) (bool, error) {
 // than via an out-of-band callback.
 func (r *RemoteRuntime) OnToolsChanged(func(Event)) {}
 
-// OnBackgroundEvent is a no-op for remote runtimes; background agent tasks
-// run server-side and their events are not forwarded out-of-band.
-func (r *RemoteRuntime) OnBackgroundEvent(func(Event)) {}
+// OnBackgroundEvent registers the handler for events this client did not
+// produce: turns another process attached to the same session started, and
+// anything the server raises between turns. Registering it starts tailing the
+// session's shared event stream (see remote_tail.go).
+func (r *RemoteRuntime) OnBackgroundEvent(handler func(Event)) {
+	r.tailMu.Lock()
+	r.background = handler
+	r.tailMu.Unlock()
+	r.startSessionTail()
+}
 
 // OnElicitationRequest is a no-op for remote runtimes; elicitation requests
 // (including from server-side background jobs) arrive as ElicitationRequestEvent
@@ -729,8 +877,15 @@ func (r *RemoteRuntime) OnBackgroundEvent(func(Event)) {}
 // reach them unfiltered (#3584 review).
 func (r *RemoteRuntime) OnElicitationRequest(func(Event)) {}
 
-// Close is a no-op for remote runtimes.
+// Close stops tailing the shared session stream. The session itself lives on
+// server-side: other clients keep using it, and this one can attach again.
 func (r *RemoteRuntime) Close() error {
+	r.tailMu.Lock()
+	defer r.tailMu.Unlock()
+	r.tailClosed = true
+	if r.stopTail != nil {
+		r.stopTail()
+	}
 	return nil
 }
 
