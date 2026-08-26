@@ -210,12 +210,7 @@ func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadRes
 		return nil, nil, nil, fmt.Errorf("failed to create remote client: %w", err)
 	}
 
-	sessTemplate := session.New(
-		session.WithToolsApproved(req.ToolsApproved),
-		session.WithSafetyPolicy(req.SafetyPolicy),
-	)
-
-	sess, err := client.CreateSession(ctx, sessTemplate)
+	sess, lastEventSeq, err := b.session(ctx, client, req)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -223,12 +218,13 @@ func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadRes
 	rt, err := runtime.NewRemoteRuntime(client,
 		runtime.WithRemoteCurrentAgent(req.AgentName),
 		runtime.WithRemoteAgentFilename(b.agentFileName),
+		runtime.WithRemoteSession(sess, lastEventSeq),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create remote runtime: %w", err)
 	}
 
-	slog.DebugContext(ctx, "Using remote runtime", "address", b.flags.remoteAddress, "agent", req.AgentName)
+	slog.DebugContext(ctx, "Using remote runtime", "address", b.flags.remoteAddress, "agent", req.AgentName, "session_id", sess.ID)
 
 	cleanup := func() {
 		if err := rt.Close(); err != nil {
@@ -238,12 +234,54 @@ func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadRes
 	return rt, sess, cleanup, nil
 }
 
+// session returns the server-side session this run drives, plus the position
+// of its event stream at the time it was read.
+//
+// With --session it attaches to a session that already exists server-side —
+// possibly one another process is using right now — by rebuilding it locally
+// from the server's snapshot. Everything the session already contains is the
+// server's, so the runtime submits only what this client adds from here on,
+// and it tails the stream from last_event_seq so nothing between the snapshot
+// and the first turn is missed or shown twice.
+func (b *remoteBackend) session(ctx context.Context, client *runtime.Client, req runtime.CreateSessionRequest) (*session.Session, uint64, error) {
+	if req.ResumeSessionID == "" {
+		sess, err := client.CreateSession(ctx, session.New(
+			session.WithToolsApproved(req.ToolsApproved),
+			session.WithSafetyPolicy(req.SafetyPolicy),
+		))
+		if err != nil {
+			return nil, 0, err
+		}
+		return sess, 0, nil
+	}
+
+	snapshot, err := client.GetSessionSnapshot(ctx, req.ResumeSessionID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("opening remote session %q: %w", req.ResumeSessionID, err)
+	}
+
+	sess := session.New(
+		session.WithID(snapshot.ID),
+		session.WithWorkingDir(snapshot.WorkingDir),
+		session.WithToolsApproved(snapshot.ToolsApproved),
+		session.WithSafetyPolicy(snapshot.SafetyPolicy),
+	)
+	sess.CreatedAt = snapshot.CreatedAt
+	sess.SetTitle(snapshot.Title)
+	sess.SetUsage(snapshot.InputTokens, snapshot.OutputTokens)
+	for i := range snapshot.Messages {
+		sess.AddMessage(&snapshot.Messages[i])
+	}
+	return sess, snapshot.LastEventSeq, nil
+}
+
 func (b *remoteBackend) Spawner(runtime.Runtime) tui.SessionSpawner {
 	return nil
 }
 
-// ResumeWorkingDir never resolves remotely: --remote is mutually exclusive
-// with --session (and with --worktree), so there is no local session to peek.
+// ResumeWorkingDir never resolves remotely: the working directory of a remote
+// session belongs to the server's host, not to this client's filesystem, and
+// --remote is mutually exclusive with --worktree.
 func (b *remoteBackend) ResumeWorkingDir(context.Context) (string, bool) {
 	return "", false
 }
