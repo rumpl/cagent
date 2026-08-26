@@ -527,13 +527,20 @@ func (s *Server) runAgent(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 	for {
 		select {
-		case event, ok := <-streamChan:
+		case frame, ok := <-streamChan:
 			if !ok {
 				return nil
 			}
-			data, err := json.Marshal(event)
+			data, err := json.Marshal(frame.Event)
 			if err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to marshal event: %v", err))
+			}
+			// The id is the event's position in the session's event stream,
+			// the same one GET /events reports, so a client watching both
+			// knows which events it has already seen. It is absent when the
+			// session has no event log (nobody is watching it).
+			if frame.Seq > 0 {
+				fmt.Fprintf(c.Response(), "id: %d\n", frame.Seq)
 			}
 			fmt.Fprintf(c.Response(), "data: %s\n\n", string(data))
 			c.Response().Flush()
@@ -673,8 +680,17 @@ const defaultEventsHeartbeatInterval = 15 * time.Second
 // as a hung transport and reconnect, instead of waiting forever on a
 // connection that will never fail a read (e.g. across a paused VM).
 func (s *Server) sessionEvents(c echo.Context) error {
-	if !s.sm.HasEventSource(c.Param("id")) {
-		return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
+	sessionID := c.Param("id")
+	if !s.sm.HasEventSource(sessionID) {
+		// No log yet: create one for any session that exists, so a client
+		// attaching to a session before its first event still observes every
+		// later turn (that is what makes two clients on one session work).
+		if _, err := s.sm.GetSession(c.Request().Context(), sessionID); err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		}
+		if !s.sm.EnsureEventLog(sessionID) {
+			return echo.NewHTTPError(http.StatusNotFound, "no event source for session")
+		}
 	}
 
 	since := parseSinceParam(c)
@@ -712,7 +728,7 @@ func (s *Server) sessionEvents(c echo.Context) error {
 		}
 	}()
 
-	s.sm.StreamEvents(c.Request().Context(), c.Param("id"), since, func(seq uint64, event any) {
+	s.sm.StreamEvents(c.Request().Context(), sessionID, since, func(seq uint64, event any) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return

@@ -73,22 +73,23 @@ func newEventLog(capacity int) *eventLog {
 }
 
 // append records event, assigns it the next sequence number, stores it in the
-// ring buffer, and delivers it to all live listeners. A listener whose buffer
-// is full is dropped (its channel is closed): the pump must never block on a
-// slow client. A dropped client's SSE stream ends; it reconnects with the
-// last sequence number it saw and replays from the buffer.
-func (l *eventLog) append(event any) {
+// ring buffer, and delivers it to all live listeners. It returns the assigned
+// sequence number, or 0 when the log is closed and the event was dropped. A
+// listener whose buffer is full is dropped (its channel is closed): the pump
+// must never block on a slow client. A dropped client's SSE stream ends; it
+// reconnects with the last sequence number it saw and replays from the buffer.
+func (l *eventLog) append(event any) uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
-		return
+		return 0
 	}
-	l.appendLocked(event)
+	return l.appendLocked(event)
 }
 
 // appendLocked is append's body; the caller must hold l.mu and must have
 // checked that the log is not closed.
-func (l *eventLog) appendLocked(event any) {
+func (l *eventLog) appendLocked(event any) uint64 {
 	l.seq++
 	ev := seqEvent{seq: l.seq, event: event}
 
@@ -108,6 +109,7 @@ func (l *eventLog) appendLocked(event any) {
 			delete(l.listeners, ln)
 		}
 	}
+	return ev.seq
 }
 
 // close appends a terminal session_exited event (so connected and replaying
@@ -120,7 +122,7 @@ func (l *eventLog) close(reason string) {
 	if l.closed {
 		return
 	}
-	l.appendLocked(sessionExitedEvent{Type: "session_exited", Reason: reason})
+	_ = l.appendLocked(sessionExitedEvent{Type: "session_exited", Reason: reason})
 	l.closed = true
 	for ln := range l.listeners {
 		close(ln.ch)

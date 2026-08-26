@@ -242,7 +242,7 @@ func (sm *SessionManager) RegisterEventSource(sessionID string, src EventSource)
 
 	go func() {
 		defer log.close("session ended")
-		src(pumpCtx, log.append)
+		src(pumpCtx, func(event any) { _ = log.append(event) })
 	}()
 }
 
@@ -317,8 +317,35 @@ func (sm *SessionManager) dropEventLog(sessionID string) {
 // the session has ever produced. Events for a deleted session are dropped.
 func (sm *SessionManager) appendSessionEvent(sessionID string, event any) {
 	if pe := sm.ensureEventLog(sessionID); pe != nil {
-		pe.log.append(event)
+		_ = pe.log.append(event)
 	}
+}
+
+// mirrorSessionEvent copies a turn event into sessionID's event log when one
+// already exists, so every client tailing GET /api/sessions/:id/events sees
+// the turn — not just the HTTP caller that started it. This is what lets two
+// processes share one session: the requester renders from its own response
+// stream, everyone else renders from the log. It returns the event's sequence
+// number in that log (0 when the session has none), which the requester's
+// stream carries too so both views can be correlated exactly.
+//
+// Unlike appendSessionEvent it never creates a log. Turn events carry tool
+// output and can be large, so a session nobody watches must not accumulate a
+// full ring buffer of them; the log is created when a client subscribes (see
+// EnsureEventLog) or when an out-of-band event needs a route.
+func (sm *SessionManager) mirrorSessionEvent(sessionID string, event any) uint64 {
+	if pe, ok := sm.eventLogs.Load(sessionID); ok {
+		return pe.log.append(event)
+	}
+	return 0
+}
+
+// EnsureEventLog gives sessionID a replayable event log if it has none, so a
+// client can subscribe to GET /api/sessions/:id/events before the session has
+// emitted anything and still receive every later event. Reports whether a log
+// exists afterwards (false only for a deleted session).
+func (sm *SessionManager) EnsureEventLog(sessionID string) bool {
+	return sm.ensureEventLog(sessionID) != nil
 }
 
 // sessionElicitationSink returns the OnElicitationRequest handler that
@@ -534,6 +561,11 @@ func (sm *SessionManager) GetSessionSnapshot(ctx context.Context, id string) (*a
 		}
 	}
 
+	// Reading a snapshot means "I am about to tail from this position", so
+	// give the session an event log now. Everything that happens between
+	// here and the client's first /events request is then buffered and
+	// replayed instead of lost.
+	sm.EnsureEventLog(id)
 	lastSeq, _ := sm.LastEventSeq(id)
 
 	title := sess.TitleSnapshot()
@@ -926,7 +958,12 @@ var (
 	ErrAgentSourceUnavailable = errors.New("agent source unavailable")
 )
 
-// RunSession runs a session with the given messages.
+// RunSession runs a session with the given messages. Each event of the turn
+// comes back tagged with its sequence number in the session's event stream
+// (0 when the session has no event log), so a caller that also tails
+// GET /api/sessions/:id/events can tell its own turn's events from those of
+// another client sharing the session. Frames from RunSession never carry a
+// Control value.
 //
 // When modelOverride is non-empty, it is applied to the session's current
 // agent before any user messages are appended (and persisted via
@@ -934,7 +971,7 @@ var (
 // every subsequent one. Validation happens before the messages are
 // recorded so a bad ref does not leave an orphaned user message in the
 // history.
-func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilename, currentAgent string, messages []api.Message, modelOverride string) (<-chan runtime.Event, error) {
+func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilename, currentAgent string, messages []api.Message, modelOverride string) (<-chan runtime.SessionStreamFrame, error) {
 	sm.mux.Lock()
 	defer sm.mux.Unlock()
 	sess, err := sm.sessionStore.GetSession(ctx, sessionID)
@@ -1021,7 +1058,23 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 	// Update the session pointer so the runtime sees the latest messages.
 	runtimeSession.session = sess
 
-	streamChan := make(chan runtime.Event)
+	streamChan := make(chan runtime.SessionStreamFrame)
+
+	// Every event goes to the caller's response stream AND to the session's
+	// event log, so other clients attached to the same session observe the
+	// turn live. Both copies carry the same sequence number, which is how the
+	// caller tells its own turn's events from another client's when it also
+	// tails the session stream. Reports false once the stream is done, so
+	// producers stop.
+	emit := func(event runtime.Event) bool {
+		seq := sm.mirrorSessionEvent(sessionID, event)
+		select {
+		case streamChan <- runtime.SessionStreamFrame{Seq: seq, Event: event}:
+			return true
+		case <-streamCtx.Done():
+			return false
+		}
+	}
 
 	// Snapshot the title under sess.mu before launching the goroutine: both
 	// UpdateSessionTitle and a previous run's still-in-flight generateTitle
@@ -1041,19 +1094,18 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 
 		// Start title generation in parallel if needed
 		if needsTitle {
-			go sm.generateTitle(ctx, sess, titleGen, userMessages, streamChan)
+			go sm.generateTitle(ctx, sess, titleGen, userMessages, emit)
 		} else if titleToEmit != "" {
 			// Re-emit the existing title so late-joining SSE consumers
 			// and boards can pick it up without an extra API call.
-			streamChan <- runtime.SessionTitle(sess.ID, titleToEmit)
+			emit(runtime.SessionTitle(sess.ID, titleToEmit))
 		}
 
 		stream := runtimeSession.runtime.RunStream(streamCtx, sess)
 		for event := range stream {
-			if streamCtx.Err() != nil {
+			if !emit(event) {
 				return
 			}
-			streamChan <- event
 		}
 
 		if err := sm.sessionStore.UpdateSession(ctx, sess); err != nil {
@@ -1388,8 +1440,8 @@ func (sm *SessionManager) UpdateSessionTitle(ctx context.Context, sessionID, tit
 
 // generateTitle generates a title for a session using the sessiontitle package.
 // The generated title is stored in the session and persisted to the store.
-// A SessionTitleEvent is emitted to notify clients.
-func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Session, gen *sessiontitle.Generator, userMessages []string, events chan<- runtime.Event) {
+// A SessionTitleEvent is handed to emit to notify clients.
+func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Session, gen *sessiontitle.Generator, userMessages []string, emit func(runtime.Event) bool) {
 	if gen == nil || len(userMessages) == 0 {
 		return
 	}
@@ -1414,11 +1466,10 @@ func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Sessi
 	}
 
 	// Emit the title event
-	select {
-	case events <- runtime.SessionTitle(sess.ID, title):
+	if emit(runtime.SessionTitle(sess.ID, title)) {
 		slog.DebugContext(ctx, "Generated and emitted session title", "session_id", sess.ID, "title", title)
-	case <-ctx.Done():
-		slog.DebugContext(ctx, "Context cancelled while emitting title event", "session_id", sess.ID)
+	} else {
+		slog.DebugContext(ctx, "Stream ended while emitting title event", "session_id", sess.ID)
 	}
 }
 
