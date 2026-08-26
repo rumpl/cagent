@@ -64,7 +64,7 @@ For an agent loaded from a remote HTTP(S) configuration source, endpoints that n
 | `GET`    | `/api/sessions/:id`                 | Get a session by ID (messages, tokens, permissions)     |
 | `GET`    | `/api/sessions/:id/status`          | Lightweight runtime state (streaming, title, agent, tokens). Requires an attached runtime. |
 | `GET`    | `/api/sessions/:id/snapshot`        | Full state in one call (stored fields + runtime state + `last_event_seq`) for gapless resync — see [Reconnecting without gaps](#reconnecting-without-gaps). |
-| `GET`    | `/api/sessions/:id/events`          | Live session event stream (SSE) with sequence numbers and replay. Available for a run attached via [`--listen`](#listen), or once a session has raised at least one out-of-band event (e.g. a background job's elicitation, answered via `POST .../elicitation`), which creates a session-scoped event log on demand carrying such out-of-band events — see [Session event stream](#session-event-stream-and-reconnection) for what each kind of log contains. |
+| `GET`    | `/api/sessions/:id/events`          | Live session event stream (SSE) with sequence numbers and replay, for any existing session: connecting creates the session's event log if it has none, so nothing emitted afterwards is missed. Turns started through `POST .../agent/...` are mirrored into it, which is what lets several clients watch one session — see [Sharing a session between clients](#shared-sessions) and [Session event stream](#session-event-stream-and-reconnection). |
 | `DELETE` | `/api/sessions/:id`                 | Delete a session                                        |
 | `PATCH`  | `/api/sessions/:id/title`           | Update session title                                    |
 | `PATCH`  | `/api/sessions/:id/permissions`     | Update session permissions                              |
@@ -149,6 +149,13 @@ data: {"type":"agent_choice","content":" can I help","agent":"root"}
 data: {"type":"agent_choice","content":" you today?","agent":"root"}
 data: {"type":"stream_stopped","session_id":"...","agent":"root"}
 ```
+
+When the session has an event log — because a client is watching it (see
+[Sharing a session between clients](#shared-sessions)) — each event is also
+preceded by an `id: <seq>` line giving its position in that session-scoped
+stream. The same event carries the same number on both streams, so a client
+that reads its own turn here and tails `/events` for everything else knows
+exactly which events it has already seen.
 
 Event types include:
 
@@ -287,17 +294,16 @@ session's runtime events — `stream_started`, `agent_choice`, `tool_call`,
 `session_title`, `token_usage`, `stream_stopped`, and so on. Unlike the
 per-request stream returned by the agent-execution endpoint, it is
 session-scoped and survives across turns, so a client can watch a session for
-its whole lifetime. It is available for a run attached via
-[`--listen`](#listen), and — since a session-scoped event log is created on
-demand the first time a session raises an out-of-band event, such as an
-`elicitation_request` from a background job — for any API-created session
-that has produced at least one (see the
-[Sessions endpoint table](#sessions) above). The two kinds of log differ in
-coverage: a `--listen` run feeds its full runtime event stream into the log,
-while an on-demand log for an API-created session carries the session's
-out-of-band events — not necessarily all ordinary turn events, which flow on
-the per-request SSE stream of the [agent-execution](#agent-execution)
-request that runs the turn.
+its whole lifetime — including turns another client started.
+
+A session gets its event log the moment something takes an interest in it:
+a run attached via [`--listen`](#listen) registers one at startup, and for any
+other session, reading its snapshot or connecting to `/events` creates one.
+From then on the log carries the session's full event flow — the turns run by
+[agent-execution](#agent-execution) requests (mirrored as they stream to the
+requester) and out-of-band events such as an `elicitation_request` from a
+background job. A session nobody is watching keeps no log, so its turn events
+are only delivered on the response stream of the request that ran them.
 
 Each event carries a monotonic **sequence number** in the SSE `id:` field, and
 the server buffers recent events. This makes the stream resumable:
@@ -343,6 +349,40 @@ restarted) rebuild a session's state and keep it correct without polling.
 runtime is attached and ready to accept follow-ups, then return its status, or
 `503` on timeout. This is session-scoped, unlike `GET /api/ready`, which fires
 as soon as any session is ready.
+
+## Sharing a session between clients {#shared-sessions}
+
+A session lives on the server, so more than one client can have it open at the
+same time and see the same thing. Point a second run at the session by ID:
+
+```bash
+# First client: start a session on the server.
+$ docker agent run agent.yaml --remote http://127.0.0.1:8080
+
+# Second client (any machine that can reach the server): open the same one.
+$ docker agent run agent.yaml --remote http://127.0.0.1:8080 --session $SID
+```
+
+The second client rebuilds the conversation from
+`GET /api/sessions/:id/snapshot` and then tails the session event stream from
+that snapshot's `last_event_seq`, so it shows the existing history and every
+later turn — including turns the *other* client starts — as they stream. The
+same is true in reverse: each client renders its own turns from its own
+response stream and everybody else's from the shared stream.
+
+Because the server owns the transcript, a client submits only the messages it
+has added itself; it never replays the history. Turns stay serialized: while
+one client's turn is running, a message typed in another is queued as a
+follow-up (`POST /api/sessions/:id/followup`) and gets its own turn as soon as
+the current one finishes, rather than being rejected.
+
+> [!NOTE]
+> **Which sessions keep an event log**
+>
+> Turn events are mirrored into a session's [event log](#session-event-stream-and-reconnection)
+> only once something is watching it — reading a snapshot or connecting to
+> `/events` creates the log. A session nobody has attached to therefore costs
+> nothing extra, and one that is being watched is replayable across reconnects.
 
 ## Session Forking
 

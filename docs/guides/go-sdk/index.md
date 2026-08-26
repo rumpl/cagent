@@ -146,6 +146,24 @@ For advanced use (custom elicitation, raw event inspection), call `chat.Runtime(
 > elicitations) — both are required interface methods, matching the existing
 > no-op-able pattern already used by `OnToolsChanged`/`OnBackgroundEvent`.
 
+> [!WARNING]
+> **Breaking change: `runtime.RemoteClient`**
+>
+> `runtime.RemoteClient` gained `GetSessionSnapshot` and
+> `StreamSessionEventsFrom` so a client can open a session that already exists
+> server-side and tail it from a known stream position — that is what lets two
+> processes share one live session. `RunAgent`/`RunAgentWithAgentName` now
+> return `<-chan runtime.SessionStreamFrame` (each of the turn's events plus
+> its position in that shared stream) instead of `<-chan runtime.Event`.
+> `runtime.Client` implements all of this; a custom implementation of the
+> interface must be updated. `server.SessionManager.RunSession` changed the
+> same way.
+>
+> `runtime.RemoteRuntime` now submits only the user messages the server has not
+> seen yet instead of replaying its local history each turn, and pass
+> `runtime.WithRemoteSession(sess, lastEventSeq)` when constructing it so it
+> knows which session it drives and where that session's event stream stands.
+
 ## Optional Provider Build Tags
 
 By default Docker Agent includes all four cloud providers (OpenAI, Anthropic, Google, Amazon Bedrock). When embedding Docker Agent in your own binary you can compile out unneeded providers — together with their transitive SDK dependencies — to reduce binary size.
