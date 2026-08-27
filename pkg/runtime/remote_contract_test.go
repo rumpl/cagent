@@ -22,8 +22,9 @@ import (
 // CreateSession) panic so an accidental wiring against them is loud
 // rather than silent.
 type stubRemoteClient struct {
-	cfg      *latest.Config
-	getAgent func(context.Context, string) (*latest.Config, error)
+	cfg           *latest.Config
+	getAgent      func(context.Context, string) (*latest.Config, error)
+	sessionModels *SessionModelsResponse
 }
 
 func (s *stubRemoteClient) GetAgent(ctx context.Context, id string) (*latest.Config, error) {
@@ -97,8 +98,11 @@ func (s *stubRemoteClient) GetSessionTools(context.Context, string) ([]tools.Too
 	return nil, nil
 }
 
-func (s *stubRemoteClient) GetAvailableModels(context.Context) ([]string, error) {
-	return nil, nil
+func (s *stubRemoteClient) GetSessionModels(context.Context, string) (*SessionModelsResponse, error) {
+	if s.sessionModels != nil {
+		return s.sessionModels, nil
+	}
+	return &SessionModelsResponse{}, nil
 }
 
 func (s *stubRemoteClient) GetSessionMCPPrompts(context.Context, string) (map[string]any, error) {
@@ -185,6 +189,20 @@ func TestRemoteRuntime_Contract(t *testing.T) {
 		rt.sessionID = "test-session"
 		return rt
 	})
+}
+
+func TestRemoteRuntime_AvailableModelsUsesActiveSession(t *testing.T) {
+	t.Parallel()
+
+	client := &stubRemoteClient{
+		sessionModels: &SessionModelsResponse{
+			Models: []ModelChoice{{Name: "fast", Ref: "openai/gpt-5"}},
+		},
+	}
+	rt, err := NewRemoteRuntime(client, WithRemoteSession(session.New(session.WithID("session-1")), 0))
+	require.NoError(t, err)
+
+	assert.Equal(t, []ModelChoice{{Name: "fast", Ref: "openai/gpt-5"}}, rt.AvailableModels(t.Context()))
 }
 
 // TestRemoteRuntime_SetCurrentAgent_PropagatesClientError pins the

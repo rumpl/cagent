@@ -85,7 +85,9 @@ type SessionModelsResponse struct {
 // final list looks like.
 //
 // currentRef is the model override active for the agent ("" when none),
-// and customRefs is the session's CustomModelsUsed history.
+// and customRefs is the session's CustomModelsUsed history. When currentRef is
+// empty, an IsCurrent marker supplied by the runtime takes precedence over the
+// configured default.
 //
 // The input slice is never mutated: callers can safely pass a slice that
 // is shared with or backed by an internal cache.
@@ -102,13 +104,16 @@ func DecorateModelChoices(models []ModelChoice, currentRef string, customRefs []
 	}
 
 	currentFound := currentRef == ""
+	baseMarksCurrent := slices.ContainsFunc(result, func(choice ModelChoice) bool {
+		return choice.IsCurrent
+	})
 	for i := range result {
 		if currentRef != "" {
-			if result[i].Ref == currentRef {
-				result[i].IsCurrent = true
+			result[i].IsCurrent = result[i].Ref == currentRef
+			if result[i].IsCurrent {
 				currentFound = true
 			}
-		} else {
+		} else if !baseMarksCurrent {
 			result[i].IsCurrent = result[i].IsDefault
 		}
 	}

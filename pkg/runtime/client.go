@@ -703,11 +703,14 @@ func (c *Client) GetSessionTools(ctx context.Context, sessionID string) ([]tools
 	return toolList, err
 }
 
-// GetAvailableModels returns available models for the agent.
-func (c *Client) GetAvailableModels(ctx context.Context) ([]string, error) {
-	var models []string
-	err := c.doRequest(ctx, http.MethodGet, "/api/models", nil, &models)
-	return models, err
+// GetSessionModels returns available models for the session's current agent.
+func (c *Client) GetSessionModels(ctx context.Context, sessionID string) (*SessionModelsResponse, error) {
+	var response SessionModelsResponse
+	endpoint := fmt.Sprintf("/api/sessions/%s/models", sessionID)
+	if err := c.doRequest(ctx, http.MethodGet, endpoint, nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
 }
 
 // GetSessionMCPPrompts returns available MCP prompts for a session.

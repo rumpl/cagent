@@ -1238,6 +1238,21 @@ func TestDecorateModelChoices(t *testing.T) {
 		assert.False(t, got[1].IsCurrent)
 	})
 
+	t.Run("preserves current marker supplied by runtime", func(t *testing.T) {
+		t.Parallel()
+		got := DecorateModelChoices(
+			[]ModelChoice{
+				{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true},
+				{Name: "server-current", Ref: "openai/gpt-5", IsCurrent: true},
+			},
+			"",
+			nil,
+		)
+		require.Len(t, got, 2)
+		assert.False(t, got[0].IsCurrent)
+		assert.True(t, got[1].IsCurrent)
+	})
+
 	t.Run("override matching a known choice marks it current", func(t *testing.T) {
 		t.Parallel()
 		got := DecorateModelChoices(
@@ -1250,6 +1265,21 @@ func TestDecorateModelChoices(t *testing.T) {
 		)
 		require.Len(t, got, 2)
 		assert.False(t, got[0].IsCurrent, "default must not be marked current when an override is active")
+		assert.True(t, got[1].IsCurrent)
+	})
+
+	t.Run("override clears stale current marker", func(t *testing.T) {
+		t.Parallel()
+		got := DecorateModelChoices(
+			[]ModelChoice{
+				{Name: "server-current", Ref: "openai/gpt-4o-mini", IsCurrent: true},
+				{Name: "queued", Ref: "openai/gpt-5"},
+			},
+			"openai/gpt-5",
+			nil,
+		)
+		require.Len(t, got, 2)
+		assert.False(t, got[0].IsCurrent)
 		assert.True(t, got[1].IsCurrent)
 	})
 

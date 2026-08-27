@@ -725,18 +725,23 @@ func (r *RemoteRuntime) SessionStore() session.Store {
 	return NewRemoteSessionStore(r.client)
 }
 
-// AvailableModels returns available models for the agent.
+// AvailableModels returns available models for the session's current agent.
 func (r *RemoteRuntime) AvailableModels(ctx context.Context) []ModelChoice {
-	models, err := r.client.GetAvailableModels(ctx)
+	if r.sessionID == "" {
+		return nil
+	}
+	response, err := r.client.GetSessionModels(ctx, r.sessionID)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to get available models", "error", err)
 		return nil
 	}
-	choices := make([]ModelChoice, len(models))
-	for i, m := range models {
-		choices[i] = ModelChoice{Name: m, Ref: m}
-	}
-	return choices
+	return response.Models
+}
+
+// HandlesModelOverridePersistence reports that model overrides are persisted
+// by the server when the next remote turn is accepted.
+func (r *RemoteRuntime) HandlesModelOverridePersistence() bool {
+	return true
 }
 
 // SetAgentModel queues modelRef as the override to apply on the session's

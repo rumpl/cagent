@@ -115,6 +115,38 @@ func (m *mockRuntime) OnElicitationRequest(func(runtime.Event))              {}
 // Verify mockRuntime implements runtime.Runtime
 var _ runtime.Runtime = (*mockRuntime)(nil)
 
+type runtimeManagedModelPersistence struct {
+	mockRuntime
+}
+
+func (r *runtimeManagedModelPersistence) SupportsModelSwitching() bool { return true }
+func (r *runtimeManagedModelPersistence) HandlesModelOverridePersistence() bool {
+	return true
+}
+
+type updateFailingStore struct {
+	session.Store
+}
+
+func (s updateFailingStore) UpdateSession(context.Context, *session.Session) error {
+	return errors.New("unexpected client-side persistence")
+}
+
+func TestSetCurrentAgentModel_RuntimeHandlesPersistence(t *testing.T) {
+	t.Parallel()
+
+	sess := session.New()
+	rt := &runtimeManagedModelPersistence{
+		mockRuntime: mockRuntime{
+			store: updateFailingStore{Store: session.NewInMemorySessionStore()},
+		},
+	}
+	a := New(t.Context(), rt, sess)
+
+	require.NoError(t, a.SetCurrentAgentModel(t.Context(), "openai/gpt-5"))
+	assert.Equal(t, "openai/gpt-5", sess.AgentModelOverrides["mock"])
+}
+
 // retryMockRuntime mimics the real run loop's startup event ordering: it
 // re-emits a UserMessageEvent for the session's trailing message BEFORE
 // StreamStarted (exactly what LocalRuntime.runStreamLoop does when

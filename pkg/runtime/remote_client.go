@@ -74,8 +74,8 @@ type RemoteClient interface {
 	// GetSessionTools retrieves tools available in a session
 	GetSessionTools(ctx context.Context, sessionID string) ([]tools.Tool, error)
 
-	// GetAvailableModels returns available models for the agent
-	GetAvailableModels(ctx context.Context) ([]string, error)
+	// GetSessionModels returns available models for the session's current agent
+	GetSessionModels(ctx context.Context, sessionID string) (*SessionModelsResponse, error)
 
 	// GetSessionMCPPrompts returns available MCP prompts for a session
 	GetSessionMCPPrompts(ctx context.Context, sessionID string) (map[string]any, error)

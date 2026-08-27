@@ -226,6 +226,40 @@ func TestClient_RunAgent_ReportsBusySessionTypedError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRemoteSessionBusy)
 }
 
+func TestClient_GetSessionModels(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/sessions/session-1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"agent":"root",
+			"current_model_ref":"openai/gpt-5",
+			"models":[{
+				"name":"fast",
+				"ref":"openai/gpt-5",
+				"provider":"openai",
+				"model":"gpt-5",
+				"is_current":true,
+				"context_limit":400000
+			}]
+		}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL)
+	require.NoError(t, err)
+
+	response, err := c.GetSessionModels(t.Context(), "session-1")
+	require.NoError(t, err)
+	assert.Equal(t, "root", response.Agent)
+	assert.Equal(t, "openai/gpt-5", response.CurrentModelRef)
+	require.Len(t, response.Models, 1)
+	assert.Equal(t, "fast", response.Models[0].Name)
+	assert.True(t, response.Models[0].IsCurrent)
+	assert.Equal(t, 400000, response.Models[0].ContextLimit)
+}
+
 func TestClient_GetSessionSummaries(t *testing.T) {
 	t.Parallel()
 

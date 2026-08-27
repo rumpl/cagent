@@ -1359,12 +1359,19 @@ func (a *App) SetCurrentAgentModel(ctx context.Context, modelRef string) error {
 		}
 	}
 
-	// Persist the session
-	if store := a.runtime.SessionStore(); store != nil {
-		if err := store.UpdateSession(ctx, a.session); err != nil {
-			return fmt.Errorf("failed to persist model override: %w", err)
+	// Remote runtimes persist the queued override server-side when the next
+	// turn is accepted; their session store does not own client-side state.
+	handlesPersistence := false
+	if p, ok := a.runtime.(interface{ HandlesModelOverridePersistence() bool }); ok {
+		handlesPersistence = p.HandlesModelOverridePersistence()
+	}
+	if !handlesPersistence {
+		if store := a.runtime.SessionStore(); store != nil {
+			if err := store.UpdateSession(ctx, a.session); err != nil {
+				return fmt.Errorf("failed to persist model override: %w", err)
+			}
+			slog.DebugContext(ctx, "Persisted session with model override", "session_id", a.session.ID, "overrides", a.session.AgentModelOverrides)
 		}
-		slog.DebugContext(ctx, "Persisted session with model override", "session_id", a.session.ID, "overrides", a.session.AgentModelOverrides)
 	}
 
 	// Re-emit startup info so the sidebar updates with the new model
