@@ -267,15 +267,18 @@ func (s *Server) getSessions(c echo.Context) error {
 		// The in-memory store hands back live session pointers, so read the
 		// mutable scalars through one locked snapshot each.
 		title := sess.TitleSnapshot()
-		inputTokens, outputTokens := sess.Usage()
+		inputTokens, outputTokens, cost := sess.TokensAndCost()
 		responses[i] = api.SessionsResponse{
 			ID:           sess.ID,
 			Title:        title,
 			CreatedAt:    sess.CreatedAt.Format(time.RFC3339),
+			Starred:      sess.StarredSnapshot(),
 			NumMessages:  len(sess.GetAllMessages()),
 			InputTokens:  inputTokens,
 			OutputTokens: outputTokens,
+			Cost:         cost,
 			WorkingDir:   sess.WorkingDir,
+			Attributes:   sess.AttributesSnapshot(),
 		}
 	}
 	return c.JSON(http.StatusOK, responses)

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"time"
 
@@ -515,6 +516,36 @@ func (c *Client) GetAllSessions(ctx context.Context) ([]session.Session, error) 
 	var sessions []session.Session
 	err := c.doRequest(ctx, http.MethodGet, "/api/sessions", nil, &sessions)
 	return sessions, err
+}
+
+// GetSessionSummaries retrieves lightweight session metadata from the remote store.
+func (c *Client) GetSessionSummaries(ctx context.Context) ([]session.Summary, error) {
+	responses, err := c.GetSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]session.Summary, len(responses))
+	for i, response := range responses {
+		createdAt, err := time.Parse(time.RFC3339, response.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parsing session %q creation time: %w", response.ID, err)
+		}
+		summaries[i] = session.Summary{
+			ID:          response.ID,
+			Title:       response.Title,
+			CreatedAt:   createdAt,
+			Starred:     response.Starred,
+			NumMessages: response.NumMessages,
+			Cost:        response.Cost,
+			WorkingDir:  response.WorkingDir,
+			Attributes:  response.Attributes,
+		}
+	}
+	slices.SortFunc(summaries, func(a, b session.Summary) int {
+		return b.CreatedAt.Compare(a.CreatedAt)
+	})
+	return summaries, nil
 }
 
 // DeleteRemoteSession deletes a session from the remote store.

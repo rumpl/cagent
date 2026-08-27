@@ -990,8 +990,8 @@ func (s *RemoteSessionStore) GetSessions(ctx context.Context) ([]*session.Sessio
 	return result, nil
 }
 
-func (s *RemoteSessionStore) GetSessionSummaries(context.Context) ([]session.Summary, error) {
-	return nil, fmt.Errorf("get session summaries: %w", ErrUnsupported)
+func (s *RemoteSessionStore) GetSessionSummaries(ctx context.Context) ([]session.Summary, error) {
+	return s.client.GetSessionSummaries(ctx)
 }
 
 func (s *RemoteSessionStore) DeleteSession(ctx context.Context, id string) error {

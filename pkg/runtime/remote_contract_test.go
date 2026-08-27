@@ -85,6 +85,10 @@ func (s *stubRemoteClient) GetAllSessions(context.Context) ([]session.Session, e
 	return nil, nil
 }
 
+func (s *stubRemoteClient) GetSessionSummaries(context.Context) ([]session.Summary, error) {
+	return nil, nil
+}
+
 func (s *stubRemoteClient) DeleteRemoteSession(context.Context, string) error {
 	return nil
 }

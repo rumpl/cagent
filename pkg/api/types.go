@@ -132,13 +132,16 @@ type DeleteAgentResponse struct {
 
 // SessionsResponse represents a session in the sessions list
 type SessionsResponse struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	CreatedAt    string `json:"created_at"`
-	NumMessages  int    `json:"num_messages"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	WorkingDir   string `json:"working_dir,omitempty"`
+	ID           string            `json:"id"`
+	Title        string            `json:"title"`
+	CreatedAt    string            `json:"created_at"`
+	Starred      bool              `json:"starred"`
+	NumMessages  int               `json:"num_messages"`
+	InputTokens  int64             `json:"input_tokens"`
+	OutputTokens int64             `json:"output_tokens"`
+	Cost         float64           `json:"cost"`
+	WorkingDir   string            `json:"working_dir,omitempty"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
 }
 
 // SessionResponse represents a detailed session

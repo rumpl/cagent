@@ -225,3 +225,38 @@ func TestClient_RunAgent_ReportsBusySessionTypedError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrRemoteSessionBusy)
 }
+
+func TestClient_GetSessionSummaries(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/sessions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{
+			"id":"session-1",
+			"title":"Remote session",
+			"created_at":"2026-05-14T12:30:00Z",
+			"starred":true,
+			"num_messages":7,
+			"cost":0.42,
+			"working_dir":"/workspace",
+			"attributes":{"source":"remote"}
+		}]`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL)
+	require.NoError(t, err)
+
+	summaries, err := NewRemoteSessionStore(c).GetSessionSummaries(t.Context())
+	require.NoError(t, err)
+	require.Len(t, summaries, 1)
+	assert.Equal(t, "session-1", summaries[0].ID)
+	assert.Equal(t, "Remote session", summaries[0].Title)
+	assert.Equal(t, time.Date(2026, time.May, 14, 12, 30, 0, 0, time.UTC), summaries[0].CreatedAt)
+	assert.True(t, summaries[0].Starred)
+	assert.Equal(t, 7, summaries[0].NumMessages)
+	assert.InDelta(t, 0.42, summaries[0].Cost, 0)
+	assert.Equal(t, "/workspace", summaries[0].WorkingDir)
+	assert.Equal(t, map[string]string{"source": "remote"}, summaries[0].Attributes)
+}

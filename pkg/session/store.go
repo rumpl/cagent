@@ -204,7 +204,7 @@ func (s *InMemorySessionStore) GetSessionSummaries(_ context.Context) ([]Summary
 			ID:          value.ID,
 			Title:       value.TitleSnapshot(),
 			CreatedAt:   value.CreatedAt,
-			Starred:     value.Starred,
+			Starred:     value.StarredSnapshot(),
 			NumMessages: value.MessageCount(),
 			Cost:        cost,
 			WorkingDir:  value.WorkingDir,
@@ -294,7 +294,9 @@ func (s *InMemorySessionStore) SetSessionStarred(_ context.Context, id string, s
 	if !exists {
 		return ErrNotFound
 	}
+	session.mu.Lock()
 	session.Starred = starred
+	session.mu.Unlock()
 	s.sessions.Store(id, session)
 	return nil
 }

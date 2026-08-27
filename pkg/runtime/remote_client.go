@@ -65,6 +65,9 @@ type RemoteClient interface {
 	// GetAllSessions retrieves all sessions from the remote store
 	GetAllSessions(ctx context.Context) ([]session.Session, error)
 
+	// GetSessionSummaries retrieves lightweight session metadata from the remote store
+	GetSessionSummaries(ctx context.Context) ([]session.Summary, error)
+
 	// DeleteRemoteSession deletes a session from the remote store
 	DeleteRemoteSession(ctx context.Context, sessionID string) error
 

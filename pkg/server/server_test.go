@@ -180,6 +180,34 @@ func TestServer_ListSessions(t *testing.T) {
 	assert.Empty(t, sessions)
 }
 
+func TestListSessionMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := session.NewInMemorySessionStore()
+	sess := session.New(
+		session.WithTitle("Remote session"),
+		session.WithWorkingDir("/workspace"),
+		session.WithAttributes(map[string]string{"source": "remote"}),
+	)
+	sess.Starred = true
+	sess.SetTokensAndCost(10, 20, 0.42)
+	sess.AddMessage(session.UserMessage("hello"))
+	require.NoError(t, store.AddSession(ctx, sess))
+	lnPath := startServerWithStore(t, ctx, prepareAgentsDir(t), store)
+
+	var sessions []api.SessionsResponse
+	unmarshal(t, httpGET(t, ctx, lnPath, "/api/sessions"), &sessions)
+
+	require.Len(t, sessions, 1)
+	assert.Equal(t, sess.ID, sessions[0].ID)
+	assert.True(t, sessions[0].Starred)
+	assert.Equal(t, 1, sessions[0].NumMessages)
+	assert.InDelta(t, 0.42, sessions[0].Cost, 0)
+	assert.Equal(t, "/workspace", sessions[0].WorkingDir)
+	assert.Equal(t, map[string]string{"source": "remote"}, sessions[0].Attributes)
+}
+
 func prepareAgentsDir(t *testing.T, testFiles ...string) string {
 	t.Helper()
 

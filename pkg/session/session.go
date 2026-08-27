@@ -914,6 +914,13 @@ func (s *Session) TitleSnapshot() string {
 	return s.Title
 }
 
+// StarredSnapshot returns the session's starred state under s.mu.
+func (s *Session) StarredSnapshot() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Starred
+}
+
 // ApplyCompaction atomically resets the session's cumulative token
 // counts and appends a summary item under s.mu so concurrent readers
 // (e.g. the persistence observer's UpdateSession snapshot) cannot
