@@ -31,6 +31,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/dmr/dmrmodels"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/team"
@@ -275,8 +276,8 @@ type LocalRuntime struct {
 	env              []string // Environment variables for hooks execution
 	modelSwitcherCfg *ModelSwitcherConfig
 	providerRegistry *provider.Registry
-	gatewayModels    gatewayModelsCache
-	dmrModels        dmrModelsCache
+	catalogOnce      sync.Once
+	modelCatalog     *modelcatalog.Catalog
 	modelContexts    modelContextCache
 
 	// hooksRegistry is the runtime-private hooks.Registry used to build
