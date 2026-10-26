@@ -3,6 +3,8 @@ package runtime
 import (
 	"log/slog"
 	"time"
+
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // EventSink is the write side of the runtime's event stream. Methods
@@ -12,13 +14,7 @@ import (
 // Implementations must be safe for concurrent use: multiple goroutines
 // may call Emit simultaneously (e.g. tool-call handlers running in
 // parallel).
-type EventSink interface {
-	// Emit delivers an event to the sink. The default implementation
-	// preserves back-pressure: if the consumer is slow, Emit blocks
-	// until the event can be delivered. Implementations must still be
-	// panic-safe so a closed channel does not crash the caller.
-	Emit(event Event)
-}
+type EventSink = contract.EventSink
 
 // channelSink adapts a chan Event into an [EventSink]. Sends are
 // blocking so back-pressure is preserved between producers and the

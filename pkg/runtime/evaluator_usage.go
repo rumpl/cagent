@@ -133,14 +133,3 @@ func (ac *evaluatorAccounting) record(ctx context.Context, name string, record e
 	ac.events.Emit(NewTokenUsageEvent(ac.sess.ID, ac.a.Name(), usage))
 	return valid
 }
-
-// EvaluationUsageEvent reports a paid assessment independently of its decision.
-type EvaluationUsageEvent struct {
-	AgentContext
-
-	Type       string              `json:"type"`
-	SessionID  string              `json:"session_id"`
-	Evaluation *session.Evaluation `json:"evaluation"`
-}
-
-func (e *EvaluationUsageEvent) GetSessionID() string { return e.SessionID }

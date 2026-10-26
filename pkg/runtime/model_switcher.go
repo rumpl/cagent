@@ -470,6 +470,9 @@ func (r *LocalRuntime) resolveModelRefs(ctx context.Context, commaSeparatedRefs 
 
 // AvailableModels returns configured and discovered choices for the active agent.
 func (r *LocalRuntime) AvailableModels(ctx context.Context) []ModelChoice {
+	if r.modelSwitcherCfg == nil {
+		return nil
+	}
 	return r.catalog().AvailableModels(ctx, r.currentAgentName())
 }
 

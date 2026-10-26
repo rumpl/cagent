@@ -4,17 +4,13 @@ import (
 	"context"
 	"sync"
 
-	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // QueuedMessage is a user message waiting to be injected into the agent loop,
 // either mid-turn (via the steer queue) or at end-of-turn (via the follow-up
 // queue).
-type QueuedMessage struct {
-	ID           string
-	Content      string
-	MultiContent []chat.MessagePart
-}
+type QueuedMessage = contract.QueuedMessage
 
 // PendingMessageCanceler is implemented by runtimes that can withdraw queued
 // messages before the agent loop consumes them.
@@ -131,9 +127,5 @@ func (q *inMemoryMessageQueue) status() (depth, capacity int) {
 }
 
 // QueueStatus represents the current depth and capacity of message queues
-type QueueStatus struct {
-	SteerDepth       int
-	SteerCapacity    int
-	FollowupDepth    int
-	FollowupCapacity int
-}
+// QueueStatus reports pending user-message queue depths.
+type QueueStatus = contract.QueueStatus

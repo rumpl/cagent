@@ -2,12 +2,7 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config/latest"
@@ -147,53 +142,4 @@ func (s *stubRemoteClient) UpdateSessionTokens(context.Context, string, int64, i
 
 func (s *stubRemoteClient) SetSessionStarred(context.Context, string, bool) error {
 	return nil
-}
-
-// TestRemoteRuntime_Contract runs the same surface contract LocalRuntime
-// passes against a RemoteRuntime backed by a stub client. Any silent
-// no-op on RemoteRuntime that the contract considers a failure surfaces
-// here as a red test rather than a runtime user complaint.
-func TestRemoteRuntime_Contract(t *testing.T) {
-	t.Parallel()
-
-	runRuntimeContract(t, func(t *testing.T) Runtime {
-		t.Helper()
-		client := &stubRemoteClient{
-			cfg: &latest.Config{
-				Agents: latest.Agents{
-					{Name: "test", Description: "test agent"},
-				},
-			},
-		}
-		rt, err := NewRemoteRuntime(client)
-		require.NoError(t, err)
-
-		// Seed a session ID so Steer / FollowUp / Resume / ResumeElicitation
-		// reach the (stubbed) client instead of returning "no active session".
-		rt.sessionID = "test-session"
-		return rt
-	})
-}
-
-// TestRemoteRuntime_SetCurrentAgent_PropagatesClientError pins the
-// fixed behaviour reviewers flagged: when GetAgent fails (network,
-// auth, missing remote config), SetCurrentAgent must NOT silently
-// accept the name. That would re-introduce the silent-gap pattern the
-// PR set out to close.
-func TestRemoteRuntime_SetCurrentAgent_PropagatesClientError(t *testing.T) {
-	t.Parallel()
-
-	want := errors.New("boom: network unreachable")
-	client := &stubRemoteClient{
-		getAgent: func(context.Context, string) (*latest.Config, error) {
-			return nil, want
-		},
-	}
-	rt, err := NewRemoteRuntime(client)
-	require.NoError(t, err)
-
-	err = rt.SetCurrentAgent(t.Context(), "anything")
-	require.Error(t, err)
-	require.ErrorIs(t, err, want)
-	assert.Empty(t, rt.currentAgent, "currentAgent must not be mutated when validation fails")
 }

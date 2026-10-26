@@ -182,7 +182,7 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	slog.DebugContext(ctx, "Generated session summary", "session_id", sess.ID, "summary_length", len(result.Summary))
 	summaryEvent := SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry, result.Cost, result.Model, summaryUsage(result))
 	if e, ok := summaryEvent.(*SessionSummaryEvent); ok {
-		e.persisted = true
+		e.MarkPersisted()
 	}
 	events.Emit(summaryEvent)
 

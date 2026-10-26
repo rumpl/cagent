@@ -137,7 +137,7 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		}
 
 	case *SessionSummaryEvent:
-		if e.persisted {
+		if e.IsPersisted() {
 			break
 		}
 		item := session.Item{Summary: e.Summary, FirstKeptEntry: e.FirstKeptEntry, Cost: e.Cost, Model: e.Model}

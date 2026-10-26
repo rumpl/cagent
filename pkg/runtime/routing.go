@@ -342,37 +342,3 @@ func (r *LocalRuntime) routingDefaultAgent(agentName string) string {
 	}
 	return a.Routing().DefaultAgent
 }
-
-// AgentRouteEvent reports a routing transition without the task text.
-type AgentRouteEvent struct {
-	AgentContext
-
-	Type         string `json:"type"`
-	SessionID    string `json:"session_id"`
-	InvocationID string `json:"invocation_id"`
-	StepID       string `json:"step_id"`
-	// Phase is before_agent_run, after_agent_complete, or force_handoff.
-	Phase     string `json:"phase"`
-	FromAgent string `json:"from_agent"`
-	ToAgent   string `json:"to_agent"`
-	// Evaluator fields are empty for command selectors and forced handoffs.
-	Evaluator      string   `json:"evaluator,omitempty"`
-	Selected       string   `json:"selected,omitempty"`
-	Probability    *float64 `json:"probability,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	FallbackReason string   `json:"fallback_reason,omitempty"`
-}
-
-func (e *AgentRouteEvent) GetSessionID() string { return e.SessionID }
-
-// RoutingDecisionEvent reports a persisted control decision, including those
-// that left the active agent unchanged.
-type RoutingDecisionEvent struct {
-	AgentContext
-
-	Type      string                   `json:"type"`
-	SessionID string                   `json:"session_id"`
-	Decision  *session.RoutingDecision `json:"decision"`
-}
-
-func (e *RoutingDecisionEvent) GetSessionID() string { return e.SessionID }
