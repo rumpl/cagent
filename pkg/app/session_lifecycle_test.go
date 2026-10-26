@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
@@ -22,8 +22,8 @@ type sessionCaptureRuntime struct {
 	release chan struct{}
 }
 
-func (r *sessionCaptureRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (r *sessionCaptureRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	go func() {
 		defer close(ch)
 		r.started <- sess
@@ -42,12 +42,12 @@ type backgroundSessionCaptureRuntime struct {
 	release chan struct{}
 }
 
-func (r *backgroundSessionCaptureRuntime) EmitStartupInfo(_ context.Context, sess *session.Session, _ runtime.EventSink) {
+func (r *backgroundSessionCaptureRuntime) EmitStartupInfo(_ context.Context, sess *session.Session, _ contract.EventSink) {
 	r.started <- sess
 	<-r.release
 }
 
-func (r *backgroundSessionCaptureRuntime) RunSkillFork(_ context.Context, sess *session.Session, _ skillstool.RunSkillArgs, _ runtime.EventSink) (*tools.ToolCallResult, error) {
+func (r *backgroundSessionCaptureRuntime) RunSkillFork(_ context.Context, sess *session.Session, _ skillstool.RunSkillArgs, _ contract.EventSink) (*tools.ToolCallResult, error) {
 	r.started <- sess
 	<-r.release
 	return nil, nil
@@ -138,7 +138,7 @@ func TestAppRunKeepsWorkScopedToOriginalSession(t *testing.T) {
 				close(rt.release)
 
 				event := unwrappedTestEvent(<-app.events)
-				stop, ok := event.(*runtime.StreamStoppedEvent)
+				stop, ok := event.(*contract.StreamStoppedEvent)
 				require.True(t, ok)
 				assert.Equal(t, oldSession.ID, stop.SessionID)
 				assert.Equal(t, 1, oldSession.MessageCount())
@@ -248,7 +248,7 @@ func TestGenerateTitleKeepsOriginalSession(t *testing.T) {
 
 		assert.Equal(t, "Original title", oldSession.TitleSnapshot())
 		assert.Empty(t, newSession.TitleSnapshot())
-		titleEvent, ok := unwrappedTestEvent(<-app.events).(*runtime.SessionTitleEvent)
+		titleEvent, ok := unwrappedTestEvent(<-app.events).(*contract.SessionTitleEvent)
 		require.True(t, ok)
 		assert.Equal(t, oldSession.ID, titleEvent.SessionID)
 	})

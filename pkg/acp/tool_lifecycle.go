@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -21,7 +21,7 @@ type toolCallState struct {
 	id       acp.ToolCallId
 	name     string
 	rejected bool
-	result   *runtime.ToolCallResponseEvent
+	result   *contract.ToolCallResponseEvent
 }
 
 type toolCallTracker struct {
@@ -65,7 +65,7 @@ func (t *toolCallTracker) report(ctx context.Context, a *Agent, s *Session, agen
 	return state, nil
 }
 
-func (t *toolCallTracker) complete(ctx context.Context, a *Agent, s *Session, event *runtime.ToolCallResponseEvent) error {
+func (t *toolCallTracker) complete(ctx context.Context, a *Agent, s *Session, event *contract.ToolCallResponseEvent) error {
 	if event.ToolCallID == "" {
 		return errors.New("tool call ID is required")
 	}
@@ -102,8 +102,8 @@ func (t *toolCallTracker) complete(ctx context.Context, a *Agent, s *Session, ev
 	return a.sendUpdate(sendCtx, s.id, update)
 }
 
-func (t *toolCallTracker) retainResult(event runtime.Event) {
-	if response, ok := event.(*runtime.ToolCallResponseEvent); ok {
+func (t *toolCallTracker) retainResult(event contract.Event) {
+	if response, ok := event.(*contract.ToolCallResponseEvent); ok {
 		if state := t.active[toolCallKey{agent: response.AgentName, id: response.ToolCallID}]; state != nil {
 			state.result = response
 		}

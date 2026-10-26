@@ -8,7 +8,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/leantui/ui"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -16,7 +16,7 @@ func TestAgentInfoContextLimitShownBeforeUsage(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
 
-	m.handleEvent(t.Context(), runtime.AgentInfo("root", "test/model", "", "", 200_000))
+	m.handleEvent(t.Context(), contract.AgentInfo("root", "test/model", "", "", 200_000))
 
 	assert.Equal(t, int64(200_000), m.status.ContextLimit)
 	assert.Contains(t, ui.RenderContext(m.status), "0% · 0/200.0k")
@@ -26,16 +26,16 @@ func TestTokenUsageEventAggregatesSessionCost(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
 
-	m.handleEvent(t.Context(), runtime.StreamStarted("root-session", "root"))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("root-session", "root", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.StreamStarted("root-session", "root"))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("root-session", "root", &contract.Usage{
 		InputTokens:   2_000,
 		OutputTokens:  1_000,
 		ContextLength: 3_000,
 		ContextLimit:  10_000,
 		Cost:          0.10,
 	}))
-	m.handleEvent(t.Context(), runtime.StreamStarted("child-session", "developer"))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("child-session", "developer", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.StreamStarted("child-session", "developer"))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("child-session", "developer", &contract.Usage{
 		InputTokens:   800,
 		OutputTokens:  200,
 		ContextLength: 1_000,
@@ -48,7 +48,7 @@ func TestTokenUsageEventAggregatesSessionCost(t *testing.T) {
 	assert.True(t, m.status.CostKnown)
 	assert.Contains(t, strings.Join(ui.RenderStatus(m.status, 80), "\n"), "$0.15")
 
-	m.handleEvent(t.Context(), runtime.StreamStopped("child-session", "developer", "normal"))
+	m.handleEvent(t.Context(), contract.StreamStopped("child-session", "developer", "normal"))
 
 	assert.Equal(t, int64(3_000), m.status.Tokens)
 	assert.InDelta(t, 0.15, m.status.Cost, 0.0001)
@@ -58,14 +58,14 @@ func TestTokenUsageBeforeStreamUsesFirstSessionAsRoot(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
 
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("root-session", "root", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("root-session", "root", &contract.Usage{
 		InputTokens:   2_000,
 		OutputTokens:  1_000,
 		ContextLength: 3_000,
 		ContextLimit:  10_000,
 		Cost:          0.10,
 	}))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("child-session", "developer", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("child-session", "developer", &contract.Usage{
 		InputTokens:   800,
 		OutputTokens:  200,
 		ContextLength: 1_000,
@@ -82,14 +82,14 @@ func TestEmptySessionUsageDoesNotOverrideSessionScopedUsage(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
 
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("root-session", "root", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("root-session", "root", &contract.Usage{
 		InputTokens:   2_000,
 		OutputTokens:  1_000,
 		ContextLength: 3_000,
 		ContextLimit:  10_000,
 		Cost:          0.10,
 	}))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("", "root", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("", "root", &contract.Usage{
 		InputTokens:   50,
 		ContextLength: 50,
 		Cost:          0.99,
@@ -126,13 +126,13 @@ func TestRestoredSessionCostDoesNotDecreaseAfterCompaction(t *testing.T) {
 	sess.Messages = append(sess.Messages, session.Item{SubSession: sub})
 
 	// Session restore: EmitStartupInfo emits the restored session's usage.
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent(sess.ID, "root", runtime.SessionUsage(sess, 10_000)))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent(sess.ID, "root", contract.SessionUsage(sess, 10_000)))
 	assert.InDelta(t, 0.15, m.status.Cost, 0.0001)
 
 	// Compaction appends a $0.01 summary and immediately emits the session's
 	// usage (see compactWithReason).
 	sess.ApplyCompaction(100, 0, session.Item{Summary: "summary", Cost: 0.01})
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent(sess.ID, "root", runtime.SessionUsage(sess, 10_000)))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent(sess.ID, "root", contract.SessionUsage(sess, 10_000)))
 	assert.InDelta(t, 0.16, m.status.Cost, 0.0001,
 		"the total must keep the embedded sub-session cost and gain the summary cost")
 }
@@ -147,20 +147,20 @@ func TestLiveSubSessionCostNotDoubleCounted(t *testing.T) {
 
 	root := session.New()
 	root.Messages = append(root.Messages, leantuiCostItem("root", 0.10))
-	m.handleEvent(t.Context(), runtime.StreamStarted(root.ID, "root"))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent(root.ID, "root", runtime.SessionUsage(root, 10_000)))
+	m.handleEvent(t.Context(), contract.StreamStarted(root.ID, "root"))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent(root.ID, "root", contract.SessionUsage(root, 10_000)))
 
 	child := session.New(session.WithParentID(root.ID))
 	child.Messages = append(child.Messages, leantuiCostItem("developer", 0.05))
-	m.handleEvent(t.Context(), runtime.StreamStarted(child.ID, "developer"))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent(child.ID, "developer", runtime.SessionUsage(child, 10_000)))
+	m.handleEvent(t.Context(), contract.StreamStarted(child.ID, "developer"))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent(child.ID, "developer", contract.SessionUsage(child, 10_000)))
 	assert.InDelta(t, 0.15, m.status.Cost, 0.0001)
 
 	// Child completes: its stream stops and it is attached to the root.
-	m.handleEvent(t.Context(), runtime.StreamStopped(child.ID, "developer", "normal"))
+	m.handleEvent(t.Context(), contract.StreamStopped(child.ID, "developer", "normal"))
 	root.AddLiveSubSession(child)
 
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent(root.ID, "root", runtime.SessionUsage(root, 10_000)))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent(root.ID, "root", contract.SessionUsage(root, 10_000)))
 	assert.InDelta(t, 0.15, m.status.Cost, 0.0001, "root own + child own, not double-counted")
 }
 
@@ -171,8 +171,8 @@ func TestSessionCompactionDrivesGaugeState(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
 
-	m.handleEvent(t.Context(), runtime.StreamStarted("root-session", "root"))
-	m.handleEvent(t.Context(), runtime.NewTokenUsageEvent("root-session", "root", &runtime.Usage{
+	m.handleEvent(t.Context(), contract.StreamStarted("root-session", "root"))
+	m.handleEvent(t.Context(), contract.NewTokenUsageEvent("root-session", "root", &contract.Usage{
 		InputTokens:         6_000,
 		OutputTokens:        3_000,
 		ContextLength:       9_000,
@@ -182,13 +182,13 @@ func TestSessionCompactionDrivesGaugeState(t *testing.T) {
 	assert.InDelta(t, 0.95, m.status.CompactionThreshold, 0.0001)
 	assert.Contains(t, ui.RenderContext(m.status), "90%")
 
-	m.handleEvent(t.Context(), runtime.SessionCompaction("root-session", "started", "root"))
+	m.handleEvent(t.Context(), contract.SessionCompaction("root-session", "started", "root"))
 	assert.True(t, m.status.Compacting)
 	out := ui.RenderContext(m.status)
 	assert.Contains(t, out, "compacting…")
 	assert.NotContains(t, out, "90%")
 
-	m.handleEvent(t.Context(), runtime.SessionCompactionCompleted("root-session", runtime.CompactionOutcomeApplied, "root"))
+	m.handleEvent(t.Context(), contract.SessionCompactionCompleted("root-session", contract.CompactionOutcomeApplied, "root"))
 	assert.False(t, m.status.Compacting)
 	out = ui.RenderContext(m.status)
 	assert.NotContains(t, out, "compacting…")

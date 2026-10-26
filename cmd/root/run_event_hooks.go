@@ -13,7 +13,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/concurrent"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/shellpath"
 )
 
@@ -45,7 +45,7 @@ func withEventHooks(hooks []onEventHook) app.Opt {
 	return func(a *app.App) {
 		//rubocop:disable Lint/ContextConnectivity
 		go a.SubscribeWith(context.Background(), func(msg tea.Msg) {
-			ev, ok := msg.(runtime.Event)
+			ev, ok := msg.(contract.Event)
 			if !ok {
 				return
 			}

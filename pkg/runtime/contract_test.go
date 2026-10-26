@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/contract/contracttest"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -13,7 +14,7 @@ import (
 func TestLocalRuntime_Contract(t *testing.T) {
 	t.Parallel()
 
-	contracttest.Run(t, func(t *testing.T) Runtime {
+	contracttest.Run(t, func(t *testing.T) contract.Runtime {
 		t.Helper()
 		prov := &mockProvider{id: "test/mock-model", stream: &mockStream{}}
 		root := agent.New("root", "You are a test agent", agent.WithModel(prov))

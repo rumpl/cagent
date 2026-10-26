@@ -8,6 +8,8 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -21,7 +23,7 @@ func TestModelPickerUsesSessionHandoffCaller(t *testing.T) {
 	target := agent.New("target", "", agent.WithModel(&mockProvider{id: "test/target"}), agent.WithToolSets(picker))
 	root.SetModelOverride(&mockProvider{id: "test/root-override"})
 	target.SetModelOverride(&mockProvider{id: "test/target-override"})
-	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, target)), WithModelStore(mockModelStore{}), WithModelSwitcherConfig(&ModelSwitcherConfig{
+	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, target)), WithModelStore(mockModelStore{}), WithModelSwitcherConfig(&modelcatalog.Config{
 		Models: map[string]latest.ModelConfig{"chosen": {Provider: "openai", Model: "gpt-4o-mini"}}, ProviderRegistry: testProviderRegistry(),
 	}))
 	require.NoError(t, err)
@@ -31,7 +33,7 @@ func TestModelPickerUsesSessionHandoffCaller(t *testing.T) {
 	ts, err := picker.Tools(t.Context())
 	require.NoError(t, err)
 	invoke := func(name, args string) {
-		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: name, Type: "function", Function: tools.FunctionCall{Name: name, Arguments: args}}}, ts, NewChannelSink(make(chan Event, 128)))
+		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: name, Type: "function", Function: tools.FunctionCall{Name: name, Arguments: args}}}, ts, NewChannelSink(make(chan contract.Event, 128)))
 	}
 	invoke("change_model", `{"model":"chosen"}`)
 	assert.Equal(t, "openai/gpt-4o-mini", target.Model(t.Context()).ID().String())

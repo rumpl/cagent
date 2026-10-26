@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -60,13 +61,13 @@ func TestRunStream_RepeatedDatetimeReads(t *testing.T) {
 					sess.Permissions = &session.PermissionsConfig{Deny: []string{datetime.ToolNameGetDatetime}}
 				}
 
-				var failures []*ErrorEvent
+				var failures []*contract.ErrorEvent
 				responses := 0
 				for event := range rt.RunStream(t.Context(), sess) {
-					if e, ok := event.(*ErrorEvent); ok {
+					if e, ok := event.(*contract.ErrorEvent); ok {
 						failures = append(failures, e)
 					}
-					if e, ok := event.(*ToolCallResponseEvent); ok {
+					if e, ok := event.(*contract.ToolCallResponseEvent); ok {
 						responses++
 						require.NotNil(t, e.Result)
 						assert.Equal(t, tc.failed, e.Result.IsError)
@@ -78,7 +79,7 @@ func TestRunStream_RepeatedDatetimeReads(t *testing.T) {
 				}
 				if tc.failed {
 					require.Len(t, failures, 1)
-					assert.Equal(t, ErrorCodeLoopDetected, failures[0].Code)
+					assert.Equal(t, contract.ErrorCodeLoopDetected, failures[0].Code)
 					assert.Equal(t, 5, responses)
 					assert.Len(t, prov.streams, 2)
 				} else {

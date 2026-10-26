@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
 
@@ -20,13 +20,13 @@ type StaticSessionState struct {
 
 var _ SessionStateReader = StaticSessionState{}
 
-func (s StaticSessionState) SplitDiffView() bool                     { return false }
-func (s StaticSessionState) ExpandThinking() bool                    { return false }
-func (s StaticSessionState) YoloMode() bool                          { return false }
-func (s StaticSessionState) HideToolResults() bool                   { return false }
-func (s StaticSessionState) CurrentAgentName() string                { return s.AgentName }
-func (s StaticSessionState) PreviousMessage() *types.Message         { return nil }
-func (s StaticSessionState) SessionTitle() string                    { return s.Title }
-func (s StaticSessionState) AvailableAgents() []runtime.AgentDetails { return nil }
-func (s StaticSessionState) GetCurrentAgent() runtime.AgentDetails   { return runtime.AgentDetails{} }
-func (s StaticSessionState) PauseState() PauseState                  { return PauseNone }
+func (s StaticSessionState) SplitDiffView() bool                      { return false }
+func (s StaticSessionState) ExpandThinking() bool                     { return false }
+func (s StaticSessionState) YoloMode() bool                           { return false }
+func (s StaticSessionState) HideToolResults() bool                    { return false }
+func (s StaticSessionState) CurrentAgentName() string                 { return s.AgentName }
+func (s StaticSessionState) PreviousMessage() *types.Message          { return nil }
+func (s StaticSessionState) SessionTitle() string                     { return s.Title }
+func (s StaticSessionState) AvailableAgents() []contract.AgentDetails { return nil }
+func (s StaticSessionState) GetCurrentAgent() contract.AgentDetails   { return contract.AgentDetails{} }
+func (s StaticSessionState) PauseState() PauseState                   { return PauseNone }

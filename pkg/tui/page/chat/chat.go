@@ -16,7 +16,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	tuibanner "github.com/docker/docker-agent/pkg/tui/banner"
 	"github.com/docker/docker-agent/pkg/tui/commands"
@@ -1395,7 +1395,7 @@ func (p *chatPage) restorePendingMessages() tea.Cmd {
 			restored = append(restored, msg.content)
 			continue
 		}
-		if !p.app.CancelPendingMessage(p.ctx(), runtime.QueuedMessage{ID: msg.id}, msg.followUp) {
+		if !p.app.CancelPendingMessage(p.ctx(), contract.QueuedMessage{ID: msg.id}, msg.followUp) {
 			remaining = append(remaining, msg)
 			continue
 		}

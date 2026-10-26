@@ -17,6 +17,9 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
+	"github.com/docker/docker-agent/pkg/runtime/remote"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -34,8 +37,8 @@ type mockRuntime struct {
 	store session.Store
 }
 
-func (m *mockRuntime) CurrentAgentInfo(ctx context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{}
+func (m *mockRuntime) CurrentAgentInfo(ctx context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{}
 }
 func (m *mockRuntime) CurrentAgentName(context.Context) string              { return "mock" }
 func (m *mockRuntime) SetCurrentAgent(_ context.Context, name string) error { return nil }
@@ -46,12 +49,12 @@ func (m *mockRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, erro
 func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
 func (m *mockRuntime) RestartToolset(context.Context, string) error       { return nil }
 
-func (m *mockRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events runtime.EventSink) {
+func (m *mockRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events contract.EventSink) {
 }
-func (m *mockRuntime) EmitAgentInfo(context.Context, runtime.EventSink) {}
-func (m *mockRuntime) ResetStartupInfo()                                {}
-func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (m *mockRuntime) EmitAgentInfo(context.Context, contract.EventSink) {}
+func (m *mockRuntime) ResetStartupInfo()                                 {}
+func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	close(ch)
 	return ch
 }
@@ -64,14 +67,14 @@ func (m *mockRuntime) ResumeElicitation(ctx context.Context, action tools.Elicit
 	return nil
 }
 func (m *mockRuntime) SessionStore() session.Store { return m.store }
-func (m *mockRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events runtime.EventSink) {
+func (m *mockRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events contract.EventSink) {
 }
-func (m *mockRuntime) PermissionsInfo() *runtime.PermissionsInfo { return nil }
+func (m *mockRuntime) PermissionsInfo() *contract.PermissionsInfo { return nil }
 func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet {
 	return nil
 }
 
-func (m *mockRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (m *mockRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -87,12 +90,12 @@ func (m *mockRuntime) UpdateSessionTitle(_ context.Context, sess *session.Sessio
 	sess.Title = title
 	return nil
 }
-func (m *mockRuntime) TitleGenerator(context.Context) *sessiontitle.Generator    { return nil }
-func (m *mockRuntime) Close() error                                              { return nil }
-func (m *mockRuntime) Stop()                                                     {}
-func (m *mockRuntime) Steer(_ context.Context, _ runtime.QueuedMessage) error    { return nil }
-func (m *mockRuntime) FollowUp(_ context.Context, _ runtime.QueuedMessage) error { return nil }
-func (m *mockRuntime) QueueStatus() runtime.QueueStatus                          { return runtime.QueueStatus{} }
+func (m *mockRuntime) TitleGenerator(context.Context) *sessiontitle.Generator     { return nil }
+func (m *mockRuntime) Close() error                                               { return nil }
+func (m *mockRuntime) Stop()                                                      {}
+func (m *mockRuntime) Steer(_ context.Context, _ contract.QueuedMessage) error    { return nil }
+func (m *mockRuntime) FollowUp(_ context.Context, _ contract.QueuedMessage) error { return nil }
+func (m *mockRuntime) QueueStatus() contract.QueueStatus                          { return contract.QueueStatus{} }
 
 func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
 
@@ -101,20 +104,20 @@ func (m *mockRuntime) SetAgentModel(context.Context, string, string) error {
 }
 
 func (m *mockRuntime) CycleAgentThinkingLevel(context.Context, string) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
 func (m *mockRuntime) SetAgentThinkingLevel(context.Context, string, effort.Level) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
-func (m *mockRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
-func (m *mockRuntime) SupportsModelSwitching() bool                          { return false }
-func (m *mockRuntime) OnToolsChanged(func(runtime.Event))                    {}
-func (m *mockRuntime) OnBackgroundEvent(func(runtime.Event))                 {}
-func (m *mockRuntime) OnElicitationRequest(func(runtime.Event))              {}
+func (m *mockRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice { return nil }
+func (m *mockRuntime) SupportsModelSwitching() bool                               { return false }
+func (m *mockRuntime) OnToolsChanged(func(contract.Event))                        {}
+func (m *mockRuntime) OnBackgroundEvent(func(contract.Event))                     {}
+func (m *mockRuntime) OnElicitationRequest(func(contract.Event))                  {}
 
 // Verify mockRuntime implements runtime.Runtime
-var _ runtime.Runtime = (*mockRuntime)(nil)
+var _ contract.Runtime = (*mockRuntime)(nil)
 
 // retryMockRuntime mimics the real run loop's startup event ordering: it
 // re-emits a UserMessageEvent for the session's trailing message BEFORE
@@ -125,16 +128,16 @@ type retryMockRuntime struct {
 	mockRuntime
 }
 
-func (m *retryMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event, 8)
+func (m *retryMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event, 8)
 	go func() {
 		defer close(ch)
 		// Re-emitted user message (pre-StreamStarted): must be suppressed.
-		ch <- runtime.UserMessage("hello", sess.ID, nil, 0)
-		ch <- runtime.StreamStarted(sess.ID, "mock")
+		ch <- contract.UserMessage("hello", sess.ID, nil, 0)
+		ch <- contract.StreamStarted(sess.ID, "mock")
 		// A genuine mid-run user message (post-StreamStarted): must pass through.
-		ch <- runtime.UserMessage("steered", sess.ID, nil, 1)
-		ch <- runtime.StreamStopped(sess.ID, "mock", "normal")
+		ch <- contract.UserMessage("steered", sess.ID, nil, 1)
+		ch <- contract.StreamStopped(sess.ID, "mock", "normal")
 	}()
 	return ch
 }
@@ -149,8 +152,8 @@ type blockingRunStreamRuntime struct {
 	release chan struct{}
 }
 
-func (r *blockingRunStreamRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (r *blockingRunStreamRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	go func() {
 		defer close(ch)
 		select {
@@ -240,11 +243,11 @@ func TestApp_Retry_SuppressesReEmittedUserMessage(t *testing.T) {
 			case ev := <-events:
 				ev = unwrappedTestEvent(ev)
 				switch e := ev.(type) {
-				case *runtime.UserMessageEvent:
+				case *contract.UserMessageEvent:
 					userMessages = append(userMessages, e.Message)
-				case *runtime.StreamStartedEvent:
+				case *contract.StreamStartedEvent:
 					sawStreamStarted = true
-				case *runtime.StreamStoppedEvent:
+				case *contract.StreamStoppedEvent:
 					sawStreamStopped = true
 				}
 			case <-deadline:
@@ -265,10 +268,10 @@ func TestApp_Retry_SuppressesReEmittedUserMessage(t *testing.T) {
 type backgroundEventMockRuntime struct {
 	mockRuntime
 
-	handler func(runtime.Event)
+	handler func(contract.Event)
 }
 
-func (m *backgroundEventMockRuntime) OnBackgroundEvent(handler func(runtime.Event)) {
+func (m *backgroundEventMockRuntime) OnBackgroundEvent(handler func(contract.Event)) {
 	m.handler = handler
 }
 
@@ -290,7 +293,7 @@ func TestApp_Start_ForwardsBackgroundEvents(t *testing.T) {
 		app.Start(t.Context())
 		require.NotNil(t, rt.handler, "Start must register the background-event handler")
 
-		usage := runtime.NewTokenUsageEvent("bg-session", "worker", &runtime.Usage{
+		usage := contract.NewTokenUsageEvent("bg-session", "worker", &contract.Usage{
 			ContextLength: 150,
 			ContextLimit:  1000,
 		})
@@ -312,7 +315,7 @@ func TestApp_Start_ForwardsBackgroundEvents(t *testing.T) {
 type elicitationRequestMockRuntime struct {
 	mockRuntime
 
-	handler func(runtime.Event)
+	handler func(contract.Event)
 
 	mu             sync.Mutex
 	resumedIDs     []string
@@ -328,7 +331,7 @@ func firstOrEmpty(ids []string) string {
 	return ids[0]
 }
 
-func (m *elicitationRequestMockRuntime) OnElicitationRequest(handler func(runtime.Event)) {
+func (m *elicitationRequestMockRuntime) OnElicitationRequest(handler func(contract.Event)) {
 	m.handler = handler
 }
 
@@ -359,7 +362,7 @@ func TestApp_Start_ForwardsElicitationRequests(t *testing.T) {
 		app.Start(t.Context())
 		require.NotNil(t, rt.handler, "Start must register the OnElicitationRequest handler")
 
-		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "sess-1", nil, "worker")
+		ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "sess-1", nil, "worker")
 		rt.handler(ev)
 
 		select {
@@ -387,7 +390,7 @@ func TestApp_SendEvent_DeliversElicitationWithoutDedupe(t *testing.T) {
 	app := &App{events: events}
 	ctx := t.Context()
 
-	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-dup", "", "sess-1", nil, "worker")
+	ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-dup", "", "sess-1", nil, "worker")
 	app.sendEvent(ctx, ev)
 	require.Len(t, events, 1, "the sink's single delivery must reach the app's event stream")
 	<-events
@@ -570,7 +573,7 @@ func TestApp_UpdateSessionTitle(t *testing.T) {
 		select {
 		case event := <-events:
 			event = unwrappedTestEvent(event)
-			titleEvent, ok := event.(*runtime.SessionTitleEvent)
+			titleEvent, ok := event.(*contract.SessionTitleEvent)
 			require.True(t, ok, "should emit SessionTitleEvent")
 			assert.Equal(t, "New Title", titleEvent.Title)
 		default:
@@ -718,13 +721,13 @@ func TestApp_SubscribeWith_FanOutToMultipleSubscribers(t *testing.T) {
 		synctest.Wait()
 		require.Len(t, app.subs, 2)
 
-		app.events <- runtime.SessionTitle("sess", "hello")
+		app.events <- contract.SessionTitle("sess", "hello")
 
 		for _, ch := range []chan tea.Msg{a, b} {
 			select {
 			case msg := <-ch:
 				msg = unwrappedTestEvent(msg)
-				ev, ok := msg.(*runtime.SessionTitleEvent)
+				ev, ok := msg.(*contract.SessionTitleEvent)
 				require.True(t, ok)
 				assert.Equal(t, "hello", ev.Title)
 			case <-time.After(time.Second):
@@ -922,12 +925,12 @@ func (m *liveSessionsMockRuntime) LiveSessions(_ context.Context, current *sessi
 	return m.rows
 }
 
-func (m *liveSessionsMockRuntime) CompactLiveSession(_ context.Context, sessionID, _ string, events runtime.EventSink) error {
+func (m *liveSessionsMockRuntime) CompactLiveSession(_ context.Context, sessionID, _ string, events contract.EventSink) error {
 	if m.compactErr != nil {
 		return m.compactErr
 	}
 	m.compactedID = sessionID
-	events.Emit(runtime.SessionCompactionCompleted(sessionID, runtime.CompactionOutcomeApplied, "worker"))
+	events.Emit(contract.SessionCompactionCompleted(sessionID, contract.CompactionOutcomeApplied, "worker"))
 	return nil
 }
 
@@ -975,7 +978,7 @@ func TestApp_CompactLiveSession_UnsupportedRuntime(t *testing.T) {
 
 	app := New(t.Context(), &mockRuntime{}, session.New())
 	err := app.CompactLiveSession(t.Context(), "some-session", "")
-	require.ErrorIs(t, err, runtime.ErrUnsupported)
+	require.ErrorIs(t, err, contract.ErrUnsupported)
 }
 
 func TestApp_LiveSessions_PassesCurrentSession(t *testing.T) {
@@ -1006,7 +1009,7 @@ func TestApp_CompactLiveSession_BridgesEventsIntoStream(t *testing.T) {
 		select {
 		case msg := <-app.events:
 			msg = unwrappedTestEvent(msg)
-			evt, ok := msg.(*runtime.SessionCompactionEvent)
+			evt, ok := msg.(*contract.SessionCompactionEvent)
 			require.True(t, ok, "expected SessionCompactionEvent, got %T", msg)
 			assert.Equal(t, "child-1", evt.SessionID)
 			assert.Equal(t, "completed", evt.Status)
@@ -1038,10 +1041,10 @@ func TestApp_CompactLiveSession_ForwardsRuntimeError(t *testing.T) {
 type composedElicitationMockRuntime struct {
 	mockRuntime
 
-	handler func(runtime.Event)
+	handler func(contract.Event)
 }
 
-func (m *composedElicitationMockRuntime) OnElicitationRequest(handler func(runtime.Event)) {
+func (m *composedElicitationMockRuntime) OnElicitationRequest(handler func(contract.Event)) {
 	m.handler = handler
 }
 
@@ -1051,19 +1054,19 @@ func (m *composedElicitationMockRuntime) OnElicitationRequest(handler func(runti
 // also pushes onto RunStream below.
 func (m *composedElicitationMockRuntime) MirrorsElicitationOnRunStream() {}
 
-func (m *composedElicitationMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event, 8)
+func (m *composedElicitationMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event, 8)
 	go func() {
 		defer close(ch)
-		ch <- runtime.StreamStarted(sess.ID, "mock")
+		ch <- contract.StreamStarted(sess.ID, "mock")
 
-		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "mock")
+		ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "mock")
 		if m.handler != nil {
 			m.handler(ev) // reliable sink delivery (elicitationHandler, #3584)
 		}
 		ch <- ev // best-effort bridge delivery on the same RunStream channel
 
-		ch <- runtime.StreamStopped(sess.ID, "mock", "normal")
+		ch <- contract.StreamStopped(sess.ID, "mock", "normal")
 	}()
 	return ch
 }
@@ -1079,13 +1082,13 @@ type remoteLikeMockRuntime struct {
 	mockRuntime
 }
 
-func (m *remoteLikeMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event, 8)
+func (m *remoteLikeMockRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event, 8)
 	go func() {
 		defer close(ch)
-		ch <- runtime.StreamStarted(sess.ID, "mock")
-		ch <- runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "mock")
-		ch <- runtime.StreamStopped(sess.ID, "mock", "normal")
+		ch <- contract.StreamStarted(sess.ID, "mock")
+		ch <- contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "mock")
+		ch <- contract.StreamStopped(sess.ID, "mock", "normal")
 	}()
 	return ch
 }
@@ -1104,10 +1107,10 @@ func countElicitationDeliveries(t *testing.T, events <-chan tea.Msg) int {
 		select {
 		case msg := <-events:
 			msg = unwrappedTestEvent(msg)
-			if _, ok := msg.(*runtime.ElicitationRequestEvent); ok {
+			if _, ok := msg.(*contract.ElicitationRequestEvent); ok {
 				n++
 			}
-			if _, ok := msg.(*runtime.StreamStoppedEvent); ok {
+			if _, ok := msg.(*contract.StreamStoppedEvent); ok {
 				return n
 			}
 		case <-deadline:
@@ -1186,7 +1189,7 @@ func TestMustSkipMirroredElicitation_ConcreteRuntimeClassification(t *testing.T)
 
 	assert.True(t, mustSkipMirroredElicitation((*runtime.LocalRuntime)(nil)),
 		"LocalRuntime mirrors OnElicitationRequest sink deliveries onto RunStream; App must skip the duplicate RunStream copy")
-	assert.False(t, mustSkipMirroredElicitation((*runtime.RemoteRuntime)(nil)),
+	assert.False(t, mustSkipMirroredElicitation((*remote.Runtime)(nil)),
 		"RemoteRuntime delivers elicitations ONLY via RunStream (its OnElicitationRequest sink is a no-op); App must not skip that copy")
 }
 
@@ -1279,7 +1282,7 @@ func TestElicitationDeliveryAcrossEntryPoints(t *testing.T) {
 type scriptedStreamMockRuntime struct {
 	mockRuntime
 
-	script []runtime.Event
+	script []contract.Event
 	// cancelAfterScript, when set, is called after every scripted event has
 	// been pushed onto the channel and before it closes, simulating ctx
 	// being cancelled mid-stream (e.g. Esc) with the channel closing right
@@ -1287,8 +1290,8 @@ type scriptedStreamMockRuntime struct {
 	cancelAfterScript context.CancelFunc
 }
 
-func (m *scriptedStreamMockRuntime) RunStream(_ context.Context, _ *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event, len(m.script)+1)
+func (m *scriptedStreamMockRuntime) RunStream(_ context.Context, _ *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event, len(m.script)+1)
 	go func() {
 		defer close(ch)
 		for _, ev := range m.script {
@@ -1328,10 +1331,10 @@ func collectUntilQuiet(t *testing.T, events <-chan tea.Msg) []tea.Msg {
 
 // streamStoppedEvents returns every *runtime.StreamStoppedEvent in msgs, in
 // order.
-func streamStoppedEvents(msgs []tea.Msg) []*runtime.StreamStoppedEvent {
-	var stops []*runtime.StreamStoppedEvent
+func streamStoppedEvents(msgs []tea.Msg) []*contract.StreamStoppedEvent {
+	var stops []*contract.StreamStoppedEvent
 	for _, msg := range msgs {
-		if stop, ok := msg.(*runtime.StreamStoppedEvent); ok {
+		if stop, ok := msg.(*contract.StreamStoppedEvent); ok {
 			stops = append(stops, stop)
 		}
 	}
@@ -1359,9 +1362,9 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 
 				synctest.Test(t, func(t *testing.T) {
 					sess := session.New()
-					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-						runtime.StreamStarted(sess.ID, "mock"),
-						runtime.AgentChoice("mock", sess.ID, "partial content"),
+					rt := &scriptedStreamMockRuntime{script: []contract.Event{
+						contract.StreamStarted(sess.ID, "mock"),
+						contract.AgentChoice("mock", sess.ID, "partial content"),
 					}}
 					events := make(chan tea.Msg, 16)
 					app := &App{runtime: rt, session: sess, events: events}
@@ -1387,10 +1390,10 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 
 				synctest.Test(t, func(t *testing.T) {
 					sess := session.New()
-					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-						runtime.StreamStarted(sess.ID, "mock"),
-						runtime.AgentChoice("mock", sess.ID, "partial content"),
-						runtime.StreamStopped(sess.ID, "mock", "normal"),
+					rt := &scriptedStreamMockRuntime{script: []contract.Event{
+						contract.StreamStarted(sess.ID, "mock"),
+						contract.AgentChoice("mock", sess.ID, "partial content"),
+						contract.StreamStopped(sess.ID, "mock", "normal"),
 					}}
 					events := make(chan tea.Msg, 16)
 					app := &App{runtime: rt, session: sess, events: events}
@@ -1413,9 +1416,9 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					sess := session.New()
 					const subSessionID = "sub-session"
-					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-						runtime.StreamStarted(sess.ID, "mock"),
-						runtime.StreamStopped(subSessionID, "worker", "normal"),
+					rt := &scriptedStreamMockRuntime{script: []contract.Event{
+						contract.StreamStarted(sess.ID, "mock"),
+						contract.StreamStopped(subSessionID, "worker", "normal"),
 					}}
 					events := make(chan tea.Msg, 16)
 					app := &App{runtime: rt, session: sess, events: events}
@@ -1445,9 +1448,9 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 					ctx, cancel := context.WithCancel(t.Context())
 					defer cancel()
 					rt := &scriptedStreamMockRuntime{
-						script: []runtime.Event{
-							runtime.StreamStarted(sess.ID, "mock"),
-							runtime.AgentChoice("mock", sess.ID, "partial content"),
+						script: []contract.Event{
+							contract.StreamStarted(sess.ID, "mock"),
+							contract.AgentChoice("mock", sess.ID, "partial content"),
 						},
 						cancelAfterScript: cancel,
 					}
@@ -1469,9 +1472,9 @@ func TestForwardRunStreamEvents_SynthesizesRootStreamStopped(t *testing.T) {
 
 				synctest.Test(t, func(t *testing.T) {
 					sess := session.New()
-					rt := &scriptedStreamMockRuntime{script: []runtime.Event{
-						runtime.StreamStarted(sess.ID, "mock"),
-						runtime.ErrorForSession(sess.ID, "boom"),
+					rt := &scriptedStreamMockRuntime{script: []contract.Event{
+						contract.StreamStarted(sess.ID, "mock"),
+						contract.ErrorForSession(sess.ID, "boom"),
 					}}
 					events := make(chan tea.Msg, 16)
 					app := &App{runtime: rt, session: sess, events: events}

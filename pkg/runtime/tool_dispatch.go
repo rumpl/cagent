@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -37,7 +38,7 @@ import (
 // (false, "") in every other path — including user cancellation, which
 // halts the *batch* but keeps the loop alive so the synthesised tool
 // error responses can be sent back to the model on the next turn.
-func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, caller *agent.Agent, calls []tools.ToolCall, agentTools []tools.Tool, events EventSink) (stopRun bool, stopMessage string) {
+func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Session, caller *agent.Agent, calls []tools.ToolCall, agentTools []tools.Tool, events contract.EventSink) (stopRun bool, stopMessage string) {
 	r.ensureBudget()
 	accounting := &evaluatorAccounting{r: r, sess: sess, a: caller, events: events}
 	ctx = context.WithValue(ctx, evaluatorAccountingKey{}, accounting)
@@ -78,7 +79,7 @@ func (r *LocalRuntime) processToolCalls(ctx context.Context, sess *session.Sessi
 		Permissions:         r.permissionCheckers,
 		Handlers:            handlers,
 		Recall: func(ctx context.Context, _ *session.Session, _ *agent.Agent, message string) error {
-			return r.recall(ctx, QueuedMessage{Content: message})
+			return r.recall(ctx, contract.QueuedMessage{Content: message})
 		},
 	}
 	stopRun, stopMessage = d.Process(ctx, sess, calls, agentTools, &sinkEmitter{events: events})
@@ -122,31 +123,31 @@ func (r *LocalRuntime) permissionCheckers(sess *session.Session) []toolexec.Name
 // runtime's event channel; new dispatcher events grow this type in
 // lockstep with the [toolexec.Emitter] interface.
 type sinkEmitter struct {
-	events EventSink
+	events contract.EventSink
 }
 
 func (e *sinkEmitter) EmitToolCall(toolCall tools.ToolCall, tool tools.Tool, agentName string) {
-	e.events.Emit(ToolCall(toolCall, tool, agentName))
+	e.events.Emit(contract.ToolCall(toolCall, tool, agentName))
 }
 
 func (e *sinkEmitter) EmitToolCallOutput(toolCallID string, tool tools.Tool, output, agentName string) {
-	e.events.Emit(ToolCallOutput(toolCallID, tool, output, agentName))
+	e.events.Emit(contract.ToolCallOutput(toolCallID, tool, output, agentName))
 }
 
 func (e *sinkEmitter) EmitToolCallResponse(toolCallID string, tool tools.Tool, result *tools.ToolCallResult, output, agentName string) {
-	e.events.Emit(ToolCallResponse(toolCallID, tool, result, output, agentName))
+	e.events.Emit(contract.ToolCallResponse(toolCallID, tool, result, output, agentName))
 }
 
 func (e *sinkEmitter) EmitToolCallConfirmation(toolCall tools.ToolCall, tool tools.Tool, agentName string, metadata map[string]string) {
-	e.events.Emit(ToolCallConfirmation(toolCall, tool, agentName, metadata))
+	e.events.Emit(contract.ToolCallConfirmation(toolCall, tool, agentName, metadata))
 }
 
 func (e *sinkEmitter) EmitHookBlocked(toolCall tools.ToolCall, tool tools.Tool, message, agentName string) {
-	e.events.Emit(HookBlocked(toolCall, tool, message, agentName))
+	e.events.Emit(contract.HookBlocked(toolCall, tool, message, agentName))
 }
 
 func (e *sinkEmitter) EmitMessageAdded(sessionID string, msg *session.Message, agentName string) {
-	e.events.Emit(MessageAdded(sessionID, msg, agentName))
+	e.events.Emit(contract.MessageAdded(sessionID, msg, agentName))
 }
 
 // hookDispatcher adapts the runtime's per-agent [hooks.Executor] machinery
@@ -155,7 +156,7 @@ func (e *sinkEmitter) EmitMessageAdded(sessionID string, msg *session.Message, a
 // as a Warning event during dispatch.
 type hookDispatcher struct {
 	r      *LocalRuntime
-	events EventSink
+	events contract.EventSink
 }
 
 func (h *hookDispatcher) Dispatch(ctx context.Context, a *agent.Agent, event hooks.EventType, in *hooks.Input) *hooks.Result {
@@ -193,7 +194,7 @@ func denySourceFor(checkerSource string) string {
 // resulting MessageAdded event. Used by the loop for assistant messages
 // and max-iteration stop messages. The dispatcher emits its own variant
 // directly via the [toolexec.Emitter] interface.
-func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, events EventSink) {
+func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, events contract.EventSink) {
 	// Synthetic answers have no streaming phase; announce their text on the wire too.
 	synthetic := msg.Role == chat.MessageRoleAssistant && msg.MessageID == ""
 	if synthetic {
@@ -202,9 +203,9 @@ func addAgentMessage(sess *session.Session, a *agent.Agent, msg *chat.Message, e
 	agentMsg := session.NewAgentMessage(a.Name(), msg)
 	sess.AddMessage(agentMsg)
 	if synthetic && msg.Content != "" {
-		events.Emit(AgentChoice(a.Name(), sess.ID, chat.VisibleAssistantContent(msg.Content), msg.MessageID))
+		events.Emit(contract.AgentChoice(a.Name(), sess.ID, chat.VisibleAssistantContent(msg.Content), msg.MessageID))
 	}
-	events.Emit(MessageAdded(sess.ID, agentMsg, a.Name()))
+	events.Emit(contract.MessageAdded(sess.ID, agentMsg, a.Name()))
 }
 
 // scratchpadRootKey carries this stream's immutable lineage, never telemetry baggage.

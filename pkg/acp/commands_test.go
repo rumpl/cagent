@@ -26,7 +26,7 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -42,11 +42,11 @@ type commandRuntime struct {
 	commands  map[string]types.Commands
 	runs      int
 	toolLists int
-	summary   func(context.Context, *session.Session, string, runtime.EventSink)
+	summary   func(context.Context, *session.Session, string, contract.EventSink)
 }
 
-func (r *commandRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{Name: r.current, Commands: r.commands[r.current]}
+func (r *commandRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{Name: r.current, Commands: r.commands[r.current]}
 }
 func (r *commandRuntime) CurrentAgentName(context.Context) string { return r.current }
 func (r *commandRuntime) SetCurrentAgent(_ context.Context, name string) error {
@@ -62,12 +62,12 @@ func (r *commandRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error
 	return nil, errors.New("command discovery must not start tools")
 }
 
-func (r *commandRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
+func (r *commandRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
 	r.runs++
 	return r.fakeRuntime.RunStream(ctx, sess)
 }
 
-func (r *commandRuntime) Summarize(ctx context.Context, sess *session.Session, instruction string, sink runtime.EventSink) {
+func (r *commandRuntime) Summarize(ctx context.Context, sess *session.Session, instruction string, sink contract.EventSink) {
 	if r.summary != nil {
 		r.summary(ctx, sess, instruction, sink)
 	}
@@ -195,8 +195,8 @@ func TestUsageCommandDoesNotChangeHistory(t *testing.T) {
 	rt := &commandRuntime{current: "root", commands: map[string]types.Commands{"root": {}}}
 	a, s, peer := newPromptTestAgent(t, rt)
 	s.sess.SetUsage(120, 30)
-	s.recordUsage(&runtime.TokenUsageEvent{SessionID: s.sess.ID, AgentContext: runtime.AgentContext{AgentName: "root"}, Usage: &runtime.Usage{ContextLimit: 1000}})
-	s.recordUsage(&runtime.TokenUsageEvent{SessionID: "child", Usage: &runtime.Usage{ContextLimit: 5}})
+	s.recordUsage(&contract.TokenUsageEvent{SessionID: s.sess.ID, AgentContext: contract.AgentContext{AgentName: "root"}, Usage: &contract.Usage{ContextLimit: 1000}})
+	s.recordUsage(&contract.TokenUsageEvent{SessionID: "child", Usage: &contract.Usage{ContextLimit: 5}})
 	_, err := a.Prompt(t.Context(), promptRequest("/usage"))
 	require.NoError(t, err)
 	assert.Zero(t, rt.runs)
@@ -211,35 +211,35 @@ func TestUsageCommandDoesNotChangeHistory(t *testing.T) {
 
 func TestCompactCommandOutcomes(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{runtime.CompactionOutcomeApplied, runtime.CompactionOutcomeSkipped, runtime.CompactionOutcomeFailed, "veto", "error"} {
+	for _, outcome := range []string{contract.CompactionOutcomeApplied, contract.CompactionOutcomeSkipped, contract.CompactionOutcomeFailed, "veto", "error"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Parallel()
 			rt := &commandRuntime{current: "root", commands: map[string]types.Commands{"root": {}}}
 			a, s, peer := newPromptTestAgent(t, rt)
 			s.sess.AddMessage(session.UserMessage("history"))
-			rt.summary = func(ctx context.Context, sess *session.Session, instruction string, sink runtime.EventSink) {
+			rt.summary = func(ctx context.Context, sess *session.Session, instruction string, sink contract.EventSink) {
 				assert.Equal(t, "focus on changes", instruction)
 				sid, ok := getSessionID(ctx)
 				assert.True(t, ok)
 				assert.Equal(t, s.id, sid)
-				sink.Emit(runtime.ErrorForSession("child", "not root failure"))
+				sink.Emit(contract.ErrorForSession("child", "not root failure"))
 				switch outcome {
 				case "veto":
 					return
 				case "error":
-					sink.Emit(runtime.ErrorForSession(sess.ID, "compaction failed"))
+					sink.Emit(contract.ErrorForSession(sess.ID, "compaction failed"))
 				default:
-					sink.Emit(runtime.SessionCompactionCompleted(sess.ID, outcome, "root"))
+					sink.Emit(contract.SessionCompactionCompleted(sess.ID, outcome, "root"))
 				}
 			}
 			response, err := a.Prompt(t.Context(), promptRequest("/compact focus on changes"))
-			if outcome == runtime.CompactionOutcomeFailed || outcome == "error" {
+			if outcome == contract.CompactionOutcomeFailed || outcome == "error" {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, acpsdk.StopReasonEndTurn, response.StopReason)
 				want := "Compaction skipped."
-				if outcome == runtime.CompactionOutcomeApplied {
+				if outcome == contract.CompactionOutcomeApplied {
 					want = "Session history compacted."
 				}
 				assert.Contains(t, strings.Join(peer.out.(*captureWriter).lines(), "\n"), want)
@@ -266,10 +266,10 @@ func TestCompactCommandDrainsAfterCancelOrSendFailure(t *testing.T) {
 						return nil
 					}
 				}
-				rt.summary = func(ctx context.Context, _ *session.Session, _ string, sink runtime.EventSink) {
+				rt.summary = func(ctx context.Context, _ *session.Session, _ string, sink contract.EventSink) {
 					close(started)
 					if sendFail {
-						sink.Emit(runtime.Warning("notice", "root"))
+						sink.Emit(contract.Warning("notice", "root"))
 					}
 					<-ctx.Done()
 					<-release
@@ -468,13 +468,13 @@ type orderedCommandRuntime struct {
 	releaseFirst chan struct{}
 }
 
-func (r *orderedCommandRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
+func (r *orderedCommandRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
 	if r.calls.Add(1) == 1 {
 		close(r.firstEntered)
 		<-r.releaseFirst
-		return runtime.CurrentAgentInfo{Commands: types.Commands{"old": {Instruction: "old"}}}
+		return contract.CurrentAgentInfo{Commands: types.Commands{"old": {Instruction: "old"}}}
 	}
-	return runtime.CurrentAgentInfo{Commands: types.Commands{"newer": {Instruction: "newer"}}}
+	return contract.CurrentAgentInfo{Commands: types.Commands{"newer": {Instruction: "newer"}}}
 }
 
 func TestCommandAdvertisementsCannotOvertakeEachOther(t *testing.T) {

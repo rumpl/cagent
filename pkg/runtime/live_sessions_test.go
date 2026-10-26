@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -106,7 +107,7 @@ func newWorkerSession(id string) *session.Session {
 
 // drainStream consumes a RunStream channel until it closes, bounded by the
 // test's deadline through t.Context.
-func drainStream(t *testing.T, stream <-chan Event) {
+func drainStream(t *testing.T, stream <-chan contract.Event) {
 	t.Helper()
 	for {
 		select {
@@ -426,7 +427,7 @@ func TestCompactLiveSession_ExecutesAtIterationBoundary(t *testing.T) {
 		stream := rt.RunStream(t.Context(), child)
 		waitClosed(t, started, "first child turn")
 
-		requestEvents := make(chan Event, 64)
+		requestEvents := make(chan contract.Event, 64)
 		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
 		// A second request while one is pending is rejected clearly.
@@ -441,7 +442,7 @@ func TestCompactLiveSession_ExecutesAtIterationBoundary(t *testing.T) {
 		var kinds []string
 		for ev := range requestEvents {
 			switch e := ev.(type) {
-			case *SessionCompactionEvent:
+			case *contract.SessionCompactionEvent:
 				assert.Equal(t, "child-1", e.SessionID)
 				assert.Equal(t, "worker", e.AgentName)
 				if e.Status == "completed" {
@@ -449,10 +450,10 @@ func TestCompactLiveSession_ExecutesAtIterationBoundary(t *testing.T) {
 				} else {
 					kinds = append(kinds, e.Status)
 				}
-			case *SessionSummaryEvent:
+			case *contract.SessionSummaryEvent:
 				assert.Equal(t, "child-1", e.SessionID)
 				kinds = append(kinds, "summary")
-			case *TokenUsageEvent:
+			case *contract.TokenUsageEvent:
 				assert.Equal(t, "child-1", e.SessionID)
 				assert.Equal(t, "worker", e.AgentName)
 				kinds = append(kinds, "usage")
@@ -486,7 +487,7 @@ func TestCompactLiveSession_AcceptedRequestDrainedAtTeardown(t *testing.T) {
 		stream := rt.RunStream(t.Context(), child)
 		waitClosed(t, started, "final child turn")
 
-		requestEvents := make(chan Event, 64)
+		requestEvents := make(chan contract.Event, 64)
 		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
 		close(release)
@@ -498,10 +499,10 @@ func TestCompactLiveSession_AcceptedRequestDrainedAtTeardown(t *testing.T) {
 		for {
 			select {
 			case ev := <-requestEvents:
-				if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "completed" {
+				if e, ok := ev.(*contract.SessionCompactionEvent); ok && e.Status == "completed" {
 					assert.Equal(t, "child-1", e.SessionID)
 					assert.Equal(t, "worker", e.AgentName)
-					assert.Equal(t, CompactionOutcomeApplied, e.Outcome)
+					assert.Equal(t, contract.CompactionOutcomeApplied, e.Outcome)
 					assert.Equal(t, "teardown summary", child.LastSummary())
 
 					// The session is gone from the registry: further requests
@@ -575,7 +576,7 @@ func TestCompactLiveSession_DuplicateSessionIDsCompactOnlyTargetEntry(t *testing
 
 		// The registry now maps dup-id to the newer entry, so the request is
 		// queued there.
-		requestEvents := make(chan Event, 64)
+		requestEvents := make(chan contract.Event, 64)
 		require.NoError(t, rt.CompactLiveSession(t.Context(), "dup-id", "", NewChannelSink(requestEvents)))
 
 		// Run the older stream to completion (iteration boundary plus teardown
@@ -594,11 +595,11 @@ func TestCompactLiveSession_DuplicateSessionIDsCompactOnlyTargetEntry(t *testing
 
 		var outcomes []string
 		for ev := range requestEvents {
-			if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "completed" {
+			if e, ok := ev.(*contract.SessionCompactionEvent); ok && e.Status == "completed" {
 				outcomes = append(outcomes, e.Outcome)
 			}
 		}
-		assert.Equal(t, []string{CompactionOutcomeApplied}, outcomes)
+		assert.Equal(t, []string{contract.CompactionOutcomeApplied}, outcomes)
 		assert.Equal(t, "latest summary", newer.LastSummary(), "the request must compact the newer in-memory session")
 		assert.Empty(t, older.LastSummary())
 	})
@@ -625,7 +626,7 @@ func TestCompactLiveSession_CancelledStreamEmitsSingleSkippedEvent(t *testing.T)
 		stream := rt.RunStream(ctx, child)
 		waitClosed(t, started, "child turn")
 
-		requestEvents := make(chan Event, 64)
+		requestEvents := make(chan contract.Event, 64)
 		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
 		cancel()
@@ -634,13 +635,13 @@ func TestCompactLiveSession_CancelledStreamEmitsSingleSkippedEvent(t *testing.T)
 
 		var kinds []string
 		for ev := range requestEvents {
-			if e, ok := ev.(*SessionCompactionEvent); ok {
+			if e, ok := ev.(*contract.SessionCompactionEvent); ok {
 				assert.Equal(t, "child-1", e.SessionID)
 				assert.Equal(t, "worker", e.AgentName)
 				kinds = append(kinds, e.Status+":"+e.Outcome)
 			}
 		}
-		assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, kinds,
+		assert.Equal(t, []string{"completed:" + contract.CompactionOutcomeSkipped}, kinds,
 			"a cancelled target must consume the request and emit exactly one terminal skipped event")
 		assert.Empty(t, child.LastSummary(), "no compaction must run against a cancelled stream")
 	})
@@ -683,7 +684,7 @@ func TestCompactLiveSession_HookVetoSynthesizesSkipped(t *testing.T) {
 		stream := rt.RunStream(t.Context(), child)
 		waitClosed(t, started, "first child turn")
 
-		requestEvents := make(chan Event, 64)
+		requestEvents := make(chan contract.Event, 64)
 		require.NoError(t, rt.CompactLiveSession(t.Context(), "child-1", "", NewChannelSink(requestEvents)))
 
 		close(release)
@@ -692,11 +693,11 @@ func TestCompactLiveSession_HookVetoSynthesizesSkipped(t *testing.T) {
 
 		var statuses []string
 		for ev := range requestEvents {
-			if e, ok := ev.(*SessionCompactionEvent); ok {
+			if e, ok := ev.(*contract.SessionCompactionEvent); ok {
 				statuses = append(statuses, e.Status+":"+e.Outcome)
 			}
 		}
-		assert.Equal(t, []string{"completed:" + CompactionOutcomeSkipped}, statuses,
+		assert.Equal(t, []string{"completed:" + contract.CompactionOutcomeSkipped}, statuses,
 			"a vetoed request must synthesize the terminal skipped event, with no started pair")
 		assert.Empty(t, child.LastSummary(), "a vetoed compaction must not modify the session")
 	})

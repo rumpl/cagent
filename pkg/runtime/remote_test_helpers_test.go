@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/runtime/remote"
 )
 
 // httptest.Server.Close closes the global pool, so parallel tests need private transports.
@@ -16,13 +18,13 @@ func newTestTransport(t *testing.T) *http.Transport {
 	return transport
 }
 
-func newTestClient(t *testing.T, baseURL string) *Client {
+func newTestClient(t *testing.T, baseURL string) *remote.Client {
 	t.Helper()
-	opts := []ClientOption{WithHTTPClient(&http.Client{
+	opts := []remote.ClientOption{remote.WithHTTPClient(&http.Client{
 		Transport: newTestTransport(t),
 		Timeout:   30 * time.Second,
 	})}
-	client, err := NewClient(baseURL, opts...)
+	client, err := remote.NewClient(baseURL, opts...)
 	require.NoError(t, err)
 	return client
 }

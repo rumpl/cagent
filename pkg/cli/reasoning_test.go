@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -17,130 +17,130 @@ func TestRunSeparatesReasoningFromResponse(t *testing.T) {
 
 	for _, tc := range []struct {
 		name          string
-		events        []runtime.Event
+		events        []contract.Event
 		hideToolCalls bool
 		tty           bool
 		want          string
 	}{
 		{
 			name: "streamed reasoning and response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "Let's keep it "),
-				runtime.AgentChoiceReasoning("root", "sess", "simple and respectful!"),
-				runtime.AgentChoice("root", "sess", "Could you please "),
-				runtime.AgentChoice("root", "sess", "make this clearer?"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "Let's keep it "),
+				contract.AgentChoiceReasoning("root", "sess", "simple and respectful!"),
+				contract.AgentChoice("root", "sess", "Could you please "),
+				contract.AgentChoice("root", "sess", "make this clearer?"),
 			},
 			want: "Let's keep it simple and respectful!\n\nCould you please make this clearer?",
 		},
 		{
 			name: "response without reasoning",
-			events: []runtime.Event{
-				runtime.AgentChoice("root", "sess", "Could you please "),
-				runtime.AgentChoice("root", "sess", "make this clearer?"),
+			events: []contract.Event{
+				contract.AgentChoice("root", "sess", "Could you please "),
+				contract.AgentChoice("root", "sess", "make this clearer?"),
 			},
 			want: "Could you please make this clearer?",
 		},
 		{
 			name: "empty reasoning",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", ""),
-				runtime.AgentChoice("root", "sess", "answer"),
-				runtime.AgentChoiceReasoning("root", "sess", ""),
-				runtime.AgentChoice("root", "sess", " continues"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", ""),
+				contract.AgentChoice("root", "sess", "answer"),
+				contract.AgentChoiceReasoning("root", "sess", ""),
+				contract.AgentChoice("root", "sess", " continues"),
 			},
 			want: "answer continues",
 		},
 		{
 			name: "empty response chunks",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("root", "sess", ""),
-				runtime.AgentChoiceReasoning("root", "sess", " continues"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("root", "sess", ""),
+				contract.AgentChoiceReasoning("root", "sess", " continues"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			want: "thinking continues\n\nanswer",
 		},
 		{
 			name: "reasoning only",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("root", "sess", ""),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("root", "sess", ""),
 			},
 			want: "thinking",
 		},
 		{
 			name: "non-printing event between reasoning and response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.NewTokenUsageEvent("sess", "root", &runtime.Usage{}),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.NewTokenUsageEvent("sess", "root", &contract.Usage{}),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			want: "thinking\n\nanswer",
 		},
 		{
 			name: "multiple reasoning blocks",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("root", "sess", "preamble"),
-				runtime.ToolCall(tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "lookup"}}, tools.Tool{}, "root"),
-				runtime.AgentChoiceReasoning("root", "sess", "more thinking"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("root", "sess", "preamble"),
+				contract.ToolCall(tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "lookup"}}, tools.Tool{}, "root"),
+				contract.AgentChoiceReasoning("root", "sess", "more thinking"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			want: "thinking\n\npreamble\nCalling lookup()\nmore thinking\n\nanswer",
 		},
 		{
 			name: "visible tool output already separates response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.ToolCall(tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "lookup"}}, tools.Tool{}, "root"),
-				runtime.ToolCallResponse("call", tools.Tool{Name: "lookup"}, tools.ResultSuccess("result"), "result", "root"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.ToolCall(tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "lookup"}}, tools.Tool{}, "root"),
+				contract.ToolCallResponse("call", tools.Tool{Name: "lookup"}, tools.ResultSuccess("result"), "result", "root"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			want: "thinking\nCalling lookup()\n\nlookup response → \"result\"\nanswer",
 		},
 		{
 			name: "hidden tools do not consume separator",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.ToolCall(tools.ToolCall{}, tools.Tool{}, "root"),
-				runtime.ToolCallResponse("call", tools.Tool{}, tools.ResultSuccess("result"), "result", "root"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.ToolCall(tools.ToolCall{}, tools.Tool{}, "root"),
+				contract.ToolCallResponse("call", tools.Tool{}, tools.ResultSuccess("result"), "result", "root"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			hideToolCalls: true,
 			want:          "thinking\n\nanswer",
 		},
 		{
 			name: "warning already separates response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.Warning("notice", "root"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.Warning("notice", "root"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			want: "thinking\n⚠️  notice\nanswer",
 		},
 		{
 			name: "TTY thinking and response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("root", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("root", "sess", "answer"),
 			},
 			tty:  true,
 			want: "\n--- Agent: " + bold("root") + " ---\nthinking\n\nanswer",
 		},
 		{
 			name: "TTY agent switch already separates response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("reviewer", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("reviewer", "sess", "answer"),
 			},
 			tty:  true,
 			want: "\n--- Agent: " + bold("root") + " ---\nthinking\n\n--- Agent: " + bold("reviewer") + " ---\nanswer",
 		},
 		{
 			name: "agent switch already separates response",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking"),
-				runtime.AgentChoice("reviewer", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking"),
+				contract.AgentChoice("reviewer", "sess", "answer"),
 			},
 			want: "thinking\nanswer",
 		},

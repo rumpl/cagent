@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -56,7 +57,7 @@ func (s LiveSession) ShortID() string {
 // executed on that session's own run goroutine at a safe iteration boundary.
 type liveCompactionRequest struct {
 	additionalPrompt string
-	events           EventSink
+	events           contract.EventSink
 }
 
 // liveSessionEntry tracks one active RunStream in the live-session registry.
@@ -224,9 +225,9 @@ func (r *LocalRuntime) liveSessionRow(ctx context.Context, sess *session.Session
 //
 // It returns an error when sessionID is not a live session (unknown or
 // already finished) or when a request is already pending for it.
-func (r *LocalRuntime) CompactLiveSession(_ context.Context, sessionID, additionalPrompt string, events EventSink) error {
+func (r *LocalRuntime) CompactLiveSession(_ context.Context, sessionID, additionalPrompt string, events contract.EventSink) error {
 	if events == nil {
-		events = EventSinkFunc(func(Event) {})
+		events = EventSinkFunc(func(contract.Event) {})
 	}
 
 	r.liveSessionsMu.Lock()
@@ -272,7 +273,7 @@ func (r *LocalRuntime) runLiveCompactionRequest(ctx context.Context, sess *sessi
 	if ctx.Err() != nil {
 		slog.InfoContext(ctx, "Skipping explicit compaction for live session: context already cancelled",
 			"session_id", sess.ID, "agent", r.sessionAgentName(sess))
-		req.events.Emit(SessionCompactionCompleted(sess.ID, CompactionOutcomeSkipped, r.sessionAgentName(sess)))
+		req.events.Emit(contract.SessionCompactionCompleted(sess.ID, contract.CompactionOutcomeSkipped, r.sessionAgentName(sess)))
 		return
 	}
 
@@ -280,15 +281,15 @@ func (r *LocalRuntime) runLiveCompactionRequest(ctx context.Context, sess *sessi
 		"session_id", sess.ID, "agent", r.sessionAgentName(sess))
 
 	completed := false
-	sink := EventSinkFunc(func(event Event) {
-		if e, ok := event.(*SessionCompactionEvent); ok && e.Status == "completed" {
+	sink := EventSinkFunc(func(event contract.Event) {
+		if e, ok := event.(*contract.SessionCompactionEvent); ok && e.Status == "completed" {
 			completed = true
 		}
 		req.events.Emit(event)
 	})
 	r.compactWithReason(ctx, sess, req.additionalPrompt, compactionReasonManual, sink)
 	if !completed {
-		req.events.Emit(SessionCompactionCompleted(sess.ID, CompactionOutcomeSkipped, r.sessionAgentName(sess)))
+		req.events.Emit(contract.SessionCompactionCompleted(sess.ID, contract.CompactionOutcomeSkipped, r.sessionAgentName(sess)))
 	}
 }
 

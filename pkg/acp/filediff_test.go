@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -28,7 +29,7 @@ import (
 
 func fileDiff(t *testing.T, result *tools.ToolCallResult) *acpsdk.ToolCallContentDiff {
 	t.Helper()
-	update := buildToolCallComplete(&runtime.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
+	update := buildToolCallComplete(&contract.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
 	for _, content := range update.ToolCallUpdate.Content {
 		if content.Diff != nil {
 			return content.Diff
@@ -94,7 +95,7 @@ func TestFileDiffOmittedOnFailureOrHooks(t *testing.T) {
 				peer.failWrite = mode == "write failure"
 				result := callPolicyFileTool(t, ctx, fs, name, "file.txt")
 				assert.Nil(t, fileDiff(t, result))
-				update := buildToolCallComplete(&runtime.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
+				update := buildToolCallComplete(&contract.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
 				require.Len(t, update.ToolCallUpdate.Content, 1)
 				assert.Equal(t, result.Output, update.ToolCallUpdate.Content[0].Content.Content.Text.Text)
 				if mode != "configured hook" {
@@ -138,7 +139,7 @@ func TestFileDiffMetadataIsPresentationOnly(t *testing.T) {
 	peer.content = "private before snapshot original"
 	result := callPolicyFileTool(t, ctx, fs, filesystem.ToolNameEditFile, "private-file.txt")
 	result.Output = "transformed response"
-	event := &runtime.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result.WithoutPayload()}
+	event := &contract.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result.WithoutPayload()}
 	encoded, err := json.Marshal(event)
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "private before snapshot")
@@ -226,7 +227,7 @@ func TestLargeEditCompletesWithoutDiff(t *testing.T) {
 	result := callPolicyFileTool(t, ctx, fs, filesystem.ToolNameEditFile, "large.txt")
 	require.False(t, result.IsError, result.Output)
 	assert.Nil(t, result.Meta, "oversized snapshots must not be retained")
-	update := buildToolCallComplete(&runtime.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
+	update := buildToolCallComplete(&contract.ToolCallResponseEvent{ToolCallID: "call", Response: result.Output, Result: result})
 	encoded, err := json.Marshal(update)
 	require.NoError(t, err)
 	assert.Less(t, len(encoded), maxFileDiffBytes)

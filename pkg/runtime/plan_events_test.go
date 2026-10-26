@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -24,11 +25,11 @@ import (
 func TestPlanChangedEventSerialization(t *testing.T) {
 	t.Parallel()
 
-	ev := PlanChanged("shared", "release", plan.ChangeActionWrite, 3, "architect")
+	ev := contract.PlanChanged("shared", "release", plan.ChangeActionWrite, 3, "architect")
 	data, err := json.Marshal(ev)
 	require.NoError(t, err)
 
-	var decoded PlanChangedEvent
+	var decoded contract.PlanChangedEvent
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	assert.Equal(t, "plan_changed", decoded.Type)
 	assert.Equal(t, "shared", decoded.Scope)
@@ -57,9 +58,9 @@ func TestClient_DecodesPlanChangedEvent(t *testing.T) {
 	ch, err := c.StreamSessionEvents(t.Context(), "s")
 	require.NoError(t, err)
 
-	var got *PlanChangedEvent
+	var got *contract.PlanChangedEvent
 	for ev := range ch {
-		if planEv, ok := ev.(*PlanChangedEvent); ok {
+		if planEv, ok := ev.(*contract.PlanChangedEvent); ok {
 			got = planEv
 			break
 		}
@@ -121,7 +122,7 @@ func TestSubscribePlanChanges_EmitsPlanChangeEvents(t *testing.T) {
 	planTool := plan.New(plan.WithStorage(plan.NewFilesystemStorage(t.TempDir())))
 	rt := newPlanRuntime(t, planTool)
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	release := rt.subscribePlanChanges(session.New(), NewChannelSink(events))
 	t.Cleanup(release)
 
@@ -180,8 +181,8 @@ func TestSubscribePlanChanges_FanOutAndReleaseIsolation(t *testing.T) {
 	rt := newPlanRuntime(t, planTool)
 	write := planToolHandler(t, planTool, plan.ToolNameWritePlan)
 
-	eventsA := make(chan Event, 8)
-	eventsB := make(chan Event, 8)
+	eventsA := make(chan contract.Event, 8)
+	eventsB := make(chan contract.Event, 8)
 	releaseA := rt.subscribePlanChanges(session.New(), NewChannelSink(eventsA))
 	releaseB := rt.subscribePlanChanges(session.New(), NewChannelSink(eventsB))
 
@@ -226,7 +227,7 @@ func TestSubscribePlanChanges_DedupesSharedNotifierAcrossAgents(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(a1, a2)), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	release := rt.subscribePlanChanges(session.New(), NewChannelSink(events))
 	t.Cleanup(release)
 
@@ -254,7 +255,7 @@ func TestSubscribePlanChanges_IncludesSessionExtraToolSets(t *testing.T) {
 	sess := session.New()
 	sess.ExtraToolSets = []tools.ToolSet{planTool}
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	release := rt.subscribePlanChanges(sess, NewChannelSink(events))
 	t.Cleanup(release)
 
@@ -299,7 +300,7 @@ func TestSubscribePlanChanges_NonComparableNotifierDoesNotPanic(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	var release func()
 	require.NotPanics(t, func() {
 		release = rt.subscribePlanChanges(session.New(), NewChannelSink(events))
@@ -419,7 +420,7 @@ func TestRunStream_PlanSubscriptionReleasedOnCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	events := rt.RunStream(ctx, session.New(session.WithUserMessage("block")))
-	awaitEvent[*StreamStartedEvent](t, events, "stream start")
+	awaitEvent[*contract.StreamStartedEvent](t, events, "stream start")
 	cancel()
 	for range events {
 	}
@@ -479,7 +480,7 @@ func TestRunStream_TwoActiveStreams_BothReceivePlanChanges(t *testing.T) {
 	// Stream A subscribes at stream start, then parks inside its model call.
 	// StreamStarted is emitted after the subscription is in place.
 	eventsA := rt.RunStream(t.Context(), session.New(session.WithUserMessage("wait"), session.WithAgentName("waiter")))
-	awaitEvent[*StreamStartedEvent](t, eventsA, "waiter stream start")
+	awaitEvent[*contract.StreamStartedEvent](t, eventsA, "waiter stream start")
 
 	runWriter := func(label string) {
 		t.Helper()
@@ -490,7 +491,7 @@ func TestRunStream_TwoActiveStreams_BothReceivePlanChanges(t *testing.T) {
 		)
 		got := 0
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if planEv, ok := ev.(*PlanChangedEvent); ok {
+			if planEv, ok := ev.(*contract.PlanChangedEvent); ok {
 				got++
 				assert.Empty(t, planEv.GetAgentName(), "%s: shared-plan events carry neutral attribution", label)
 			}
@@ -500,7 +501,7 @@ func TestRunStream_TwoActiveStreams_BothReceivePlanChanges(t *testing.T) {
 
 	// First writer stream: both the writer and the parked waiter see the write.
 	runWriter("writer run 1")
-	ev := awaitEvent[*PlanChangedEvent](t, eventsA, "plan change from writer run 1")
+	ev := awaitEvent[*contract.PlanChangedEvent](t, eventsA, "plan change from writer run 1")
 	assert.Equal(t, 1, ev.Version)
 	assert.Empty(t, ev.GetAgentName())
 
@@ -508,13 +509,13 @@ func TestRunStream_TwoActiveStreams_BothReceivePlanChanges(t *testing.T) {
 	// subscription released); a second writer stream must still fan out to
 	// the waiter, proving one stream ending does not silence another.
 	runWriter("writer run 2")
-	ev = awaitEvent[*PlanChangedEvent](t, eventsA, "plan change from writer run 2")
+	ev = awaitEvent[*contract.PlanChangedEvent](t, eventsA, "plan change from writer run 2")
 	assert.Equal(t, 2, ev.Version)
 
 	// Unblock the waiter and drain: no further plan events may arrive.
 	close(waiterRelease)
 	for evA := range eventsA {
-		if _, isPlan := evA.(*PlanChangedEvent); isPlan {
+		if _, isPlan := evA.(*contract.PlanChangedEvent); isPlan {
 			t.Fatalf("waiter received an unexpected extra plan change")
 		}
 	}
@@ -522,7 +523,7 @@ func TestRunStream_TwoActiveStreams_BothReceivePlanChanges(t *testing.T) {
 
 // awaitEvent reads from ch until an event of type T arrives, failing the
 // test if the channel closes or ten seconds pass first.
-func awaitEvent[T Event](t *testing.T, ch <-chan Event, what string) T {
+func awaitEvent[T contract.Event](t *testing.T, ch <-chan contract.Event, what string) T {
 	t.Helper()
 	timeout := time.After(10 * time.Second)
 	for {
@@ -538,11 +539,11 @@ func awaitEvent[T Event](t *testing.T, ch <-chan Event, what string) T {
 	}
 }
 
-func requirePlanChanged(t *testing.T, events <-chan Event) *PlanChangedEvent {
+func requirePlanChanged(t *testing.T, events <-chan contract.Event) *contract.PlanChangedEvent {
 	t.Helper()
 	select {
 	case ev := <-events:
-		planEv, ok := ev.(*PlanChangedEvent)
+		planEv, ok := ev.(*contract.PlanChangedEvent)
 		require.True(t, ok, "expected *PlanChangedEvent, got %T", ev)
 		return planEv
 	default:
@@ -551,7 +552,7 @@ func requirePlanChanged(t *testing.T, events <-chan Event) *PlanChangedEvent {
 	}
 }
 
-func requireNoEvent(t *testing.T, events <-chan Event) {
+func requireNoEvent(t *testing.T, events <-chan contract.Event) {
 	t.Helper()
 	select {
 	case ev := <-events:

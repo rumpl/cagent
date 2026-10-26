@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -22,20 +22,20 @@ type drainingPromptRuntime struct {
 	fail    bool
 }
 
-func (r *drainingPromptRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *drainingPromptRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	close(r.started)
 	go func() {
 		defer close(events)
 		defer close(r.stopped)
 		if r.fail {
-			events <- &runtime.ToolCallResponseEvent{ToolCallID: ""}
+			events <- &contract.ToolCallResponseEvent{ToolCallID: ""}
 		}
 		<-ctx.Done()
-		events <- runtime.Warning("teardown started", "root")
+		events <- contract.Warning("teardown started", "root")
 		<-r.release
 		for range 256 {
-			events <- runtime.Warning("teardown still running", "root")
+			events <- contract.Warning("teardown still running", "root")
 		}
 	}()
 	return events

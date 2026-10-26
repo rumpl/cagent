@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 
 	"github.com/docker/docker-agent/pkg/embeddedchat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -41,33 +41,33 @@ func (p *eventProjector) project(ev embeddedchat.Event) []map[string]any {
 	}
 
 	switch e := ev.RuntimeEvent.(type) {
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		if e.Content == "" {
 			return nil
 		}
 		return one(map[string]any{"type": "delta", "content": e.Content})
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		if e.Content == "" {
 			return nil
 		}
 		return one(map[string]any{"type": "delta", "reasoning": e.Content})
-	case *runtime.PartialToolCallEvent:
+	case *contract.PartialToolCallEvent:
 		return one(map[string]any{
 			"type":      "tool_call_delta",
 			"id":        e.ToolCall.ID,
 			"name":      e.ToolCall.Function.Name,
 			"arguments": e.ToolCall.Function.Arguments,
 		})
-	case *runtime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		return one(toolCallEvent("tool_call", e.ToolCall))
-	case *runtime.ToolCallConfirmationEvent:
+	case *contract.ToolCallConfirmationEvent:
 		return one(toolCallEvent("tool_confirmation", e.ToolCall))
-	case *runtime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		if e.Output == "" {
 			return nil
 		}
 		return one(map[string]any{"type": "tool_output", "id": e.ToolCallID, "name": e.ToolDefinition.Name, "output": e.Output})
-	case *runtime.ToolCallResponseEvent:
+	case *contract.ToolCallResponseEvent:
 		return one(map[string]any{
 			"type":     "tool_result",
 			"id":       e.ToolCallID,
@@ -75,19 +75,19 @@ func (p *eventProjector) project(ev embeddedchat.Event) []map[string]any {
 			"output":   e.Response,
 			"is_error": e.Result != nil && e.Result.IsError,
 		})
-	case *runtime.HookBlockedEvent:
+	case *contract.HookBlockedEvent:
 		return one(map[string]any{"type": "tool_blocked", "id": e.ToolCall.ID, "name": e.ToolCall.Function.Name, "reason": e.Message})
-	case *runtime.AgentSwitchingEvent:
+	case *contract.AgentSwitchingEvent:
 		p.agent = e.ToAgent
 		return one(map[string]any{"type": "handoff", "from": e.FromAgent, "to": e.ToAgent})
-	case *runtime.AgentInfoEvent:
+	case *contract.AgentInfoEvent:
 		from := p.agent
 		p.agent = e.AgentName
 		if from == "" || from == e.AgentName {
 			return nil
 		}
 		return one(map[string]any{"type": "handoff", "from": from, "to": e.AgentName})
-	case *runtime.ModelFallbackEvent:
+	case *contract.ModelFallbackEvent:
 		return one(map[string]any{
 			"type":    "fallback",
 			"from":    e.FailedModel,
@@ -95,7 +95,7 @@ func (p *eventProjector) project(ev embeddedchat.Event) []map[string]any {
 			"attempt": e.Attempt,
 			"reason":  e.Reason,
 		})
-	case *runtime.TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		// Per model call, like the original API; the session totals ride along.
 		if e.Usage == nil || e.Usage.LastMessage == nil {
 			return nil
@@ -108,7 +108,7 @@ func (p *eventProjector) project(ev embeddedchat.Event) []map[string]any {
 			"context_limit":  e.Usage.ContextLimit,
 			"cost":           e.Usage.Cost,
 		})
-	case *runtime.WarningEvent:
+	case *contract.WarningEvent:
 		return one(map[string]any{"type": "warning", "message": e.Message})
 	}
 	return nil

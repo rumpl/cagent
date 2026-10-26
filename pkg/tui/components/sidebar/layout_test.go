@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/scrollbar"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -155,17 +155,17 @@ func BenchmarkSidebarVerticalView_Scroll(b *testing.B) {
 	m.SetMode(ModeVertical)
 
 	// Add some agents to create content
-	m.SetTeamInfo([]runtime.AgentDetails{
+	m.SetTeamInfo([]contract.AgentDetails{
 		{Name: "agent1", Model: "gpt-4", Description: "First agent with a long description that might wrap"},
 		{Name: "agent2", Model: "claude-3", Description: "Second agent with another description"},
 		{Name: "agent3", Model: "gemini", Description: "Third agent"},
 	})
 
 	// Add some token usage
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    "session-1",
-		AgentContext: runtime.AgentContext{AgentName: "agent1"},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: "agent1"},
+		Usage: &contract.Usage{
 			InputTokens:  10000,
 			OutputTokens: 5000,
 			Cost:         0.50,
@@ -197,17 +197,17 @@ func BenchmarkSidebarVerticalView_NoCache(b *testing.B) {
 	m.SetMode(ModeVertical)
 
 	// Add some agents to create content
-	m.SetTeamInfo([]runtime.AgentDetails{
+	m.SetTeamInfo([]contract.AgentDetails{
 		{Name: "agent1", Model: "gpt-4", Description: "First agent with a long description that might wrap"},
 		{Name: "agent2", Model: "claude-3", Description: "Second agent with another description"},
 		{Name: "agent3", Model: "gemini", Description: "Third agent"},
 	})
 
 	// Add some token usage
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    "session-1",
-		AgentContext: runtime.AgentContext{AgentName: "agent1"},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: "agent1"},
+		Usage: &contract.Usage{
 			InputTokens:  10000,
 			OutputTokens: 5000,
 			Cost:         0.50,

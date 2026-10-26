@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
@@ -30,15 +30,15 @@ type asyncQueueRuntime struct {
 func (r *asyncQueueRuntime) SessionStore() session.Store { return r.store }
 func (r *asyncQueueRuntime) enqueue() error              { close(r.started); <-r.release; return r.err }
 
-func (r *asyncQueueRuntime) Steer(context.Context, runtime.QueuedMessage) error { return r.enqueue() }
+func (r *asyncQueueRuntime) Steer(context.Context, contract.QueuedMessage) error { return r.enqueue() }
 
-func (r *asyncQueueRuntime) FollowUp(context.Context, runtime.QueuedMessage) error {
+func (r *asyncQueueRuntime) FollowUp(context.Context, contract.QueuedMessage) error {
 	return r.enqueue()
 }
 
-func (r *asyncQueueRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
+func (r *asyncQueueRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
 	r.runs <- sess.ID
-	ch := make(chan runtime.Event)
+	ch := make(chan contract.Event)
 	close(ch)
 	return ch
 }
@@ -67,7 +67,7 @@ func TestAsyncInputResultStaysOnOriginTab(t *testing.T) {
 					m.bindTabSession(tabID, sess.ID)
 					m.initSessionComponents(tabID, a, sess)
 					origin := m.activeTab
-					_, _ = origin.chatPage.Update(&runtime.StreamStartedEvent{SessionID: sess.ID})
+					_, _ = origin.chatPage.Update(&contract.StreamStartedEvent{SessionID: sess.ID})
 					_, cmd := m.Update(messages.SendMsg{Content: "original input", FollowUp: followUp})
 					done := make(chan tea.Msg, 1)
 					go func() { done <- cmd() }()
@@ -79,7 +79,7 @@ func TestAsyncInputResultStaysOnOriginTab(t *testing.T) {
 					_, _ = m.handleSpawnSession("/other")
 					other := m.activeTab
 					if outcome == "failure-idle" {
-						_, _ = origin.chatPage.Update(&runtime.StreamStoppedEvent{SessionID: sess.ID})
+						_, _ = origin.chatPage.Update(&contract.StreamStoppedEvent{SessionID: sess.ID})
 					}
 					close(rt.release)
 					result := <-done
@@ -121,7 +121,7 @@ func TestAsyncInputResultAfterTabLifecycleChange(t *testing.T) {
 				m.application = a
 				m.bindTabSession(id, original.ID)
 				m.initSessionComponents(id, a, original)
-				_, _ = m.activeTab.chatPage.Update(&runtime.StreamStartedEvent{SessionID: original.ID})
+				_, _ = m.activeTab.chatPage.Update(&contract.StreamStartedEvent{SessionID: original.ID})
 				_, cmd := m.Update(messages.SendMsg{Content: "old input"})
 				done := make(chan tea.Msg, 1)
 				go func() { done <- cmd() }()
@@ -177,7 +177,7 @@ func TestHiddenTabDispatchesAsyncSubmission(t *testing.T) {
 				m.bindTabSession(id, sess.ID)
 				m.initSessionComponents(id, a, sess)
 				origin := m.activeTab
-				_, _ = origin.chatPage.Update(&runtime.StreamStartedEvent{SessionID: sess.ID})
+				_, _ = origin.chatPage.Update(&contract.StreamStartedEvent{SessionID: sess.ID})
 				_, _ = m.handleSpawnSession("/other")
 
 				_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: messages.SendMsg{Content: "hidden input", FollowUp: followUp}})

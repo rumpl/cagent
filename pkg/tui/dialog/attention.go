@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -14,11 +14,11 @@ import (
 // NewAttentionDialog builds a prompt without opening it or running its Init command.
 func NewAttentionDialog(ctx context.Context, ar *animation.Runtime, application elicitationResponder, state *service.SessionState, event tea.Msg, registries ...*tool.Registry) Dialog {
 	switch ev := event.(type) {
-	case *runtime.ToolCallConfirmationEvent:
+	case *contract.ToolCallConfirmationEvent:
 		return NewToolConfirmationDialog(ar, ev, state, registries...)
-	case *runtime.MaxIterationsReachedEvent:
+	case *contract.MaxIterationsReachedEvent:
 		return NewMaxIterationsDialog(ev.MaxIterations)
-	case *runtime.ElicitationRequestEvent:
+	case *contract.ElicitationRequestEvent:
 		if ev.Meta["docker-agent/type"] == "oauth_flow" {
 			serverURL, _ := ev.Meta["docker-agent/server_url"].(string)
 			return NewOAuthAuthorizationDialog(ctx, serverURL, application, ev.ElicitationID)

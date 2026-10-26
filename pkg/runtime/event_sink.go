@@ -7,33 +7,24 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
-// EventSink is the write side of the runtime's event stream. Methods
-// that produce events accept an EventSink instead of a raw chan Event,
-// decoupling event producers from the channel implementation.
-//
-// Implementations must be safe for concurrent use: multiple goroutines
-// may call Emit simultaneously (e.g. tool-call handlers running in
-// parallel).
-type EventSink = contract.EventSink
-
-// channelSink adapts a chan Event into an [EventSink]. Sends are
+// channelSink adapts a chan Event into an [contract.EventSink]. Sends are
 // blocking so back-pressure is preserved between producers and the
 // consumer. Send-on-closed-channel panics are recovered and the event
 // is dropped, since a closed channel signals that the consumer has
 // gone away.
 type channelSink struct {
-	ch chan<- Event
+	ch chan<- contract.Event
 }
 
-// NewChannelSink returns an [EventSink] that writes to ch. This is the
+// NewChannelSink returns an [contract.EventSink] that writes to ch. This is the
 // standard bridge between the runtime's EventSink-based internals and
 // external callers that create raw event channels (e.g. app.go,
 // tests).
-func NewChannelSink(ch chan<- Event) EventSink {
+func NewChannelSink(ch chan<- contract.Event) contract.EventSink {
 	return &channelSink{ch: ch}
 }
 
-func (s *channelSink) Emit(e Event) {
+func (s *channelSink) Emit(e contract.Event) {
 	defer func() { recover() }() //nolint:errcheck // swallow send-on-closed-channel panic
 	s.ch <- e
 }
@@ -45,7 +36,7 @@ func (s *channelSink) Emit(e Event) {
 // regular runtime code should use the blocking [channelSink] so
 // back-pressure is preserved.
 type nonBlockingChannelSink struct {
-	ch chan<- Event
+	ch chan<- contract.Event
 }
 
 // nonBlocking returns a non-blocking sink for sink. If sink wraps a
@@ -53,14 +44,14 @@ type nonBlockingChannelSink struct {
 // select-default; otherwise, sink is returned unchanged because
 // non-channel sinks (notably [EventSinkFunc] used in tests) do not
 // have an underlying buffer that can fill up.
-func nonBlocking(sink EventSink) EventSink {
+func nonBlocking(sink contract.EventSink) contract.EventSink {
 	if cs, ok := sink.(*channelSink); ok {
 		return nonBlockingChannelSink{ch: cs.ch}
 	}
 	return sink
 }
 
-func (s nonBlockingChannelSink) Emit(e Event) {
+func (s nonBlockingChannelSink) Emit(e contract.Event) {
 	defer func() { recover() }() //nolint:errcheck // swallow send-on-closed-channel panic
 	select {
 	case s.ch <- e:
@@ -76,7 +67,7 @@ func (s nonBlockingChannelSink) Emit(e Event) {
 // should use the unbounded blocking [channelSink] instead, so ordinary
 // back-pressure is preserved.
 type boundedChannelSink struct {
-	ch   chan<- Event
+	ch   chan<- contract.Event
 	wait time.Duration
 }
 
@@ -85,14 +76,14 @@ type boundedChannelSink struct {
 // timeout; otherwise, sink is returned unchanged because non-channel sinks
 // (notably [EventSinkFunc] used in tests) do not have an underlying buffer
 // that can fill up.
-func bounded(sink EventSink, wait time.Duration) EventSink {
+func bounded(sink contract.EventSink, wait time.Duration) contract.EventSink {
 	if cs, ok := sink.(*channelSink); ok {
 		return boundedChannelSink{ch: cs.ch, wait: wait}
 	}
 	return sink
 }
 
-func (s boundedChannelSink) Emit(e Event) {
+func (s boundedChannelSink) Emit(e contract.Event) {
 	defer func() { recover() }() //nolint:errcheck // swallow send-on-closed-channel panic
 	t := time.NewTimer(s.wait)
 	defer t.Stop()
@@ -103,9 +94,9 @@ func (s boundedChannelSink) Emit(e Event) {
 	}
 }
 
-// EventSinkFunc adapts a plain function into an [EventSink], following
+// EventSinkFunc adapts a plain function into an [contract.EventSink], following
 // the same adapter pattern as http.HandlerFunc. This is convenient for
 // tests and one-off callbacks that don't need a full struct.
-type EventSinkFunc func(Event)
+type EventSinkFunc func(contract.Event)
 
-func (f EventSinkFunc) Emit(e Event) { f(e) }
+func (f EventSinkFunc) Emit(e contract.Event) { f(e) }

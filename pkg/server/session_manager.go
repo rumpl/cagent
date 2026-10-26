@@ -24,7 +24,9 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/eventmerge"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/team"
@@ -35,7 +37,7 @@ import (
 )
 
 type activeRuntimes struct {
-	runtime  runtime.Runtime
+	runtime  contract.Runtime
 	done     <-chan struct{} // Closed when the session is deleted/detached. Nil for sessions without lifetime tracking.
 	cancel   context.CancelFunc
 	session  *session.Session        // The actual session object used by the runtime
@@ -67,7 +69,7 @@ type SessionManager struct {
 	// newRuntime, when non-nil, replaces runtime.New as the runtime
 	// constructor in runtimeForSession. Test seam: lets a build fail
 	// deterministically after the team has been loaded.
-	newRuntime func(context.Context, *team.Team, ...runtime.Opt) (runtime.Runtime, error)
+	newRuntime func(context.Context, *team.Team, ...runtime.Opt) (contract.Runtime, error)
 
 	// beforeRunModelSwitch is a test seam for the RunSession lock boundary.
 	beforeRunModelSwitch func()
@@ -355,8 +357,8 @@ func (sm *SessionManager) appendSessionEvent(sessionID string, event any) {
 // instead of the runtime treating an absent sink as "no UI" and
 // auto-declining (#3584). Split out as its own method so the exact wiring is
 // unit-testable without spinning up a real runtime/team.
-func (sm *SessionManager) sessionElicitationSink(sessionID string) func(runtime.Event) {
-	return func(ev runtime.Event) {
+func (sm *SessionManager) sessionElicitationSink(sessionID string) func(contract.Event) {
+	return func(ev contract.Event) {
 		sm.appendSessionEvent(sessionID, ev)
 	}
 }
@@ -397,12 +399,12 @@ type recallHandlerSetter interface {
 	SetRecallHandler(handler runtime.RecallHandler)
 }
 
-func (sm *SessionManager) registerRecallHandler(sessionID string, rt runtime.Runtime) {
+func (sm *SessionManager) registerRecallHandler(sessionID string, rt contract.Runtime) {
 	setter, ok := rt.(recallHandlerSetter)
 	if !ok {
 		return
 	}
-	setter.SetRecallHandler(func(ctx context.Context, msg runtime.QueuedMessage) bool {
+	setter.SetRecallHandler(func(ctx context.Context, msg contract.QueuedMessage) bool {
 		if err := sm.recallSession(ctx, sessionID, msg); err != nil {
 			slog.WarnContext(ctx, "Failed to handle tool recall", "session_id", sessionID, "error", err)
 			return false
@@ -445,7 +447,7 @@ func (sm *SessionManager) StreamEvents(ctx context.Context, sessionID string, si
 // The caller must hold this lock for the duration of every direct RunStream
 // call (see the pkg/app WithStreamGuard option) so the busy check sees
 // attached streams too.
-func (sm *SessionManager) AttachRuntime(ctx context.Context, sessionID string, rt runtime.Runtime, sess *session.Session) sync.Locker {
+func (sm *SessionManager) AttachRuntime(ctx context.Context, sessionID string, rt contract.Runtime, sess *session.Session) sync.Locker {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	rs := &activeRuntimes{
 		runtime: rt,
@@ -1039,7 +1041,7 @@ var (
 // every subsequent one. Validation happens before the messages are
 // recorded so a bad ref does not leave an orphaned user message in the
 // history.
-func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilename, currentAgent string, messages []api.Message, modelOverride string) (<-chan runtime.Event, error) {
+func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilename, currentAgent string, messages []api.Message, modelOverride string) (<-chan contract.Event, error) {
 	sm.mux.Lock()
 	runtimeSession, exists := sm.runtimeSessions.Load(sessionID)
 
@@ -1057,7 +1059,7 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 			return nil, err
 		}
 
-		var rt runtime.Runtime
+		var rt contract.Runtime
 		rt, titleGen, err = sm.runtimeForSession(ctx, sess, agentFilename, currentAgent, sm.runConfig)
 		if err != nil {
 			sm.mux.Unlock()
@@ -1159,7 +1161,7 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 	// Update the session pointer so the runtime sees the latest messages.
 	runtimeSession.session = sess
 
-	streamChan := make(chan runtime.Event)
+	streamChan := make(chan contract.Event)
 
 	// Snapshot the title under sess.mu before launching the goroutine: both
 	// UpdateSessionTitle and a previous run's still-in-flight generateTitle
@@ -1177,9 +1179,9 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		defer cancel()
 		defer runtimeSession.streaming.Unlock()
 
-		var titleEvents <-chan runtime.Event
+		var titleEvents <-chan contract.Event
 		if needsTitle {
-			ch := make(chan runtime.Event, 1)
+			ch := make(chan contract.Event, 1)
 			titleEvents = ch
 			go func() {
 				defer close(ch)
@@ -1188,14 +1190,14 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 		} else if titleToEmit != "" {
 			// Re-emit the existing title so late-joining SSE consumers
 			// and boards can pick it up without an extra API call.
-			if !sendStreamEvent(streamCtx, streamChan, runtime.SessionTitle(sess.ID, titleToEmit)) {
+			if !sendStreamEvent(streamCtx, streamChan, contract.SessionTitle(sess.ID, titleToEmit)) {
 				return
 			}
 		}
 
 		stream := runtimeSession.runtime.RunStream(streamCtx, sess)
 		// Teardown must finish before the deferred streaming.Unlock.
-		defer func(events <-chan runtime.Event) {
+		defer func(events <-chan contract.Event) {
 			cancel()
 			for range events {
 			}
@@ -1236,7 +1238,7 @@ func (sm *SessionManager) RunSession(ctx context.Context, sessionID, agentFilena
 	return streamChan, nil
 }
 
-func sendStreamEvent(ctx context.Context, events chan<- runtime.Event, event runtime.Event) bool {
+func sendStreamEvent(ctx context.Context, events chan<- contract.Event, event contract.Event) bool {
 	select {
 	case events <- event:
 		return true
@@ -1315,7 +1317,7 @@ func (sm *SessionManager) SteerSession(ctx context.Context, sessionID string, me
 	}
 
 	for _, msg := range messages {
-		if err := rt.runtime.Steer(ctx, runtime.QueuedMessage{
+		if err := rt.runtime.Steer(ctx, contract.QueuedMessage{
 			Content:      msg.Content,
 			MultiContent: msg.MultiContent,
 		}); err != nil {
@@ -1376,7 +1378,7 @@ func (sm *SessionManager) FollowUpSession(ctx context.Context, sessionID string,
 	}
 
 	for _, msg := range messages {
-		if err := rt.runtime.FollowUp(ctx, runtime.QueuedMessage{
+		if err := rt.runtime.FollowUp(ctx, contract.QueuedMessage{
 			Content:      msg.Content,
 			MultiContent: msg.MultiContent,
 		}); err != nil {
@@ -1394,7 +1396,7 @@ func (sm *SessionManager) FollowUpSession(ctx context.Context, sessionID string,
 	return streaming, false, nil
 }
 
-func (sm *SessionManager) recallSession(ctx context.Context, sessionID string, msg runtime.QueuedMessage) error {
+func (sm *SessionManager) recallSession(ctx context.Context, sessionID string, msg contract.QueuedMessage) error {
 	if inject, ok := sm.followUpInjectors.Load(sessionID); ok {
 		inject(ctx, msg.Content)
 		return nil
@@ -1459,7 +1461,7 @@ func (sm *SessionManager) recallSession(ctx context.Context, sessionID string, m
 			// sink (see runtimeForSession); skip the best-effort RunStream
 			// mirror copy so the event log doesn't carry the same request
 			// twice (#3584).
-			if _, isElicitation := event.(*runtime.ElicitationRequestEvent); isElicitation && skipMirroredElicitation {
+			if _, isElicitation := event.(*contract.ElicitationRequestEvent); isElicitation && skipMirroredElicitation {
 				continue
 			}
 			sm.appendSessionEvent(sessionID, event)
@@ -1611,7 +1613,7 @@ func (sm *SessionManager) UpdateSessionTitle(ctx context.Context, sessionID, tit
 // generateTitle generates a title for a session using the sessiontitle package.
 // The generated title is stored in the session and persisted to the store.
 // A SessionTitleEvent is emitted to notify clients.
-func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Session, gen *sessiontitle.Generator, userMessages []string, events chan<- runtime.Event) {
+func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Session, gen *sessiontitle.Generator, userMessages []string, events chan<- contract.Event) {
 	if gen == nil || len(userMessages) == 0 {
 		return
 	}
@@ -1636,14 +1638,14 @@ func (sm *SessionManager) generateTitle(ctx context.Context, sess *session.Sessi
 
 	// Emit the title event
 	select {
-	case events <- runtime.SessionTitle(sess.ID, title):
+	case events <- contract.SessionTitle(sess.ID, title):
 		slog.DebugContext(ctx, "Generated and emitted session title", "session_id", sess.ID, "title", title)
 	case <-ctx.Done():
 		slog.DebugContext(ctx, "Context cancelled while emitting title event", "session_id", sess.ID)
 	}
 }
 
-func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.Session, agentFilename, currentAgent string, rc *config.RuntimeConfig) (_ runtime.Runtime, _ *sessiontitle.Generator, err error) {
+func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.Session, agentFilename, currentAgent string, rc *config.RuntimeConfig) (_ contract.Runtime, _ *sessiontitle.Generator, err error) {
 	// Caller (RunSession) holds sm.mux and has already verified that no
 	// active runtime exists for this session. This function is purely a
 	// constructor: it must not touch sm.runtimeSessions, otherwise it would
@@ -1696,7 +1698,7 @@ func (sm *SessionManager) runtimeForSession(ctx context.Context, sess *session.S
 		authorSafetyDefault = session.SafetyPolicy(t.RuntimeSafety())
 	}
 
-	modelSwitcherCfg := &runtime.ModelSwitcherConfig{
+	modelSwitcherCfg := &modelcatalog.Config{
 		Models:             loadResult.Models,
 		Providers:          loadResult.Providers,
 		ModelsGateway:      rc.ModelsGateway,
@@ -1959,7 +1961,7 @@ func (sm *SessionManager) applyRunModelOverride(ctx context.Context, rs *activeR
 // then apply switches. This keeps each message's interpretation
 // consistent regardless of how earlier messages in the same batch might
 // have mutated the runtime.
-func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runtime.Runtime, messages []api.Message) error {
+func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt contract.Runtime, messages []api.Message) error {
 	originalAgent := rt.CurrentAgentName(ctx)
 
 	type pending struct {
@@ -2003,7 +2005,7 @@ func (sm *SessionManager) applyAgentSwitchCommands(ctx context.Context, rt runti
 // ignored: a stored override that no longer resolves (e.g. because the
 // model was removed from the agent's config) must not prevent the
 // session from being resumed with the agent's default model.
-func applyStoredOverrides(ctx context.Context, sessionID string, run runtime.Runtime, overrides map[string]string) {
+func applyStoredOverrides(ctx context.Context, sessionID string, run contract.Runtime, overrides map[string]string) {
 	if len(overrides) == 0 || !run.SupportsModelSwitching() {
 		return
 	}
@@ -2152,7 +2154,7 @@ var ErrSessionNotRunning = errors.New("session not found or not running")
 // override points at an inline provider/model not present in the agent
 // config, a synthetic choice is appended (mirrors App.AvailableModels via
 // the shared runtime.DecorateModelChoices helper).
-func (sm *SessionManager) AvailableSessionModels(ctx context.Context, sessionID string) (string, string, []runtime.ModelChoice, error) {
+func (sm *SessionManager) AvailableSessionModels(ctx context.Context, sessionID string) (string, string, []modelcatalog.ModelChoice, error) {
 	rs, ok := sm.runtimeSessions.Load(sessionID)
 	if !ok {
 		return "", "", nil, ErrSessionNotRunning
@@ -2179,7 +2181,7 @@ func (sm *SessionManager) AvailableSessionModels(ctx context.Context, sessionID 
 	}
 	rs.modelSwitch.Unlock()
 
-	choices := runtime.DecorateModelChoices(rs.runtime.AvailableModels(ctx), current, customRefs)
+	choices := modelcatalog.DecorateModelChoices(rs.runtime.AvailableModels(ctx), current, customRefs)
 	return agentName, current, choices, nil
 }
 

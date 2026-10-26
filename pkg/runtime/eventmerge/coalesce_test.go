@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -20,8 +20,8 @@ const window = 50 * time.Millisecond
 func TestCoalesceDisabledReturnsInput(t *testing.T) {
 	t.Parallel()
 
-	in := make(chan runtime.Event)
-	var recv <-chan runtime.Event = in
+	in := make(chan contract.Event)
+	var recv <-chan contract.Event = in
 
 	assert.Equal(t, recv, Coalesce(t.Context(), in, 0))
 }
@@ -30,7 +30,7 @@ func TestCoalesceForwardsFirstDeltaImmediately(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
 		first := text("Hel")
@@ -45,7 +45,7 @@ func TestCoalesceMergesDeltasWithinWindow(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
 		in <- text("a")
@@ -57,16 +57,16 @@ func TestCoalesceMergesDeltasWithinWindow(t *testing.T) {
 		assertNothing(t, out)
 
 		advance(time.Millisecond)
-		assert.Equal(t, "bc", receive(t, out).(*runtime.AgentChoiceEvent).Content)
+		assert.Equal(t, "bc", receive(t, out).(*contract.AgentChoiceEvent).Content)
 
 		in <- text("d")
 		assertNothing(t, out)
 		advance(window)
-		assert.Equal(t, "d", receive(t, out).(*runtime.AgentChoiceEvent).Content)
+		assert.Equal(t, "d", receive(t, out).(*contract.AgentChoiceEvent).Content)
 
 		advance(window)
 		in <- text("e")
-		assert.Equal(t, "e", receive(t, out).(*runtime.AgentChoiceEvent).Content, "a delta after a quiet spell is not held back")
+		assert.Equal(t, "e", receive(t, out).(*contract.AgentChoiceEvent).Content, "a delta after a quiet spell is not held back")
 
 		close(in)
 		assertClosed(t, out)
@@ -77,17 +77,17 @@ func TestCoalesceFlushesBeforeOtherEvents(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
 		in <- text("a")
 		receive(t, out)
 
-		stopped := runtime.StreamStopped("s", "root", "normal")
+		stopped := contract.StreamStopped("s", "root", "normal")
 		in <- text("b")
 		in <- text("c")
 		in <- stopped
-		assert.Equal(t, "bc", receive(t, out).(*runtime.AgentChoiceEvent).Content)
+		assert.Equal(t, "bc", receive(t, out).(*contract.AgentChoiceEvent).Content)
 		assert.Same(t, stopped, receive(t, out))
 		close(in)
 		assertClosed(t, out)
@@ -98,18 +98,18 @@ func TestCoalesceKeepsParallelToolCallsApart(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
-		in <- runtime.ToolCallOutput("call-1", noTool, "1a", "root")
+		in <- contract.ToolCallOutput("call-1", noTool, "1a", "root")
 		receive(t, out)
 
-		in <- runtime.ToolCallOutput("call-1", noTool, "1b", "root")
-		in <- runtime.ToolCallOutput("call-2", noTool, "2a", "root")
-		in <- runtime.ToolCallOutput("call-2", noTool, "2b", "root")
+		in <- contract.ToolCallOutput("call-1", noTool, "1b", "root")
+		in <- contract.ToolCallOutput("call-2", noTool, "2a", "root")
+		in <- contract.ToolCallOutput("call-2", noTool, "2b", "root")
 		close(in)
-		first := receive(t, out).(*runtime.ToolCallOutputEvent)
-		second := receive(t, out).(*runtime.ToolCallOutputEvent)
+		first := receive(t, out).(*contract.ToolCallOutputEvent)
+		second := receive(t, out).(*contract.ToolCallOutputEvent)
 		assert.Equal(t, "call-1", first.ToolCallID)
 		assert.Equal(t, "1b", first.Output)
 		assert.Equal(t, "call-2", second.ToolCallID)
@@ -122,7 +122,7 @@ func TestCoalesceFlushesPendingOnClose(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
 		in <- text("a")
@@ -131,7 +131,7 @@ func TestCoalesceFlushesPendingOnClose(t *testing.T) {
 		in <- text("b")
 		in <- text("c")
 		close(in)
-		assert.Equal(t, "bc", receive(t, out).(*runtime.AgentChoiceEvent).Content)
+		assert.Equal(t, "bc", receive(t, out).(*contract.AgentChoiceEvent).Content)
 		assertClosed(t, out)
 	})
 }
@@ -140,7 +140,7 @@ func TestCoalesceFlushesEarlyWhenPendingIsLarge(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		in := make(chan runtime.Event, 8)
+		in := make(chan contract.Event, 8)
 		out := Coalesce(t.Context(), in, window)
 
 		in <- text("a")
@@ -151,7 +151,7 @@ func TestCoalesceFlushesEarlyWhenPendingIsLarge(t *testing.T) {
 		assertNothing(t, out)
 
 		in <- text(half)
-		assert.Len(t, receive(t, out).(*runtime.AgentChoiceEvent).Content, maxPendingBytes)
+		assert.Len(t, receive(t, out).(*contract.AgentChoiceEvent).Content, maxPendingBytes)
 		close(in)
 		assertClosed(t, out)
 	})
@@ -162,7 +162,7 @@ func TestCoalesceDrainsInputOnceContextIsDone(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
-		in := make(chan runtime.Event)
+		in := make(chan contract.Event)
 		out := Coalesce(ctx, in, window)
 
 		in <- text("never read")
@@ -172,7 +172,7 @@ func TestCoalesceDrainsInputOnceContextIsDone(t *testing.T) {
 		for range 3 {
 			in <- text("dropped")
 		}
-		in <- runtime.StreamStopped("s", "root", "canceled")
+		in <- contract.StreamStopped("s", "root", "canceled")
 		close(in)
 		assertClosed(t, out)
 	})
@@ -182,23 +182,23 @@ func TestCoalescePreservesContentAndOrder(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		script := []runtime.Event{
-			runtime.StreamStarted("s", "root"),
-			runtime.AgentChoiceReasoning("root", "s", "think ", "m1"),
-			runtime.AgentChoiceReasoning("root", "s", "hard", "m1"),
-			runtime.AgentChoice("root", "s", "Hello ", "m1"),
-			runtime.AgentChoice("root", "s", "world", "m1"),
-			runtime.ToolCall(tools.ToolCall{ID: "call-1"}, noTool, "root"),
-			runtime.ToolCallOutput("call-1", noTool, "out ", "root"),
-			runtime.ToolCallOutput("call-1", noTool, "put", "root"),
-			runtime.AgentChoice("root", "s", "Done", "m2"),
-			runtime.AgentChoice("root", "s", ".", "m2"),
-			runtime.StreamStopped("s", "root", "normal"),
+		script := []contract.Event{
+			contract.StreamStarted("s", "root"),
+			contract.AgentChoiceReasoning("root", "s", "think ", "m1"),
+			contract.AgentChoiceReasoning("root", "s", "hard", "m1"),
+			contract.AgentChoice("root", "s", "Hello ", "m1"),
+			contract.AgentChoice("root", "s", "world", "m1"),
+			contract.ToolCall(tools.ToolCall{ID: "call-1"}, noTool, "root"),
+			contract.ToolCallOutput("call-1", noTool, "out ", "root"),
+			contract.ToolCallOutput("call-1", noTool, "put", "root"),
+			contract.AgentChoice("root", "s", "Done", "m2"),
+			contract.AgentChoice("root", "s", ".", "m2"),
+			contract.StreamStopped("s", "root", "normal"),
 		}
-		in := make(chan runtime.Event, len(script))
+		in := make(chan contract.Event, len(script))
 		out := Coalesce(t.Context(), in, window)
 
-		var got []runtime.Event
+		var got []contract.Event
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -225,11 +225,11 @@ func advance(d time.Duration) {
 	time.Sleep(d) //nolint:forbidigo // synctest bubble: advances fake time
 }
 
-func text(content string) runtime.Event {
-	return runtime.AgentChoice("root", "s", content)
+func text(content string) contract.Event {
+	return contract.AgentChoice("root", "s", content)
 }
 
-func receive(t *testing.T, out <-chan runtime.Event) runtime.Event {
+func receive(t *testing.T, out <-chan contract.Event) contract.Event {
 	t.Helper()
 	synctest.Wait()
 	select {
@@ -242,7 +242,7 @@ func receive(t *testing.T, out <-chan runtime.Event) runtime.Event {
 	}
 }
 
-func assertNothing(t *testing.T, out <-chan runtime.Event) {
+func assertNothing(t *testing.T, out <-chan contract.Event) {
 	t.Helper()
 	synctest.Wait()
 	select {
@@ -252,7 +252,7 @@ func assertNothing(t *testing.T, out <-chan runtime.Event) {
 	}
 }
 
-func assertClosed(t *testing.T, out <-chan runtime.Event) {
+func assertClosed(t *testing.T, out <-chan contract.Event) {
 	t.Helper()
 	synctest.Wait()
 	select {
@@ -266,19 +266,19 @@ func assertClosed(t *testing.T, out <-chan runtime.Event) {
 // transcript renders a stream as type-tagged text, joining consecutive
 // deltas of the same kind and target, so a stream and its merged form
 // render identically.
-func transcript(events []runtime.Event) []string {
+func transcript(events []contract.Event) []string {
 	var lines []string
 	var last string
 	for _, event := range events {
 		var key, content string
 		switch ev := event.(type) {
-		case *runtime.AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			key, content = "text "+ev.MessageID, ev.Content
-		case *runtime.AgentChoiceReasoningEvent:
+		case *contract.AgentChoiceReasoningEvent:
 			key, content = "reasoning "+ev.MessageID, ev.Content
-		case *runtime.ToolCallOutputEvent:
+		case *contract.ToolCallOutputEvent:
 			key, content = "output "+ev.ToolCallID, ev.Output
-		case *runtime.PartialToolCallEvent:
+		case *contract.PartialToolCallEvent:
 			key, content = "args "+ev.ToolCall.ID, ev.ToolCall.Function.Arguments
 		default:
 			lines = append(lines, fmt.Sprintf("%T", event))

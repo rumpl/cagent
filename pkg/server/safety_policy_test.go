@@ -8,12 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
 // resumeRecordingRuntime records the ResumeRequests forwarded to it.
 type resumeRecordingRuntime struct {
-	runtime.Runtime
+	contract.Runtime
 
 	resumes []runtime.ResumeRequest
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/toolconfirm"
@@ -47,7 +48,7 @@ func TestSharedConfirmationRejectionTransitions(t *testing.T) {
 				t.Parallel()
 				state := &service.EmbeddedSessionState{}
 				state.SetYoloMode(true)
-				event := &runtime.ToolCallConfirmationEvent{
+				event := &contract.ToolCallConfirmationEvent{
 					ToolCall:       tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}},
 					ToolDefinition: tools.Tool{Name: "shell"},
 				}
@@ -104,7 +105,7 @@ func TestCompatibilityConstructors(t *testing.T) {
 	config := MultiChoiceConfig{DialogID: "compat", Title: "Choose", AllowSecondary: true}
 	assert.IsType(t, common.NewMultiChoiceDialog(config), NewMultiChoiceDialog(config))
 	assert.IsType(t, toolconfirmation.NewToolRejectionReasonDialog(), NewToolRejectionReasonDialog())
-	event := &runtime.ToolCallConfirmationEvent{ToolCall: tools.ToolCall{Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}}
+	event := &contract.ToolCallConfirmationEvent{ToolCall: tools.ToolCall{Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}}
 	assert.IsType(t,
 		toolconfirmation.NewToolConfirmationDialog(animation.NewRuntime(), event, &service.EmbeddedSessionState{}),
 		NewToolConfirmationDialog(animation.NewRuntime(), event, &service.EmbeddedSessionState{}))

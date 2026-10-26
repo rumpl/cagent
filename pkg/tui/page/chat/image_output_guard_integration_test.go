@@ -18,7 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/gemini"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelerrors"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/testutil/geminiintegration"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -159,7 +159,7 @@ func TestImageOutputGuard_RuntimeToTUI_RejectsBeforeDispatchAndClearsSpinner(t *
 	rec := &recordingMessages{Model: p.messages}
 	p.messages = rec
 
-	handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(sessionID, agentName))
+	handled, _ := p.handleRuntimeEvent(contract.StreamStarted(sessionID, agentName))
 	require.True(t, handled, "expected StreamStartedEvent to be a recognized runtime event")
 	assert.Equal(t, 1, rec.assistantMessageCalls,
 		"the stream-started spinner must have been requested exactly once")
@@ -167,7 +167,7 @@ func TestImageOutputGuard_RuntimeToTUI_RejectsBeforeDispatchAndClearsSpinner(t *
 		"a real spinner message must exist in the list right after StreamStartedEvent")
 	assert.Zero(t, rec.removeSpinnerCalls, "no spinner removal is expected before the stream stops")
 
-	handled, _ = p.handleRuntimeEvent(runtime.ErrorWithCodeForSession(sessionID, runtime.ErrorCodeModelError, visibleError))
+	handled, _ = p.handleRuntimeEvent(contract.ErrorWithCodeForSession(sessionID, contract.ErrorCodeModelError, visibleError))
 	require.True(t, handled, "expected ErrorEvent to be a recognized runtime event")
 
 	// The spinner must already be gone here, before StreamStoppedEvent ever
@@ -183,7 +183,7 @@ func TestImageOutputGuard_RuntimeToTUI_RejectsBeforeDispatchAndClearsSpinner(t *
 	assert.Zero(t, rec.removeSpinnerCalls,
 		"the exported RemoveSpinner must not have been invoked yet; removal so far is AddErrorMessage's internal one")
 
-	handled, _ = p.handleRuntimeEvent(runtime.StreamStopped(sessionID, agentName, "error"))
+	handled, _ = p.handleRuntimeEvent(contract.StreamStopped(sessionID, agentName, "error"))
 	require.True(t, handled, "expected StreamStoppedEvent to be a recognized runtime event")
 
 	assert.Equal(t, 1, rec.removeSpinnerCalls,

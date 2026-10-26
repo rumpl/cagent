@@ -3,18 +3,19 @@ package runtime
 import (
 	"sync"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // toolCallLoopSink observes dispatch results without retaining their payloads.
 type toolCallLoopSink struct {
-	EventSink
+	contract.EventSink
 
 	results sync.Map
 }
 
-func (s *toolCallLoopSink) Emit(event Event) {
-	if response, ok := event.(*ToolCallResponseEvent); ok {
+func (s *toolCallLoopSink) Emit(event contract.Event) {
+	if response, ok := event.(*contract.ToolCallResponseEvent); ok {
 		exempt := response.ToolDefinition.AllowRepeatedCalls && response.Result != nil && !response.Result.IsError
 		s.results.Store(response.ToolCallID, exempt)
 	}

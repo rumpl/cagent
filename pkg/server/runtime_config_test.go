@@ -19,6 +19,8 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -155,11 +157,11 @@ func newAPIRuntimeConfigManager(t *testing.T, rc *config.RuntimeConfig, yaml str
 	return NewSessionManager(t.Context(), config.Sources{"agent.yaml": source}, store, 0, rc)
 }
 
-func newAPIRuntimeForSession(t *testing.T, sm *SessionManager, sess *session.Session, selected string) (runtime.Runtime, *team.Team) {
+func newAPIRuntimeForSession(t *testing.T, sm *SessionManager, sess *session.Session, selected string) (contract.Runtime, *team.Team) {
 	t.Helper()
 
 	var loadedTeam *team.Team
-	sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (runtime.Runtime, error) {
+	sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (contract.Runtime, error) {
 		loadedTeam = tm
 		t.Cleanup(func() { require.NoError(t, tm.StopToolSets(context.WithoutCancel(t.Context()))) })
 		return runtime.New(ctx, tm, opts...)
@@ -171,11 +173,11 @@ func newAPIRuntimeForSession(t *testing.T, sm *SessionManager, sess *session.Ses
 	return run, loadedTeam
 }
 
-func apiRuntimeModelChoice(t *testing.T, run runtime.Runtime, ref string) runtime.ModelChoice {
+func apiRuntimeModelChoice(t *testing.T, run contract.Runtime, ref string) modelcatalog.ModelChoice {
 	t.Helper()
 
 	choices := run.AvailableModels(t.Context())
-	index := slices.IndexFunc(choices, func(choice runtime.ModelChoice) bool { return choice.Ref == ref })
+	index := slices.IndexFunc(choices, func(choice modelcatalog.ModelChoice) bool { return choice.Ref == ref })
 	require.NotEqual(t, -1, index, "model %q missing from API runtime picker", ref)
 	return choices[index]
 }
@@ -273,7 +275,7 @@ func TestAPIRuntimeConfig_ModelSwitchingPropagatesLoadedConfiguration(t *testing
 
 			sess.AddMessage(session.UserMessage("Reply offline"))
 			for event := range run.RunStream(t.Context(), sess) {
-				if failure, ok := event.(*runtime.ErrorEvent); ok {
+				if failure, ok := event.(*contract.ErrorEvent); ok {
 					t.Errorf("runtime error: %s", failure.Error)
 				}
 			}
@@ -383,7 +385,7 @@ func TestAPIRuntimeConfig_EnforcesManifestBudgets(t *testing.T) {
 				assert.Len(t, requests, 2, "configs without budgets must remain unlimited")
 				for _, event := range append(first, second...) {
 					switch event.(type) {
-					case *runtime.BudgetUsageEvent, *runtime.BudgetExceededEvent:
+					case *contract.BudgetUsageEvent, *contract.BudgetExceededEvent:
 						t.Errorf("unbudgeted session emitted a budget event: %T", event)
 					}
 				}

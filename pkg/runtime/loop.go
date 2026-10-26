@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/pricing"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
@@ -42,7 +43,7 @@ func (r *LocalRuntime) registerDefaultTools() {
 	r.toolMap[sessioncontext.ToolNameReadSession] = r.handleReadSession
 
 	r.bgAgents.RegisterHandlers(func(name string, fn func(context.Context, *session.Session, tools.ToolCall) (*tools.ToolCallResult, error)) {
-		r.toolMap[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
+		r.toolMap[name] = func(ctx context.Context, sess *session.Session, tc tools.ToolCall, _ contract.EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
 			return fn(ctx, sess, tc)
 		}
 	})
@@ -56,7 +57,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 	a *agent.Agent,
 	sess *session.Session,
 	message string,
-	events EventSink,
+	events contract.EventSink,
 ) {
 	if message == "" {
 		// aggregate() always populates Result.Message on a deny
@@ -64,7 +65,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 		// block without a reason.
 		message = "Agent terminated by a hook."
 	}
-	events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeHookBlocked, message))
+	events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeHookBlocked, message))
 	r.notifyError(ctx, a, sess.ID, message)
 }
 
@@ -97,7 +98,7 @@ func (r *LocalRuntime) emitHookDrivenShutdown(
 // is bounded rather than unbounded). Consumers must still rely on the channel
 // close, not on receiving StreamStopped, as the one guaranteed terminal
 // signal.
-func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, finishReason chat.FinishReason, prevElicitationCh chan Event, events chan<- Event) {
+func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.Session, reason string, finishReason chat.FinishReason, prevElicitationCh chan contract.Event, events chan<- contract.Event) {
 	a := r.resolveSessionAgent(sess)
 
 	if ctx.Err() != nil && reason == "" {
@@ -107,7 +108,7 @@ func (r *LocalRuntime) finalizeEventChannel(ctx context.Context, sess *session.S
 	// Bounded, not unbounded: an abandoned consumer must not hang teardown
 	// forever (#3070), but a live one draining past cancellation must still
 	// get this event (#4136) — so this never selects on ctx.Done().
-	stopped := StreamStopped(sess.ID, a.Name(), reason).(*StreamStoppedEvent)
+	stopped := contract.StreamStopped(sess.ID, a.Name(), reason).(*contract.StreamStoppedEvent)
 	stopped.FinishReason = finishReason
 	bounded(&channelSink{ch: events}, r.streamStoppedTimeout()).Emit(stopped)
 
@@ -144,13 +145,13 @@ func (r *LocalRuntime) streamStoppedTimeout() time.Duration {
 // context cancellation). Each iteration: sends messages to the model, streams
 // the response, executes any tool calls, and loops until the model signals stop
 // or the iteration limit is reached.
-func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan Event {
+func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
 	return r.runStream(ctx, sess, defaultIdleStreamRetryPolicy())
 }
 
-func (r *LocalRuntime) runStream(ctx context.Context, sess *session.Session, idleRetryPolicy idleStreamRetryPolicy) <-chan Event {
+func (r *LocalRuntime) runStream(ctx context.Context, sess *session.Session, idleRetryPolicy idleStreamRetryPolicy) <-chan contract.Event {
 	slog.DebugContext(ctx, "Starting runtime stream", "agent", r.currentAgentName(), "session_id", sess.ID)
-	events := make(chan Event, defaultEventChannelCapacity)
+	events := make(chan contract.Event, defaultEventChannelCapacity)
 	rootStream := !sess.IsSubSession()
 	if rootStream {
 		r.activeRootStreams.Add(1)
@@ -179,7 +180,7 @@ func (r *LocalRuntime) runStream(ctx context.Context, sess *session.Session, idl
 // runStreamLoop is the body of RunStream. Pulled out of the anonymous
 // goroutine so it has a real name in stack traces and is easier to navigate
 // in editors.
-func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session, liveEntry *liveSessionEntry, events chan Event) {
+func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session, liveEntry *liveSessionEntry, events chan contract.Event) {
 	sink := &channelSink{ch: events}
 	ctx = context.WithValue(ctx, scratchpadRootKey{}, liveEntry.treeRootID)
 
@@ -305,7 +306,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	}
 
 	// Emit team information
-	sink.Emit(TeamInfo(r.agentDetailsFromTeam(ctx), a.Name()))
+	sink.Emit(contract.TeamInfo(r.agentDetailsFromTeam(ctx), a.Name()))
 
 	// Surface the run budget from the first frame, before any model call,
 	// so the configured ceilings are visible immediately rather than only
@@ -320,7 +321,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		Sampling:          r.samplingHandler,
 		SamplingWithTools: r.samplingWithToolsHandler,
 		OAuthSuccess: func() {
-			sink.Emit(Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
+			sink.Emit(contract.Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
 		},
 	})
 
@@ -333,7 +334,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 	agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 	if err != nil {
-		sink.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
+		sink.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
 		return
 	}
 
@@ -343,7 +344,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// so the count matches what was offered to the model.
 	sessionSpan.SetAttributes(attribute.Int("cagent.agent.tools.count", len(agentTools)))
 
-	sink.Emit(ToolsetInfo(len(agentTools), false, a.Name()))
+	sink.Emit(contract.ToolsetInfo(len(agentTools), false, a.Name()))
 
 	messages := sess.GetMessagesWithoutInstructionContext(a)
 
@@ -370,7 +371,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		}
 	}
 
-	sink.Emit(StreamStarted(sess.ID, a.Name()))
+	sink.Emit(contract.StreamStarted(sess.ID, a.Name()))
 
 	if a.HasHarness() {
 		streamReason = r.runHarnessAgent(ctx, sess, a, sink)
@@ -415,7 +416,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// RuntimePaused event right before blocking so the TUI can flip its
 		// indicator from "Pausing…" to "Paused".
 		if r.isPaused() {
-			sink.Emit(Paused(sess.ID, a.Name()))
+			sink.Emit(contract.Paused(sess.ID, a.Name()))
 			if err := r.waitIfPaused(ctx); err != nil {
 				return
 			}
@@ -454,19 +455,19 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 
 		agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 		if err != nil {
-			sink.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
+			sink.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeToolFailed, fmt.Sprintf("failed to get tools: %v", err)))
 			return
 		}
 
 		// Emit updated tool count. After a ToolListChanged MCP notification
 		// the cache is invalidated, so getTools above re-fetches from the
 		// server and may return a different count.
-		sink.Emit(ToolsetInfo(len(agentTools), false, a.Name()))
+		sink.Emit(contract.ToolsetInfo(len(agentTools), false, a.Name()))
 
 		// Check iteration limit
 		newMax, decision := r.enforceMaxIterations(ctx, sess, a, ls.iteration, ls.maxIterations, sink)
 		if decision == iterationStop {
-			streamReason = StreamStopReasonMaxIterations
+			streamReason = contract.StreamStopReasonMaxIterations
 			if ctx.Err() != nil {
 				streamReason = turnEndReasonCanceled
 			}
@@ -512,7 +513,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		// Notify sidebar of the model for this turn. For rule-based
 		// routing, the actual routed model is emitted from within the
 		// stream once the first chunk arrives.
-		sink.Emit(AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage()))
+		sink.Emit(contract.AgentInfo(a.Name(), modelID.String(), a.Description(), a.WelcomeMessage()))
 
 		slog.DebugContext(ctx, "Using agent", "agent", a.Name(), "model", modelID.String())
 		slog.DebugContext(ctx, "Getting model definition", "model_id", modelID.String())
@@ -690,7 +691,7 @@ func (r *LocalRuntime) runTurn(
 	sessionSpan trace.Span,
 	agentTools []tools.Tool,
 	ls *loopState,
-	events EventSink,
+	events contract.EventSink,
 ) turnControl {
 	ls.finishReason = ""
 	// turnStart bounds this turn's active time, attributed to the agent
@@ -888,7 +889,7 @@ func (r *LocalRuntime) runTurn(
 	switch {
 	case res.FinishReason == chat.FinishReasonRefusal:
 		slog.WarnContext(ctx, "Model refused to respond", "agent", a.Name(), "model", modelID.String(), "session_id", sess.ID)
-		events.Emit(Warning(fmt.Sprintf("Model %s refused to respond (stop reason: refusal).", modelID.String()), a.Name()))
+		events.Emit(contract.Warning(fmt.Sprintf("Model %s refused to respond (stop reason: refusal).", modelID.String()), a.Name()))
 	case emptyTurn && len(res.Media) > 0:
 		slog.DebugContext(ctx, "Media-only assistant turn", "agent", a.Name(), "model", modelID.String(), "media_items", len(res.Media), "session_id", sess.ID)
 	case emptyTurn:
@@ -908,25 +909,25 @@ func (r *LocalRuntime) runTurn(
 			slog.WarnContext(ctx, "Empty assistant turn",
 				"agent", a.Name(), "model", modelID.String(),
 				"finish_reason", string(reason), "reasoning_length", len(res.ReasoningContent), "session_id", sess.ID)
-			events.Emit(Warning(warning, a.Name()))
+			events.Emit(contract.Warning(warning, a.Name()))
 		}
 	}
 
 	msgUsage := r.recordAssistantMessage(ctx, sess, a, res, agentTools, modelID.String(), msgCost, events)
 
-	usage := SessionUsage(sess, contextLimit, a.CompactionThreshold())
+	usage := contract.SessionUsage(sess, contextLimit, a.CompactionThreshold())
 	usage.LastMessage = msgUsage
-	usageEvent := NewTokenUsageEvent(sess.ID, a.Name(), usage).(*TokenUsageEvent)
+	usageEvent := contract.NewTokenUsageEvent(sess.ID, a.Name(), usage).(*contract.TokenUsageEvent)
 	usageEvent.AssistantMessageEmpty = strings.TrimSpace(res.Content) == "" && len(res.Calls) == 0
 	events.Emit(usageEvent)
 	if res.ProviderState != nil && res.ProviderState.CacheDiagnostics != nil {
 		d := res.ProviderState.CacheDiagnostics
 		if d.MissedInputTokens > 0 {
-			events.Emit(Warning(fmt.Sprintf("Prompt cache miss: %s (%d input tokens).", d.Reason, d.MissedInputTokens), a.Name()))
+			events.Emit(contract.Warning(fmt.Sprintf("Prompt cache miss: %s (%d input tokens).", d.Reason, d.MissedInputTokens), a.Name()))
 		}
 	}
 	if shouldWarnOnCacheMiss(sess, msgUsage) {
-		events.Emit(Warning("This agent turn did not use the prompt cache.", a.Name()))
+		events.Emit(contract.Warning("This agent turn did not use the prompt cache.", a.Name()))
 	}
 
 	// Record the message count before tool calls so we can
@@ -984,7 +985,7 @@ func (r *LocalRuntime) runTurn(
 			attribute.Int("cagent.loop.consecutive_calls", consecutive),
 		)
 		sessionSpan.SetStatus(codes.Error, errMsg)
-		events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeLoopDetected, errMsg))
+		events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeLoopDetected, errMsg))
 		r.notifyError(ctx, a, sess.ID, errMsg)
 		ls.loopDetector.Reset()
 		endReason = turnEndReasonLoopDetected
@@ -1039,7 +1040,7 @@ func (r *LocalRuntime) runTurn(
 		}
 
 		if a.StructuredOutput() == nil && res.Content != "" && len(res.Media) == 0 && hasExplicitImageGenerationIntent(sess.GetLastUserMessageContent()) {
-			events.Emit(Warning(missingGeneratedImageWarning, a.Name()))
+			events.Emit(contract.Warning(missingGeneratedImageWarning, a.Name()))
 		}
 
 		slog.DebugContext(ctx, "Conversation stopped", "agent", a.Name())
@@ -1135,14 +1136,14 @@ func (r *LocalRuntime) Run(ctx context.Context, sess *session.Session) ([]sessio
 		}
 	}()
 	for event := range events {
-		if errEvent, ok := event.(*ErrorEvent); ok {
+		if errEvent, ok := event.(*contract.ErrorEvent); ok {
 			return nil, fmt.Errorf("%s", errEvent.Error)
 		}
 	}
 	return sess.GetAllMessages(), nil
 }
 
-func shouldWarnOnCacheMiss(sess *session.Session, usage *MessageUsage) bool {
+func shouldWarnOnCacheMiss(sess *session.Session, usage *contract.MessageUsage) bool {
 	if !userconfig.Get().CacheMissWarningsEnabled() || usage == nil || usage.CachedInputTokens > 0 {
 		return false
 	}
@@ -1176,8 +1177,8 @@ func (r *LocalRuntime) recordAssistantMessage(
 	agentTools []tools.Tool,
 	modelID string,
 	cost *float64,
-	events EventSink,
-) *MessageUsage {
+	events contract.EventSink,
+) *contract.MessageUsage {
 	if strings.TrimSpace(res.Content) == "" && len(res.Calls) == 0 && len(res.Media) == 0 {
 		if res.Usage == nil {
 			slog.DebugContext(ctx, "Skipping empty assistant message without usage", "agent", a.Name())
@@ -1281,7 +1282,7 @@ func (r *LocalRuntime) recordAssistantMessage(
 	if res.Usage == nil {
 		return nil
 	}
-	msgUsage := &MessageUsage{
+	msgUsage := &contract.MessageUsage{
 		Usage:        *res.Usage,
 		Cost:         messageCost,
 		Model:        messageModel,
@@ -1341,7 +1342,7 @@ func (r *LocalRuntime) compactIfNeeded(
 	a *agent.Agent,
 	contextLimit int64,
 	messageCountBefore int,
-	events EventSink,
+	events contract.EventSink,
 ) {
 	// contextLimit is the effective budget (primary window, capped to a smaller
 	// dedicated compaction model's window when configured) computed by
@@ -1400,10 +1401,10 @@ func (r *LocalRuntime) compactIfNeeded(
 // skill children).
 // emitLifecycleEvents controls whether MCPInitStarted/Finished are emitted;
 // pass false when calling from reprobe to avoid spurious TUI spinner flicker.
-func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *agent.Agent, sessionSpan trace.Span, events EventSink, emitLifecycleEvents bool) ([]tools.Tool, error) {
+func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *agent.Agent, sessionSpan trace.Span, events contract.EventSink, emitLifecycleEvents bool) ([]tools.Tool, error) {
 	if emitLifecycleEvents && len(a.ToolSets()) > 0 {
-		events.Emit(MCPInitStarted(a.Name()))
-		defer func() { events.Emit(MCPInitFinished(a.Name())) }()
+		events.Emit(contract.MCPInitStarted(a.Name()))
+		defer func() { events.Emit(contract.MCPInitFinished(a.Name())) }()
 	}
 
 	// Catalog tools ride through the same session filters below.
@@ -1469,10 +1470,10 @@ func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent) {
 // Non-blocking sink like the RAG forwarder: the callback fires from
 // another session's tool call, and a blocking send into this stream's
 // events channel could hang that session's tool call.
-func (r *LocalRuntime) subscribePlanChanges(sess *session.Session, events EventSink) (release func()) {
+func (r *LocalRuntime) subscribePlanChanges(sess *session.Session, events contract.EventSink) (release func()) {
 	sink := nonBlocking(events)
 	forward := func(c plan.Change) {
-		sink.Emit(PlanChanged("shared", c.Name, c.Action, c.Revision, ""))
+		sink.Emit(contract.PlanChanged("shared", c.Name, c.Action, c.Revision, ""))
 	}
 
 	toolsets := slices.Clone(sess.ExtraToolSets)
@@ -1533,13 +1534,13 @@ func notifierDedupKey(n plan.ChangeNotifier) (notifierIdentity, bool) {
 // not emitted — "X is now available" reads as a spurious warning right
 // after the user completes an OAuth dance, and adds no signal for other
 // recoveries either.
-func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, events EventSink) {
+func (r *LocalRuntime) emitAgentWarnings(a *agent.Agent, events contract.EventSink) {
 	warnings := a.DrainWarnings()
 	if len(warnings) == 0 {
 		return
 	}
 	slog.Warn("Tool setup partially failed; continuing", "agent", a.Name(), "warnings", warnings)
-	events.Emit(Warning(formatToolWarning(a, warnings), a.Name()))
+	events.Emit(contract.Warning(formatToolWarning(a, warnings), a.Name()))
 }
 
 func formatToolWarning(a *agent.Agent, warnings []string) string {
@@ -1664,7 +1665,7 @@ func (r *LocalRuntime) reprobe(
 	a *agent.Agent,
 	currentTools []tools.Tool,
 	sessionSpan trace.Span,
-	events EventSink,
+	events contract.EventSink,
 ) {
 	updated, err := r.getTools(ctx, sess, a, sessionSpan, events, false)
 	if err != nil {
@@ -1696,5 +1697,5 @@ func (r *LocalRuntime) reprobe(
 		"agent", a.Name(), "added", added)
 
 	// Emit updated tool count to the TUI immediately.
-	events.Emit(ToolsetInfo(len(updated), false, a.Name()))
+	events.Emit(contract.ToolsetInfo(len(updated), false, a.Name()))
 }

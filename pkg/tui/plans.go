@@ -15,7 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/docker-agent/pkg/plans"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
 	"github.com/docker/docker-agent/pkg/tui/core"
@@ -932,7 +932,7 @@ func planWarningsCmds(warnings []string) []tea.Cmd {
 // handlePlanChangedEvent live-refreshes open plan dialogs after an agent
 // mutated a shared plan. Shared plans are scope-global, so the refresh does
 // not depend on which session emitted the event.
-func (m *appModel) handlePlanChangedEvent(msg *runtime.PlanChangedEvent) (tea.Model, tea.Cmd) {
+func (m *appModel) handlePlanChangedEvent(msg *contract.PlanChangedEvent) (tea.Model, tea.Cmd) {
 	if name := msg.GetAgentName(); name != "" {
 		m.activeTab.sessionState.SetCurrentAgentName(name)
 	}

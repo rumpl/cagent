@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/rulebased"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -80,9 +81,9 @@ func TestServingModelFallbackFooter(t *testing.T) {
 			for range 2 {
 				for event := range rt.RunStream(t.Context(), sess) {
 					switch event := event.(type) {
-					case *runtime.ErrorEvent:
+					case *contract.ErrorEvent:
 						t.Errorf("runtime error: %s", event.Error)
-					case *runtime.AgentInfoEvent, *runtime.ModelFallbackEvent:
+					case *contract.AgentInfoEvent, *contract.ModelFallbackEvent:
 						m.handleEvent(t.Context(), event)
 					}
 				}

@@ -14,7 +14,7 @@ import (
 	"github.com/coder/acp-go-sdk"
 
 	pathx "github.com/docker/docker-agent/pkg/path"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/todo"
 )
@@ -46,7 +46,7 @@ func buildToolCallStart(toolCall tools.ToolCall, tool tools.Tool, workingDir str
 }
 
 // buildToolCallComplete creates a tool call completion update.
-func buildToolCallComplete(event *runtime.ToolCallResponseEvent) acp.SessionUpdate {
+func buildToolCallComplete(event *contract.ToolCallResponseEvent) acp.SessionUpdate {
 	status := acp.ToolCallStatusCompleted
 	if event.Result != nil && event.Result.IsError {
 		status = acp.ToolCallStatusFailed

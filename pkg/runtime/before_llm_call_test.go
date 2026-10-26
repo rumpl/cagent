@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -160,7 +161,7 @@ func TestMaxIterationsBuiltin_TripsAfterConfiguredLimit(t *testing.T) {
 	)
 	sess.Title = "max_iterations e2e"
 
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
@@ -179,9 +180,9 @@ func TestMaxIterationsBuiltin_TripsAfterConfiguredLimit(t *testing.T) {
 	// The runtime must surface the builtin's block reason as an
 	// ErrorEvent so the user sees why the run stopped — not just
 	// silently exit.
-	var errEvt *ErrorEvent
+	var errEvt *contract.ErrorEvent
 	for _, ev := range events {
-		if e, ok := ev.(*ErrorEvent); ok {
+		if e, ok := ev.(*contract.ErrorEvent); ok {
 			errEvt = e
 			break
 		}
@@ -240,13 +241,13 @@ func TestMaxIterationsBuiltin_NoOpOnInvalidLimit(t *testing.T) {
 			sess := session.New(session.WithUserMessage("hi"))
 			sess.Title = "Unit Test"
 
-			var events []Event
+			var events []contract.Event
 			for ev := range rt.RunStream(t.Context(), sess) {
 				events = append(events, ev)
 			}
 
 			for _, ev := range events {
-				if e, ok := ev.(*ErrorEvent); ok {
+				if e, ok := ev.(*contract.ErrorEvent); ok {
 					t.Fatalf("invalid limit %v must be a no-op, but the run was terminated: %s", tc.args, e.Error)
 				}
 			}

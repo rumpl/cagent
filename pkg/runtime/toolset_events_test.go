@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	ragtypes "github.com/docker/docker-agent/pkg/rag/types"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -48,11 +49,11 @@ func newRAGAgent(name string, toolsets ...tools.ToolSet) *agent.Agent {
 	)
 }
 
-func requireRAGProgress(t *testing.T, events <-chan Event) *RAGIndexingProgressEvent {
+func requireRAGProgress(t *testing.T, events <-chan contract.Event) *contract.RAGIndexingProgressEvent {
 	t.Helper()
 	select {
 	case ev := <-events:
-		progress, ok := ev.(*RAGIndexingProgressEvent)
+		progress, ok := ev.(*contract.RAGIndexingProgressEvent)
 		require.True(t, ok, "expected *RAGIndexingProgressEvent, got %T", ev)
 		return progress
 	default:
@@ -74,7 +75,7 @@ func TestSubscribeToolsetEvents_StableAgentAttribution(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	release := rt.subscribeToolsetEvents(session.New(), NewChannelSink(events))
 
 	rt.setCurrentAgent("helper")
@@ -107,7 +108,7 @@ func TestSubscribeToolsetEvents_ExtraToolSetsAndDedup(t *testing.T) {
 	sess.AgentName = "a2"
 	sess.ExtraToolSets = []tools.ToolSet{extra}
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	release := rt.subscribeToolsetEvents(sess, NewChannelSink(events))
 	t.Cleanup(release)
 
@@ -129,8 +130,8 @@ func TestSubscribeToolsetEvents_FanOutAcrossStreams(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(newRAGAgent("root", ragTool))), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	eventsA := make(chan Event, 8)
-	eventsB := make(chan Event, 8)
+	eventsA := make(chan contract.Event, 8)
+	eventsB := make(chan contract.Event, 8)
 	releaseA := rt.subscribeToolsetEvents(session.New(), NewChannelSink(eventsA))
 	releaseB := rt.subscribeToolsetEvents(session.New(), NewChannelSink(eventsB))
 	t.Cleanup(releaseB)
@@ -195,9 +196,9 @@ func TestOnToolsChanged_SubscribesPerRuntime(t *testing.T) {
 	rtB := newToolsChangedRuntime(t, ts)
 
 	var callsA, callsB atomic.Int32
-	rtA.OnToolsChanged(func(Event) { callsA.Add(1) })
-	rtA.OnToolsChanged(func(Event) { callsA.Add(1) })
-	rtB.OnToolsChanged(func(Event) { callsB.Add(1) })
+	rtA.OnToolsChanged(func(contract.Event) { callsA.Add(1) })
+	rtA.OnToolsChanged(func(contract.Event) { callsA.Add(1) })
+	rtB.OnToolsChanged(func(contract.Event) { callsB.Add(1) })
 	assert.Equal(t, int32(2), ts.live.Load(), "one live subscription per runtime")
 	assert.Nil(t, ts.legacy.Load(), "subscribable toolsets must not have their legacy slot overwritten")
 
@@ -233,7 +234,7 @@ func TestOnToolsChanged_LegacyNotifierFallback(t *testing.T) {
 	rt := newToolsChangedRuntime(t, ts)
 
 	var calls atomic.Int32
-	rt.OnToolsChanged(func(Event) { calls.Add(1) })
+	rt.OnToolsChanged(func(contract.Event) { calls.Add(1) })
 	handler := ts.handler.Load()
 	require.NotNil(t, handler)
 	(*handler)()

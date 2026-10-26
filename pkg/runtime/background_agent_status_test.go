@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	agenttool "github.com/docker/docker-agent/pkg/tools/builtin/agent"
@@ -30,10 +31,10 @@ func TestBackgroundAgentStatusConcurrentCancellation(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, rt.Close()) })
 
 		var mu sync.Mutex
-		var statuses []*BackgroundAgentStatusEvent
+		var statuses []*contract.BackgroundAgentStatusEvent
 		var contextErrors []error
-		rt.OnBackgroundEventWithContext(func(ctx context.Context, event Event) {
-			if status, ok := event.(*BackgroundAgentStatusEvent); ok {
+		rt.OnBackgroundEventWithContext(func(ctx context.Context, event contract.Event) {
+			if status, ok := event.(*contract.BackgroundAgentStatusEvent); ok {
 				mu.Lock()
 				defer mu.Unlock()
 				statuses = append(statuses, status)
@@ -80,7 +81,7 @@ func TestClientStreamBackgroundAgentStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, running := range []bool{true, false} {
-			data, err := json.Marshal(BackgroundAgentStatus("child", "worker", running))
+			data, err := json.Marshal(contract.BackgroundAgentStatus("child", "worker", running))
 			if err != nil {
 				t.Error(err)
 				return
@@ -92,9 +93,9 @@ func TestClientStreamBackgroundAgentStatus(t *testing.T) {
 
 	events, err := newTestClient(t, srv.URL).StreamSessionEvents(t.Context(), "parent")
 	require.NoError(t, err)
-	var statuses []*BackgroundAgentStatusEvent
+	var statuses []*contract.BackgroundAgentStatusEvent
 	for event := range events {
-		status, ok := event.(*BackgroundAgentStatusEvent)
+		status, ok := event.(*contract.BackgroundAgentStatusEvent)
 		require.True(t, ok, "unexpected event %T", event)
 		assert.Equal(t, "child", status.GetSessionID())
 		assert.Equal(t, "worker", status.GetAgentName())

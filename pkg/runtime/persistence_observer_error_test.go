@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -22,7 +23,7 @@ func TestPersistenceObserver_PersistsErrorEvent(t *testing.T) {
 	sess := session.New(session.WithID("s1"), session.WithUserMessage("hi"))
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	ev := ErrorWithCodeForSession(sess.ID, ErrorCodeModelError, "model stream failed")
+	ev := contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeModelError, "model stream failed")
 	obs.OnEvent(t.Context(), sess, ev)
 
 	reloaded, err := store.GetSession(t.Context(), sess.ID)
@@ -37,7 +38,7 @@ func TestPersistenceObserver_PersistsErrorEvent(t *testing.T) {
 	}
 	require.NotNil(t, errItem, "ErrorEvent must be persisted as an error item")
 	assert.Equal(t, "model stream failed", errItem.Message)
-	assert.Equal(t, ErrorCodeModelError, errItem.Code)
+	assert.Equal(t, contract.ErrorCodeModelError, errItem.Code)
 }
 
 // TestPersistenceObserver_SkipsSubSessionError verifies that errors from
@@ -54,7 +55,7 @@ func TestPersistenceObserver_SkipsSubSessionError(t *testing.T) {
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
 	// An error tagged with a different session id must be filtered out.
-	ev := ErrorWithCodeForSession("other-session", ErrorCodeModelError, "child failed")
+	ev := contract.ErrorWithCodeForSession("other-session", contract.ErrorCodeModelError, "child failed")
 	obs.OnEvent(t.Context(), sess, ev)
 
 	reloaded, err := store.GetSession(t.Context(), sess.ID)

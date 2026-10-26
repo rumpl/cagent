@@ -10,12 +10,13 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/team"
 )
 
 type runtimeDecorator struct {
-	runtime.Runtime
+	contract.Runtime
 
 	factory func() runtime.CommandEvaluatorFactory
 }

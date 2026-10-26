@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/wire"
 )
 
@@ -147,7 +148,7 @@ func TestCreateSession_ErrUnsupportedMapsTo501(t *testing.T) {
 
 	srv := httptest.NewTestServer(t, wire.NewHandler(&stubBackend{
 		sessFn: func(context.Context, runtime.CreateSessionRequest) (wire.CreateSessionResponse, error) {
-			return wire.CreateSessionResponse{}, fmt.Errorf("snapshots: %w", runtime.ErrUnsupported)
+			return wire.CreateSessionResponse{}, fmt.Errorf("snapshots: %w", contract.ErrUnsupported)
 		},
 	}))
 	client := srv.Client()

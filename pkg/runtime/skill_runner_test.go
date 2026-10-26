@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
@@ -48,7 +49,7 @@ func TestRunSkillFork_SkipsEmbeddedCommandsWithoutParentToolCall(t *testing.T) {
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithAgentName("worker"))
 	result, err := rt.RunSkillFork(t.Context(), sess,
-		skillstool.RunSkillArgs{Name: "gather"}, NewChannelSink(make(chan Event, 128)))
+		skillstool.RunSkillArgs{Name: "gather"}, NewChannelSink(make(chan contract.Event, 128)))
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -128,7 +129,7 @@ func TestRunSkillFork_PinnedSessionRunsAsPinnedAgent(t *testing.T) {
 		session.WithDelegationLineage([]string{"root"}),
 	)
 
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 	result, err := rt.RunSkillFork(t.Context(), sess,
 		skillstool.RunSkillArgs{Name: "greet", Task: "greet the user"}, NewChannelSink(evts))
 	require.NoError(t, err)
@@ -181,7 +182,7 @@ func TestSkillForkHandoffsStaySessionLocal(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
 			parent := session.New(session.WithUserMessage("run workflow"), session.WithToolsApproved(true))
-			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 256)))
+			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan contract.Event, 256)))
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			assert.False(t, result.IsError)
@@ -240,7 +241,7 @@ func TestSkillDelegatesKeepLocalHandoffs(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
 			parent := session.New(session.WithUserMessage("run"), session.WithToolsApproved(true))
-			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 512)))
+			result, err := rt.RunSkillFork(t.Context(), parent, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan contract.Event, 512)))
 			require.NoError(t, err)
 			assert.Equal(t, "root finished", result.Output)
 			assert.Equal(t, 1, targetModel.handoffCallCount())

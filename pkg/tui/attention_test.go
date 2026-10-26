@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -18,15 +18,15 @@ import (
 func attentionEvents() map[string]func() tea.Msg {
 	return map[string]func() tea.Msg{
 		"tool": func() tea.Msg {
-			return runtime.ToolCallConfirmation(tools.ToolCall{ID: "tool"}, tools.Tool{Name: "shell"}, "root", nil)
+			return contract.ToolCallConfirmation(tools.ToolCall{ID: "tool"}, tools.Tool{Name: "shell"}, "root", nil)
 		},
-		"iterations": func() tea.Msg { return &runtime.MaxIterationsReachedEvent{MaxIterations: 10} },
-		"form":       func() tea.Msg { return &runtime.ElicitationRequestEvent{ElicitationID: "form", Message: "question"} },
+		"iterations": func() tea.Msg { return &contract.MaxIterationsReachedEvent{MaxIterations: 10} },
+		"form":       func() tea.Msg { return &contract.ElicitationRequestEvent{ElicitationID: "form", Message: "question"} },
 		"url": func() tea.Msg {
-			return &runtime.ElicitationRequestEvent{ElicitationID: "url", Mode: "url", URL: "https://example.com"}
+			return &contract.ElicitationRequestEvent{ElicitationID: "url", Mode: "url", URL: "https://example.com"}
 		},
 		"oauth": func() tea.Msg {
-			return &runtime.ElicitationRequestEvent{ElicitationID: "oauth", Meta: map[string]any{"docker-agent/type": "oauth_flow"}}
+			return &contract.ElicitationRequestEvent{ElicitationID: "oauth", Meta: map[string]any{"docker-agent/type": "oauth_flow"}}
 		},
 	}
 }
@@ -92,14 +92,14 @@ func TestAttentionReplayCannotRaceTabSwitch(t *testing.T) {
 	otherID := m.supervisor.ActiveID()
 	var events []tea.Msg
 	for _, name := range []string{"first", "second", "third"} {
-		event := &runtime.ElicitationRequestEvent{ElicitationID: name, Message: name}
+		event := &contract.ElicitationRequestEvent{ElicitationID: name, Message: name}
 		events = append(events, event)
 		_, _ = m.Update(queuedRuntimeDelivery(m, id, event))
 	}
 	_, replayCmd := m.handleSwitchTab(id)
 	require.Same(t, events[2], m.dialogMgr.TopBackgroundEvent(), "replay completes in Update, before any init command runs")
 	_, _ = m.handleSwitchTab(otherID)
-	other := &runtime.ElicitationRequestEvent{ElicitationID: "other"}
+	other := &contract.ElicitationRequestEvent{ElicitationID: "other"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, otherID, other))
 	// Run the old tab's initialization after the switch; it cannot reopen or close prompts.
 	for _, msg := range collectMsgs(replayCmd) {
@@ -118,11 +118,11 @@ func TestAttentionRoundTripRetainsTypedInputAndModal(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	id := m.supervisor.ActiveID()
-	first := &runtime.ElicitationRequestEvent{ElicitationID: "first"}
+	first := &contract.ElicitationRequestEvent{ElicitationID: "first"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, id, first))
 	firstDialog := m.dialogMgr.TopDialog()
 	_, _ = m.Update(tea.PasteMsg{Content: "first draft"})
-	second := &runtime.ElicitationRequestEvent{ElicitationID: "second"}
+	second := &contract.ElicitationRequestEvent{ElicitationID: "second"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, id, second))
 	secondDialog := m.dialogMgr.TopDialog()
 	_, _ = m.Update(tea.PasteMsg{Content: "second draft"})
@@ -148,7 +148,7 @@ func TestAttentionRetiredPageRejectsQueuedDelivery(t *testing.T) {
 			t.Parallel()
 			m := newTabLifecycleModel(t)
 			id := m.supervisor.ActiveID()
-			event := &runtime.ElicitationRequestEvent{ElicitationID: "old"}
+			event := &contract.ElicitationRequestEvent{ElicitationID: "old"}
 			queued := queuedRuntimeDelivery(m, id, event)
 			_, _ = m.Update(queued)
 			require.True(t, m.dialogMgr.Open())
@@ -186,8 +186,8 @@ func TestAttentionRetirementUsesRootBoundary(t *testing.T) {
 				t.Parallel()
 				m := newTabLifecycleModel(t)
 				id, rootID := m.supervisor.ActiveID(), m.application.Session().ID
-				foreground := &runtime.ElicitationRequestEvent{ElicitationID: "root", SessionID: rootID}
-				detached := &runtime.ElicitationRequestEvent{ElicitationID: "job", SessionID: "job-session"}
+				foreground := &contract.ElicitationRequestEvent{ElicitationID: "root", SessionID: rootID}
+				detached := &contract.ElicitationRequestEvent{ElicitationID: "job", SessionID: "job-session"}
 				_, _ = m.Update(queuedRuntimeDelivery(m, id, foreground))
 				_, _ = m.Update(queuedRuntimeDelivery(m, id, detached))
 				if hidden {
@@ -196,13 +196,13 @@ func TestAttentionRetirementUsesRootBoundary(t *testing.T) {
 				var event tea.Msg
 				switch boundary {
 				case "start":
-					event = runtime.StreamStarted(rootID, "root")
+					event = contract.StreamStarted(rootID, "root")
 				case "stop":
-					event = runtime.StreamStopped(rootID, "root", "normal")
+					event = contract.StreamStopped(rootID, "root", "normal")
 				case "cancel":
 					event = messages.StreamCancelledMsg{}
 				case "child-stop":
-					event = runtime.StreamStopped("child", "child", "normal")
+					event = contract.StreamStopped("child", "child", "normal")
 				}
 				_, _ = m.Update(queuedRuntimeDelivery(m, id, event))
 				if hidden {
@@ -225,9 +225,9 @@ func TestAttentionPageScopeRotatesBeforeReplacementStartup(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	id := m.supervisor.ActiveID()
-	old := queuedRuntimeDelivery(m, id, &runtime.SessionTitleEvent{Title: "old"})
+	old := queuedRuntimeDelivery(m, id, &contract.SessionTitleEvent{Title: "old"})
 	m.preparePageReplacement(id)
-	startup := queuedRuntimeDelivery(m, id, &runtime.SessionTitleEvent{Title: "replacement"})
+	startup := queuedRuntimeDelivery(m, id, &contract.SessionTitleEvent{Title: "replacement"})
 	m.application.ReplaceSession(t.Context(), session.New(session.WithWorkingDir("/initial")))
 	m.initSessionComponents(id, m.application, m.application.Session())
 	_, _ = m.Update(startup)
@@ -242,7 +242,7 @@ func TestUnloadedTabAppliesAttentionAtDelivery(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	id, err := m.supervisor.SpawnSession(t.Context(), "/unloaded")
 	require.NoError(t, err)
-	event := &runtime.ElicitationRequestEvent{ElicitationID: "pending"}
+	event := &contract.ElicitationRequestEvent{ElicitationID: "pending"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, id, event))
 	require.Nil(t, m.tabs[id].chatPage)
 	_, _, attention := m.tabs[id].state.Snapshot()
@@ -255,11 +255,11 @@ func TestCloseActiveTabRemovesOnlyItsAttention(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	firstID := m.supervisor.ActiveID()
-	first := &runtime.ElicitationRequestEvent{ElicitationID: "first"}
+	first := &contract.ElicitationRequestEvent{ElicitationID: "first"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, firstID, first))
 	_, _ = m.handleSpawnSession("/other")
 	otherID := m.supervisor.ActiveID()
-	_, _ = m.Update(queuedRuntimeDelivery(m, otherID, &runtime.ElicitationRequestEvent{ElicitationID: "other"}))
+	_, _ = m.Update(queuedRuntimeDelivery(m, otherID, &contract.ElicitationRequestEvent{ElicitationID: "other"}))
 	_, cmd := m.handleCloseTab(otherID)
 	assert.Equal(t, firstID, m.supervisor.ActiveID())
 	assert.Same(t, first, m.dialogMgr.TopBackgroundEvent())

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chattypes "github.com/docker/docker-agent/pkg/chat"
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
@@ -30,15 +30,15 @@ func TestTokenUsageWithoutSidebarReusesRootView(t *testing.T) {
 				root.activeTab.state = root.supervisor.GetRunner("profile").State
 				page := &deferredRenderPage{Page: root.activeTab.chatPage}
 				root.activeTab.chatPage = page
-				_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+				_, _ = root.Update(contract.StreamStarted("profile", "root"))
 				before := root.View()
 				require.NotNil(t, before.ProgressBar)
 				views := page.views
 
 				for i := range 1100 {
-					var msg tea.Msg = agentruntime.NewTokenUsageEvent("profile", "root", &agentruntime.Usage{
+					var msg tea.Msg = contract.NewTokenUsageEvent("profile", "root", &contract.Usage{
 						InputTokens: int64(i + 1), OutputTokens: int64(i + 2), Cost: float64(i + 1),
-						LastMessage: &agentruntime.MessageUsage{Model: "test-model", Cost: 1, Usage: chattypes.Usage{InputTokens: 1}},
+						LastMessage: &contract.MessageUsage{Model: "test-model", Cost: 1, Usage: chattypes.Usage{InputTokens: 1}},
 					})
 					if routed {
 						msg = messages.RoutedMsg{SessionID: "profile", Inner: msg}
@@ -56,8 +56,8 @@ func TestTokenUsageWithoutSidebarReusesRootView(t *testing.T) {
 				require.True(t, ok)
 				require.InDelta(t, 1100.0, cost, 0)
 
-				_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "FINAL-RESPONSE-AFTER-USAGE", "answer"))
-				_, _ = root.Update(agentruntime.StreamStopped("profile", "root", "normal"))
+				_, _ = root.Update(contract.AgentChoice("root", "profile", "FINAL-RESPONSE-AFTER-USAGE", "answer"))
+				_, _ = root.Update(contract.StreamStopped("profile", "root", "normal"))
 				require.False(t, root.activeTab.chatPage.IsWorking())
 				after := root.View()
 				require.Nil(t, after.ProgressBar)
@@ -80,9 +80,9 @@ func TestTokenUsageRefreshesVisibleUsage(t *testing.T) {
 				root.handleWindowResize(120, 40)
 			}
 			before := root.View()
-			_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.NewTokenUsageEvent("profile", "root", &agentruntime.Usage{
+			_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.NewTokenUsageEvent("profile", "root", &contract.Usage{
 				InputTokens: 100, OutputTokens: 20, ContextLength: 120, ContextLimit: 1000, Cost: 0.25,
-				LastMessage: &agentruntime.MessageUsage{Model: "test-model", Cost: 0.25, Usage: chattypes.Usage{InputTokens: 100, OutputTokens: 20}},
+				LastMessage: &contract.MessageUsage{Model: "test-model", Cost: 0.25, Usage: chattypes.Usage{InputTokens: 100, OutputTokens: 20}},
 			})})
 			require.False(t, root.viewCacheValid, "visible accounting must refresh")
 			after := root.View().Content
@@ -94,8 +94,8 @@ func TestTokenUsageRefreshesVisibleUsage(t *testing.T) {
 
 func TestTokenUsagePreservesPendingVisualChanges(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
-	_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "PENDING-CONTENT"))
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.NewTokenUsageEvent("profile", "root", &agentruntime.Usage{})})
+	_, _ = root.Update(contract.AgentChoice("root", "profile", "PENDING-CONTENT"))
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.NewTokenUsageEvent("profile", "root", &contract.Usage{})})
 	require.False(t, root.viewCacheValid)
 	require.Contains(t, ansi.Strip(root.View().Content), "PENDING-CONTENT")
 }

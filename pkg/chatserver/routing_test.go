@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -66,7 +67,7 @@ type stubJudge struct{ result *evaluator.Result }
 
 func (j stubJudge) Evaluate(context.Context, any) (*evaluator.Result, error) { return j.result, nil }
 
-func routedChatRuntime(t *testing.T) (runtime.Runtime, map[string]*replyModel) {
+func routedChatRuntime(t *testing.T) (contract.Runtime, map[string]*replyModel) {
 	t.Helper()
 	models := map[string]*replyModel{
 		"root":  {reply: "root answer"},

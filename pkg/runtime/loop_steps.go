@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelerrors"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -51,7 +52,7 @@ func (r *LocalRuntime) enforceMaxIterations(
 	a *agent.Agent,
 	iteration int,
 	runtimeMaxIterations int,
-	events EventSink,
+	events contract.EventSink,
 ) (newMax int, decision iterationDecision) {
 	if runtimeMaxIterations <= 0 || iteration < runtimeMaxIterations {
 		return runtimeMaxIterations, iterationContinue
@@ -66,7 +67,7 @@ func (r *LocalRuntime) enforceMaxIterations(
 	if !sess.NonInteractive && ctx.Err() == nil {
 		r.armResume()
 	}
-	events.Emit(MaxIterationsReached(runtimeMaxIterations))
+	events.Emit(contract.MaxIterationsReached(runtimeMaxIterations))
 
 	maxIterMsg := fmt.Sprintf("Maximum iterations reached (%d)", runtimeMaxIterations)
 	r.notifyMaxIterations(ctx, a, sess.ID, maxIterMsg)
@@ -166,7 +167,7 @@ func (r *LocalRuntime) handleStreamError(
 	contextLimit int64,
 	overflowCompactions *int,
 	streamSpan trace.Span,
-	events EventSink,
+	events contract.EventSink,
 ) streamErrorOutcome {
 	// Treat context cancellation as a graceful stop.
 	if errors.Is(err, context.Canceled) {
@@ -190,7 +191,7 @@ func (r *LocalRuntime) handleStreamError(
 			"context_limit", contextLimit,
 			"attempt", *overflowCompactions,
 		)
-		events.Emit(Warning(
+		events.Emit(contract.Warning(
 			"The conversation has exceeded the model's context window. Automatically compacting the conversation history...",
 			a.Name(),
 		))
@@ -203,7 +204,7 @@ func (r *LocalRuntime) handleStreamError(
 	slog.ErrorContext(ctx, "All models failed", "agent", a.Name(), "error", err)
 	r.telemetry.RecordError(ctx, err.Error())
 	errMsg := modelerrors.FormatError(err)
-	events.Emit(ErrorWithCodeForSession(sess.ID, classifyErrorCode(err), errMsg))
+	events.Emit(contract.ErrorWithCodeForSession(sess.ID, classifyErrorCode(err), errMsg))
 	r.notifyError(ctx, a, sess.ID, errMsg)
 	return streamErrorFatal
 }
@@ -219,15 +220,15 @@ func (r *LocalRuntime) handleStreamError(
 func classifyErrorCode(err error) string {
 	switch modelerrors.OverflowKindOf(err) {
 	case modelerrors.OverflowKindWire:
-		return ErrorCodeRequestTooLarge
+		return contract.ErrorCodeRequestTooLarge
 	case modelerrors.OverflowKindMedia:
-		return ErrorCodeMediaTooLarge
+		return contract.ErrorCodeMediaTooLarge
 	case modelerrors.OverflowKindTokens:
-		return ErrorCodeContextExceeded
+		return contract.ErrorCodeContextExceeded
 	}
 	_, rateLimited, _ := modelerrors.ClassifyModelError(err)
 	if rateLimited {
-		return ErrorCodeRateLimited
+		return contract.ErrorCodeRateLimited
 	}
-	return ErrorCodeModelError
+	return contract.ErrorCodeModelError
 }

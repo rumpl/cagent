@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 type eventGenerationKey struct{}
@@ -28,7 +28,7 @@ func (a *App) RetireEvents() {
 	if retire, ok := a.runtime.(interface{ RetireBackgroundEvents() }); ok {
 		retire.RetireBackgroundEvents()
 		ctx := a.eventContext(a.ctx())
-		a.runtime.OnBackgroundEvent(func(event runtime.Event) { a.sendEvent(ctx, event) })
+		a.runtime.OnBackgroundEvent(func(event contract.Event) { a.sendEvent(ctx, event) })
 	}
 }
 

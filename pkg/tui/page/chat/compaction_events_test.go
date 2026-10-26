@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -17,13 +17,13 @@ import (
 )
 
 // compactionEvent builds a completed compaction event for the given session.
-func compactionEvent(sessionID, outcome string) *runtime.SessionCompactionEvent {
-	return &runtime.SessionCompactionEvent{
+func compactionEvent(sessionID, outcome string) *contract.SessionCompactionEvent {
+	return &contract.SessionCompactionEvent{
 		Type:         "session_compaction",
 		SessionID:    sessionID,
 		Status:       "completed",
 		Outcome:      outcome,
-		AgentContext: runtime.AgentContext{AgentName: "worker"},
+		AgentContext: contract.AgentContext{AgentName: "worker"},
 	}
 }
 
@@ -42,7 +42,7 @@ func TestSubSessionCompactionKeepsRootWorkState(t *testing.T) {
 	p.working = true
 	p.messageQueue = []queuedMessage{{content: "queued while working"}}
 
-	handled, _ := p.handleRuntimeEvent(compactionEvent("sub-session-1", runtime.CompactionOutcomeApplied))
+	handled, _ := p.handleRuntimeEvent(compactionEvent("sub-session-1", contract.CompactionOutcomeApplied))
 	require.True(t, handled)
 
 	assert.True(t, p.working, "a sub-session compaction must not mark the root chat idle")
@@ -66,7 +66,7 @@ func TestStandaloneRootCompactionResetsWorkState(t *testing.T) {
 	p.working = true
 	require.Zero(t, p.streamDepth, "explicit /compact runs outside any stream")
 
-	handled, _ := p.handleRuntimeEvent(compactionEvent(sess.ID, runtime.CompactionOutcomeApplied))
+	handled, _ := p.handleRuntimeEvent(compactionEvent(sess.ID, contract.CompactionOutcomeApplied))
 	require.True(t, handled)
 
 	assert.False(t, p.working, "the standalone compaction completion marks the chat idle")
@@ -82,9 +82,9 @@ func TestAutoRootCompactionMidStreamKeepsWorkState(t *testing.T) {
 	t.Parallel()
 
 	outcomes := []string{
-		runtime.CompactionOutcomeApplied,
-		runtime.CompactionOutcomeSkipped,
-		runtime.CompactionOutcomeFailed,
+		contract.CompactionOutcomeApplied,
+		contract.CompactionOutcomeSkipped,
+		contract.CompactionOutcomeFailed,
 	}
 	for _, outcome := range outcomes {
 		t.Run(outcome, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestAutoRootCompactionMidStreamKeepsWorkState(t *testing.T) {
 			p.msgCancel = cancel
 			p.messageQueue = []queuedMessage{{content: "queued while working"}}
 
-			handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(sess.ID, "root"))
+			handled, _ := p.handleRuntimeEvent(contract.StreamStarted(sess.ID, "root"))
 			require.True(t, handled)
 			require.Equal(t, 1, p.streamDepth)
 			require.True(t, p.working)
@@ -127,13 +127,13 @@ func TestStreamStoppedAfterMidStreamCompactionCleansUp(t *testing.T) {
 	defer cancel()
 	p.msgCancel = cancel
 
-	handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(sess.ID, "root"))
+	handled, _ := p.handleRuntimeEvent(contract.StreamStarted(sess.ID, "root"))
 	require.True(t, handled)
-	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, runtime.CompactionOutcomeApplied))
+	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, contract.CompactionOutcomeApplied))
 	require.True(t, handled)
 	require.True(t, p.working)
 
-	handled, cmd := p.handleRuntimeEvent(runtime.StreamStopped(sess.ID, "root", "normal"))
+	handled, cmd := p.handleRuntimeEvent(contract.StreamStopped(sess.ID, "root", "normal"))
 	require.True(t, handled)
 	require.NotNil(t, cmd)
 
@@ -157,13 +157,13 @@ func TestStreamStoppedAfterMidStreamCompactionProcessesQueue(t *testing.T) {
 	p.msgCancel = cancel
 	p.messageQueue = []queuedMessage{{content: "queued while working"}}
 
-	handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(sess.ID, "root"))
+	handled, _ := p.handleRuntimeEvent(contract.StreamStarted(sess.ID, "root"))
 	require.True(t, handled)
-	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, runtime.CompactionOutcomeApplied))
+	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, contract.CompactionOutcomeApplied))
 	require.True(t, handled)
 	require.Len(t, p.messageQueue, 1, "the compaction must leave the queue to StreamStopped")
 
-	handled, cmd := p.handleRuntimeEvent(runtime.StreamStopped(sess.ID, "root", "normal"))
+	handled, cmd := p.handleRuntimeEvent(contract.StreamStopped(sess.ID, "root", "normal"))
 	require.True(t, handled)
 	require.NotNil(t, cmd)
 
@@ -188,9 +188,9 @@ func TestEscCancelsStreamAfterMidStreamCompaction(t *testing.T) {
 	defer cancel()
 	p.msgCancel = cancel
 
-	handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(sess.ID, "root"))
+	handled, _ := p.handleRuntimeEvent(contract.StreamStarted(sess.ID, "root"))
 	require.True(t, handled)
-	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, runtime.CompactionOutcomeApplied))
+	handled, _ = p.handleRuntimeEvent(compactionEvent(sess.ID, contract.CompactionOutcomeApplied))
 	require.True(t, handled)
 
 	_, cmd := p.handleKeyPress(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -209,10 +209,10 @@ func TestEscCancelsStreamAfterMidStreamCompaction(t *testing.T) {
 func TestSubSessionCompactionNotice(t *testing.T) {
 	t.Parallel()
 
-	assert.Nil(t, subSessionCompactionNotice(&runtime.SessionCompactionEvent{Status: "started"}),
+	assert.Nil(t, subSessionCompactionNotice(&contract.SessionCompactionEvent{Status: "started"}),
 		"the request was already announced; started stays silent")
 
-	for _, outcome := range []string{"", runtime.CompactionOutcomeApplied, runtime.CompactionOutcomeSkipped, runtime.CompactionOutcomeFailed} {
+	for _, outcome := range []string{"", contract.CompactionOutcomeApplied, contract.CompactionOutcomeSkipped, contract.CompactionOutcomeFailed} {
 		assert.NotNil(t, subSessionCompactionNotice(compactionEvent("sub-1", outcome)),
 			"outcome %q must produce user feedback", outcome)
 	}

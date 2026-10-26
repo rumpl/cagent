@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -73,7 +73,7 @@ func TestBreakMessageGroupSeparatesNewToolsButAllowsUpdates(t *testing.T) {
 	m.AddOrUpdateToolCall("root", oldCall, tools.Tool{}, types.ToolStatusPending)
 	m.BreakMessageGroup()
 	m.AddOrUpdateToolCall("root", oldCall, tools.Tool{}, types.ToolStatusRunning)
-	m.AddToolResult(&runtime.ToolCallResponseEvent{ToolCallID: "old", Response: "done"}, types.ToolStatusCompleted)
+	m.AddToolResult(&contract.ToolCallResponseEvent{ToolCallID: "old", Response: "done"}, types.ToolStatusCompleted)
 	m.AddOrUpdateToolCall("root", tools.ToolCall{ID: "new", Function: tools.FunctionCall{Name: "shell"}}, tools.Tool{}, types.ToolStatusPending)
 
 	require.Len(t, m.messages, 2)

@@ -11,7 +11,8 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/artifacts"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	tuiimage "github.com/docker/docker-agent/pkg/tui/image"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -39,7 +40,7 @@ var generatedMediaIDs atomic.Uint64
 // the resolver needs.
 type generatedMediaRequest struct {
 	id       uint64
-	ref      runtime.GeneratedFileRef
+	ref      artifacts.GeneratedFileRef
 	name     string
 	mimeType string
 }
@@ -54,7 +55,7 @@ type generatedMediaResolvedMsg struct {
 // produced: the run loop announces the persisted assistant message via
 // MessageAddedEvent; without this handler the file sits in the workspace
 // with nothing visible in the chat.
-func (p *chatPage) handleMessageAdded(msg *runtime.MessageAddedEvent) tea.Cmd {
+func (p *chatPage) handleMessageAdded(msg *contract.MessageAddedEvent) tea.Cmd {
 	if msg.Message == nil {
 		// The payload is process-local (json:"-"): events decoded from a
 		// remote runtime carry only IDs. Nothing to resolve or render.
@@ -178,7 +179,7 @@ func (p *chatPage) generatedImageMedia(sessionID, messageID string, parts []chat
 		if src.ArtifactRoot == chat.ArtifactRootWorkspace && !seen {
 			requests = append(requests, generatedMediaRequest{
 				id: item.ID,
-				ref: runtime.GeneratedFileRef{
+				ref: artifacts.GeneratedFileRef{
 					OwnerSessionID: src.ArtifactOwnerSessionID,
 					Root:           src.ArtifactRoot,
 					Path:           src.ArtifactPath,

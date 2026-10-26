@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -74,14 +75,14 @@ func TestEmptyResponseRetainsUsage(t *testing.T) {
 
 			sess := session.New(session.WithUserMessage("hi"), session.WithTitle("Empty response accounting"))
 			var message *session.Message
-			var lastUsage *Usage
+			var lastUsage *contract.Usage
 			for event := range rt.RunStream(t.Context(), sess) {
 				switch event := event.(type) {
-				case *ErrorEvent:
+				case *contract.ErrorEvent:
 					t.Fatalf("runtime error: %s", event.Error)
-				case *MessageAddedEvent:
+				case *contract.MessageAddedEvent:
 					message = event.Message
-				case *TokenUsageEvent:
+				case *contract.TokenUsageEvent:
 					lastUsage = event.Usage
 				}
 			}
@@ -140,8 +141,8 @@ func TestEmptyResponseWithoutUsageIsSkipped(t *testing.T) {
 	events := runSession(t, sess, &mockStream{})
 	assert.Len(t, sess.OwnMessages(), 1)
 	for _, event := range events {
-		assert.IsNotType(t, &MessageAddedEvent{}, event)
-		if event, ok := event.(*TokenUsageEvent); ok {
+		assert.IsNotType(t, &contract.MessageAddedEvent{}, event)
+		if event, ok := event.(*contract.TokenUsageEvent); ok {
 			assert.Nil(t, event.Usage.LastMessage)
 			assert.True(t, event.AssistantMessageEmpty, "empty completion is visible without token usage")
 		}
@@ -180,7 +181,7 @@ func TestDelegationRetainsOutputAfterBilledEmptyStop(t *testing.T) {
 				require.Empty(t, result.ErrMsg)
 				assert.Equal(t, "task result", result.Result)
 			} else {
-				result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(Event) {}), delegationRequest{
+				result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(contract.Event) {}), delegationRequest{
 					SubSessionConfig:   SubSessionConfig{AgentName: "worker", Task: "do the task", ToolsApproved: true},
 					SwitchCurrentAgent: true,
 				})

@@ -15,31 +15,18 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 )
 
-// ModelChoice is a model available for selection in the model picker.
-type ModelChoice = modelcatalog.ModelChoice
-
-// SessionModelsResponse is the session model-picker response.
-type SessionModelsResponse = modelcatalog.SessionModelsResponse
-
-// ModelSwitcherConfig holds model switching and discovery configuration.
-type ModelSwitcherConfig = modelcatalog.Config
-
-// DecorateModelChoices marks the active model and adds custom history entries.
-func DecorateModelChoices(models []ModelChoice, currentRef string, customRefs []string) []ModelChoice {
-	return modelcatalog.DecorateModelChoices(models, currentRef, customRefs)
-}
-
-// SetAgentModel implements [Runtime.SetAgentModel] for LocalRuntime.
+// SetAgentModel implements [contract.Runtime.SetAgentModel] for LocalRuntime.
 func (r *LocalRuntime) SetAgentModel(ctx context.Context, agentName, modelRef string) error {
 	_, err := r.setAgentModelInternal(ctx, agentName, modelRef)
 	return err
 }
 
 // SupportsModelSwitching reports whether the runtime was built with a
-// [ModelSwitcherConfig], i.e. whether [SetAgentModel] / [AvailableModels]
+// [modelcatalog.Config], i.e. whether [SetAgentModel] / [AvailableModels]
 // will return real data instead of the no-config empty path.
 func (r *LocalRuntime) SupportsModelSwitching() bool {
 	return r.modelSwitcherCfg != nil
@@ -54,12 +41,12 @@ func (r *LocalRuntime) RefreshModelsCatalog(ctx context.Context) error {
 		Refresh(ctx context.Context) error
 	})
 	if !ok {
-		return ErrUnsupported
+		return contract.ErrUnsupported
 	}
 	return refresher.Refresh(ctx)
 }
 
-// CycleAgentThinkingLevel implements [Runtime.CycleAgentThinkingLevel] for
+// CycleAgentThinkingLevel implements [contract.Runtime.CycleAgentThinkingLevel] for
 // LocalRuntime. It reads the agent's current effective model, advances the
 // thinking-effort level by one step through the levels that specific model
 // supports (see [modelinfo.SupportedThinkingLevels]), re-creates the
@@ -72,7 +59,7 @@ func (r *LocalRuntime) CycleAgentThinkingLevel(ctx context.Context, agentName st
 	})
 }
 
-// SetAgentThinkingLevel implements [Runtime.SetAgentThinkingLevel] for
+// SetAgentThinkingLevel implements [contract.Runtime.SetAgentThinkingLevel] for
 // LocalRuntime. The requested level must be one the agent's current model
 // supports; otherwise an error listing the supported levels is returned.
 func (r *LocalRuntime) SetAgentThinkingLevel(ctx context.Context, agentName string, level effort.Level) (effort.Level, error) {
@@ -107,7 +94,7 @@ func (r *LocalRuntime) resolveThinkingLevelsForModels(ctx context.Context, model
 
 	baseCfg := models[0].BaseConfig().ModelConfig
 	if !r.modelSupportsThinking(ctx, &baseCfg) {
-		return nil, "", fmt.Errorf("model %q does not support thinking levels: %w", baseCfg.DisplayOrModel(), ErrUnsupported)
+		return nil, "", fmt.Errorf("model %q does not support thinking levels: %w", baseCfg.DisplayOrModel(), contract.ErrUnsupported)
 	}
 
 	return modelinfo.SupportedThinkingLevels(baseCfg.Provider, baseCfg.Model), currentThinkingLevel(&baseCfg), nil
@@ -128,7 +115,7 @@ func (r *LocalRuntime) resolveThinkingLevelsForModels(ctx context.Context, model
 // override and validate against one model while applying to another).
 func (r *LocalRuntime) resolveAgentThinkingLevels(ctx context.Context, agentName string) ([]effort.Level, effort.Level, error) {
 	if r.modelSwitcherCfg == nil {
-		return nil, "", ErrUnsupported
+		return nil, "", contract.ErrUnsupported
 	}
 
 	a, err := r.team.Agent(agentName)
@@ -167,7 +154,7 @@ func (r *LocalRuntime) CurrentAgentThinkingLevels(ctx context.Context) []effort.
 // override could be silently cleared while still reporting success.
 func (r *LocalRuntime) applyAgentThinkingLevel(ctx context.Context, agentName string, pick func(supported []effort.Level, current effort.Level) (effort.Level, error)) (effort.Level, error) {
 	if r.modelSwitcherCfg == nil {
-		return "", ErrUnsupported
+		return "", contract.ErrUnsupported
 	}
 
 	a, err := r.team.Agent(agentName)
@@ -469,7 +456,7 @@ func (r *LocalRuntime) resolveModelRefs(ctx context.Context, commaSeparatedRefs 
 }
 
 // AvailableModels returns configured and discovered choices for the active agent.
-func (r *LocalRuntime) AvailableModels(ctx context.Context) []ModelChoice {
+func (r *LocalRuntime) AvailableModels(ctx context.Context) []modelcatalog.ModelChoice {
 	if r.modelSwitcherCfg == nil {
 		return nil
 	}
@@ -526,7 +513,7 @@ func (r *LocalRuntime) createProviderFromConfig(ctx context.Context, cfg *latest
 }
 
 // WithModelSwitcherConfig sets the model switcher configuration for the runtime.
-func WithModelSwitcherConfig(cfg *ModelSwitcherConfig) Opt {
+func WithModelSwitcherConfig(cfg *modelcatalog.Config) Opt {
 	return func(r *LocalRuntime) {
 		if cfg != nil && cfg.ProviderRegistry == nil {
 			cfgCopy := *cfg

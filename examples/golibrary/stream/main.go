@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/openai"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -56,17 +57,17 @@ func run(ctx context.Context) error {
 	events := rt.RunStream(ctx, sess)
 	for event := range events {
 		switch e := event.(type) {
-		case *runtime.AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			log.Printf("Agent %s: %s\n", e.AgentName, e.Content)
-		case *runtime.StreamStartedEvent:
+		case *contract.StreamStartedEvent:
 			log.Println("Stream started for session")
-		case *runtime.StreamStoppedEvent:
+		case *contract.StreamStoppedEvent:
 			log.Println("Stream stopped for session")
-		case *runtime.ToolCallConfirmationEvent:
+		case *contract.ToolCallConfirmationEvent:
 			rt.Resume(ctx, runtime.ResumeRequest{Type: runtime.ResumeTypeApproveAutonomous})
-		case *runtime.ToolCallEvent:
+		case *contract.ToolCallEvent:
 			log.Printf("Tool call: %s\n", e.ToolCall.Function.Name)
-		case *runtime.ToolCallResponseEvent:
+		case *contract.ToolCallResponseEvent:
 			log.Printf("Tool call response: %s\n", e.Response)
 			// etc...
 		}

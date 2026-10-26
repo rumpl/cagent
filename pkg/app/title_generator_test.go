@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 )
@@ -54,7 +54,7 @@ func TestTitleGeneratorContract(t *testing.T) {
 				assert.Equal(t, sess.ID, gen.id)
 				assert.Equal(t, []string{"hello"}, gen.messages)
 				assert.False(t, app.IsTitleGenerating())
-				event, ok := unwrappedTestEvent(<-app.events).(*runtime.SessionTitleEvent)
+				event, ok := unwrappedTestEvent(<-app.events).(*contract.SessionTitleEvent)
 				require.True(t, ok)
 				assert.Equal(t, sess.ID, event.SessionID)
 				want := tc.title

@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 var executableCommand = regexp.MustCompile("!([a-zA-Z0-9_]+\\(|`)")
@@ -27,7 +28,7 @@ func commandInput(hint string) *acp.AvailableCommandInput {
 	return &acp.AvailableCommandInput{Unstructured: &acp.UnstructuredCommandInput{Hint: hint}}
 }
 
-func availableCommands(ctx context.Context, rt runtime.Runtime) []acp.AvailableCommand {
+func availableCommands(ctx context.Context, rt contract.Runtime) []acp.AvailableCommand {
 	commands := []acp.AvailableCommand{
 		{Name: "compact", Description: "Summarize and compact session history", Input: commandInput("Optional compaction instructions")},
 		{Name: "usage", Description: "Display current context token usage and session cost"},
@@ -144,7 +145,7 @@ func (a *Agent) showUsage(ctx context.Context, s *Session) error {
 	return a.sendUpdate(ctx, s.id, acp.UpdateAgentMessageText(fmt.Sprintf("Current context: %d tokens (%s). Session cost: $%.6f USD.", usage.ContextLength, capacity, usage.Cost)))
 }
 
-func (a *Agent) emitUsage(ctx context.Context, sid string, usage *runtime.Usage) error {
+func (a *Agent) emitUsage(ctx context.Context, sid string, usage *contract.Usage) error {
 	if usage == nil || usage.ContextLimit <= 0 {
 		return nil
 	}
@@ -160,30 +161,30 @@ func (a *Agent) compactSession(ctx context.Context, s *Session, instruction stri
 	defer cancel()
 	var mu sync.Mutex
 	var resultErr error
-	outcome := runtime.CompactionOutcomeSkipped
-	s.rt.Summarize(compactCtx, s.sess, instruction, runtime.EventSinkFunc(func(event runtime.Event) {
+	outcome := contract.CompactionOutcomeSkipped
+	s.rt.Summarize(compactCtx, s.sess, instruction, runtime.EventSinkFunc(func(event contract.Event) {
 		mu.Lock()
 		defer mu.Unlock()
-		var usage *runtime.Usage
-		if e, ok := event.(*runtime.TokenUsageEvent); ok {
+		var usage *contract.Usage
+		if e, ok := event.(*contract.TokenUsageEvent); ok {
 			usage = s.recordUsage(e)
 		}
 		if resultErr != nil || compactCtx.Err() != nil {
 			return
 		}
-		if scoped, ok := event.(runtime.SessionScoped); ok && scoped.GetSessionID() != s.sess.ID {
+		if scoped, ok := event.(contract.SessionScoped); ok && scoped.GetSessionID() != s.sess.ID {
 			return
 		}
 		switch e := event.(type) {
-		case *runtime.ErrorEvent:
+		case *contract.ErrorEvent:
 			resultErr = runtimePromptError(s.sess.ID, "compaction_failed", e.Error)
-		case *runtime.SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" {
 				outcome = e.Outcome
 			}
-		case *runtime.TokenUsageEvent:
+		case *contract.TokenUsageEvent:
 			resultErr = a.emitUsage(compactCtx, s.id, usage)
-		case *runtime.WarningEvent:
+		case *contract.WarningEvent:
 			resultErr = a.sendUpdate(compactCtx, s.id, acp.UpdateAgentMessageText("Warning: "+e.Message))
 		}
 		if resultErr != nil {
@@ -200,9 +201,9 @@ func (a *Agent) compactSession(ctx context.Context, s *Session, instruction stri
 	}
 	message := "Compaction skipped."
 	switch outcome {
-	case runtime.CompactionOutcomeApplied, "":
+	case contract.CompactionOutcomeApplied, "":
 		message = "Session history compacted."
-	case runtime.CompactionOutcomeFailed:
+	case contract.CompactionOutcomeFailed:
 		return runtimePromptError(s.sess.ID, "compaction_failed", "Session compaction failed")
 	}
 	return a.sendUpdate(ctx, s.id, acp.UpdateAgentMessageText(message))

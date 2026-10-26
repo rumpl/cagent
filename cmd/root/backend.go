@@ -12,6 +12,8 @@ import (
 	"github.com/docker/docker-agent/pkg/config/sources"
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/remote"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -30,7 +32,7 @@ type backend interface {
 	LoadTeam(ctx context.Context, req runtime.LoadTeamRequest) (*teamloader.LoadResult, error)
 
 	CreateSessionRequest(workingDir string) runtime.CreateSessionRequest
-	CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error)
+	CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (contract.Runtime, *session.Session, func(), error)
 
 	// ResumeWorkingDir returns the working directory stored on the session
 	// this run would resume (--session naming an existing session), so a
@@ -40,7 +42,7 @@ type backend interface {
 	// it has no stored working directory, or that directory no longer exists.
 	ResumeWorkingDir(ctx context.Context) (dir string, ok bool)
 
-	Spawner(rt runtime.Runtime) tui.SessionSpawner
+	Spawner(rt contract.Runtime) tui.SessionSpawner
 
 	// Close releases backend-owned resources (e.g., the shared session
 	// store). It is called once when the embedder is shutting down,
@@ -109,7 +111,7 @@ func (b *localBackend) sessionStore(ctx context.Context, req runtime.CreateSessi
 	return b.store, b.storeErr
 }
 
-func (b *localBackend) CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error) {
+func (b *localBackend) CreateSession(ctx context.Context, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (contract.Runtime, *session.Session, func(), error) {
 	store, err := b.sessionStore(ctx, req)
 	if err != nil {
 		stopToolSets(ctx, loaded.Team)
@@ -134,7 +136,7 @@ func (b *localBackend) CreateSession(ctx context.Context, loaded *teamloader.Loa
 	return rt, sess, cleanup, nil
 }
 
-func (b *localBackend) Spawner(rt runtime.Runtime) tui.SessionSpawner {
+func (b *localBackend) Spawner(rt contract.Runtime) tui.SessionSpawner {
 	return b.flags.createSessionSpawner(b.agentSource, rt.SessionStore())
 }
 
@@ -206,9 +208,9 @@ func (b *remoteBackend) CreateSessionRequest(workingDir string) runtime.CreateSe
 	return b.flags.createSessionRequest(workingDir)
 }
 
-func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error) {
+func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadResult, req runtime.CreateSessionRequest) (contract.Runtime, *session.Session, func(), error) {
 	token := cmp.Or(b.flags.remoteAuthToken, os.Getenv("DOCKER_AGENT_REMOTE_AUTH_TOKEN"))
-	client, err := runtime.NewClient(b.flags.remoteAddress, runtime.WithAuthToken(token))
+	client, err := remote.NewClient(b.flags.remoteAddress, remote.WithAuthToken(token))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create remote client: %w", err)
 	}
@@ -226,9 +228,9 @@ func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadRes
 		return nil, nil, nil, err
 	}
 
-	rt, err := runtime.NewRemoteRuntime(client,
-		runtime.WithRemoteCurrentAgent(req.AgentName),
-		runtime.WithRemoteAgentFilename(b.agentFileName),
+	rt, err := remote.NewRuntime(client,
+		remote.WithRemoteCurrentAgent(req.AgentName),
+		remote.WithRemoteAgentFilename(b.agentFileName),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create remote runtime: %w", err)
@@ -244,7 +246,7 @@ func (b *remoteBackend) CreateSession(ctx context.Context, _ *teamloader.LoadRes
 	return rt, sess, cleanup, nil
 }
 
-func (b *remoteBackend) Spawner(runtime.Runtime) tui.SessionSpawner {
+func (b *remoteBackend) Spawner(contract.Runtime) tui.SessionSpawner {
 	return nil
 }
 

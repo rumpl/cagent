@@ -17,7 +17,9 @@ import (
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/jscommands"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -35,11 +37,11 @@ func TestMain(m *testing.M) {
 // mockRuntime implements runtime.Runtime for testing the CLI runner.
 // It emits pre-configured events from RunStream and records Resume calls.
 type mockRuntime struct {
-	events []runtime.Event
+	events []contract.Event
 	// runStreamFn, when set, replaces the default pre-buffered RunStream —
 	// used to model a live runtime that only makes progress while the
 	// consumer keeps draining.
-	runStreamFn func(context.Context, *session.Session) <-chan runtime.Event
+	runStreamFn func(context.Context, *session.Session) <-chan contract.Event
 
 	mu                    sync.Mutex
 	resumes               []runtime.ResumeRequest
@@ -52,7 +54,7 @@ type mockRuntimeWithOverrides struct {
 	*mockRuntime
 
 	setCurrentAgentFn  func(string) error
-	currentAgentInfoFn func(context.Context) runtime.CurrentAgentInfo
+	currentAgentInfoFn func(context.Context) contract.CurrentAgentInfo
 }
 
 func (m *mockRuntimeWithOverrides) SetCurrentAgent(ctx context.Context, name string) error {
@@ -62,7 +64,7 @@ func (m *mockRuntimeWithOverrides) SetCurrentAgent(ctx context.Context, name str
 	return m.mockRuntime.SetCurrentAgent(ctx, name)
 }
 
-func (m *mockRuntimeWithOverrides) CurrentAgentInfo(ctx context.Context) runtime.CurrentAgentInfo {
+func (m *mockRuntimeWithOverrides) CurrentAgentInfo(ctx context.Context) contract.CurrentAgentInfo {
 	if m.currentAgentInfoFn != nil {
 		return m.currentAgentInfoFn(ctx)
 	}
@@ -70,8 +72,8 @@ func (m *mockRuntimeWithOverrides) CurrentAgentInfo(ctx context.Context) runtime
 }
 
 func (m *mockRuntime) CurrentAgentName(context.Context) string { return "test" }
-func (m *mockRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{Name: "test"}
+func (m *mockRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{Name: "test"}
 }
 
 func (m *mockRuntime) SetCurrentAgent(context.Context, string) error { return nil }
@@ -80,10 +82,10 @@ func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) {
 
 func (m *mockRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
 
-func (m *mockRuntime) RestartToolset(context.Context, string) error                         { return nil }
-func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {}
-func (m *mockRuntime) EmitAgentInfo(context.Context, runtime.EventSink)                     {}
-func (m *mockRuntime) ResetStartupInfo()                                                    {}
+func (m *mockRuntime) RestartToolset(context.Context, string) error                          { return nil }
+func (m *mockRuntime) EmitStartupInfo(context.Context, *session.Session, contract.EventSink) {}
+func (m *mockRuntime) EmitAgentInfo(context.Context, contract.EventSink)                     {}
+func (m *mockRuntime) ResetStartupInfo()                                                     {}
 func (m *mockRuntime) Run(context.Context, *session.Session) ([]session.Message, error) {
 	return nil, nil
 }
@@ -96,13 +98,13 @@ func (m *mockRuntime) ResumeElicitation(_ context.Context, action tools.Elicitat
 	return nil
 }
 
-func (m *mockRuntime) SessionStore() session.Store                                            { return nil }
-func (m *mockRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {}
-func (m *mockRuntime) PermissionsInfo() *runtime.PermissionsInfo                              { return nil }
+func (m *mockRuntime) SessionStore() session.Store                                             { return nil }
+func (m *mockRuntime) Summarize(context.Context, *session.Session, string, contract.EventSink) {}
+func (m *mockRuntime) PermissionsInfo() *contract.PermissionsInfo                              { return nil }
 
 func (m *mockRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet { return nil }
 
-func (m *mockRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (m *mockRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -120,31 +122,31 @@ func (m *mockRuntime) TitleGenerator(context.Context) *sessiontitle.Generator { 
 
 func (m *mockRuntime) Close() error { return nil }
 
-func (m *mockRuntime) Steer(context.Context, runtime.QueuedMessage) error { return nil }
+func (m *mockRuntime) Steer(context.Context, contract.QueuedMessage) error { return nil }
 
-func (m *mockRuntime) FollowUp(context.Context, runtime.QueuedMessage) error { return nil }
+func (m *mockRuntime) FollowUp(context.Context, contract.QueuedMessage) error { return nil }
 
-func (m *mockRuntime) QueueStatus() runtime.QueueStatus { return runtime.QueueStatus{} }
+func (m *mockRuntime) QueueStatus() contract.QueueStatus { return contract.QueueStatus{} }
 
 func (m *mockRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
 
 func (m *mockRuntime) SetAgentModel(context.Context, string, string) error { return nil }
 
 func (m *mockRuntime) CycleAgentThinkingLevel(context.Context, string) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
 func (m *mockRuntime) SetAgentThinkingLevel(context.Context, string, effort.Level) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
-func (m *mockRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
+func (m *mockRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice { return nil }
 
-func (m *mockRuntime) SupportsModelSwitching() bool                                          { return false }
-func (m *mockRuntime) OnToolsChanged(func(runtime.Event))                                    {}
-func (m *mockRuntime) OnBackgroundEvent(func(runtime.Event))                                 {}
-func (m *mockRuntime) OnElicitationRequest(func(runtime.Event))                              {}
-func (m *mockRuntime) RegenerateTitle(context.Context, *session.Session, chan runtime.Event) {}
+func (m *mockRuntime) SupportsModelSwitching() bool                                           { return false }
+func (m *mockRuntime) OnToolsChanged(func(contract.Event))                                    {}
+func (m *mockRuntime) OnBackgroundEvent(func(contract.Event))                                 {}
+func (m *mockRuntime) OnElicitationRequest(func(contract.Event))                              {}
+func (m *mockRuntime) RegenerateTitle(context.Context, *session.Session, chan contract.Event) {}
 
 func (m *mockRuntime) Resume(_ context.Context, req runtime.ResumeRequest) {
 	m.mu.Lock()
@@ -152,11 +154,11 @@ func (m *mockRuntime) Resume(_ context.Context, req runtime.ResumeRequest) {
 	m.resumes = append(m.resumes, req)
 }
 
-func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
+func (m *mockRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
 	if m.runStreamFn != nil {
 		return m.runStreamFn(ctx, sess)
 	}
-	ch := make(chan runtime.Event, len(m.events))
+	ch := make(chan contract.Event, len(m.events))
 	for _, e := range m.events {
 		ch <- e
 	}
@@ -174,8 +176,8 @@ func (m *mockRuntime) getResumes() []runtime.ResumeRequest {
 	return result
 }
 
-func maxIterEvent(maxIter int) *runtime.MaxIterationsReachedEvent {
-	return &runtime.MaxIterationsReachedEvent{
+func maxIterEvent(maxIter int) *contract.MaxIterationsReachedEvent {
+	return &contract.MaxIterationsReachedEvent{
 		Type:          "max_iterations_reached",
 		MaxIterations: maxIter,
 	}
@@ -185,7 +187,7 @@ func TestMaxIterationsAutoApproveInYoloMode(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{maxIterEvent(60)},
+		events: []contract.Event{maxIterEvent(60)},
 	}
 
 	var buf bytes.Buffer
@@ -205,7 +207,7 @@ func TestMaxIterationsAutoApproveSafetyCap(t *testing.T) {
 	t.Parallel()
 
 	// Emit maxAutoExtensions+1 events to trigger the safety cap
-	events := make([]runtime.Event, maxAutoExtensions+1)
+	events := make([]contract.Event, maxAutoExtensions+1)
 	for i := range events {
 		events[i] = maxIterEvent(60 + i*10)
 	}
@@ -237,7 +239,7 @@ func TestMaxIterationsAutoApproveJSONMode(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{maxIterEvent(60)},
+		events: []contract.Event{maxIterEvent(60)},
 	}
 
 	var buf bytes.Buffer
@@ -257,7 +259,7 @@ func TestMaxIterationsRejectInJSONModeWithoutYolo(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{maxIterEvent(60)},
+		events: []contract.Event{maxIterEvent(60)},
 	}
 
 	var buf bytes.Buffer
@@ -281,8 +283,8 @@ func TestToolCallConfirmationRejectedInJSONModeUnderYolo(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{
-			&runtime.ToolCallConfirmationEvent{
+		events: []contract.Event{
+			&contract.ToolCallConfirmationEvent{
 				Type: "tool_call_confirmation",
 				ToolCall: tools.ToolCall{
 					ID:       "call-1",
@@ -309,8 +311,8 @@ func TestElicitationAutoDeclineInJSONMode(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{
-			&runtime.ElicitationRequestEvent{
+		events: []contract.Event{
+			&contract.ElicitationRequestEvent{
 				Type:    "elicitation_request",
 				Message: "Please authorize",
 				Meta:    map[string]any{"docker-agent/server_url": "https://example.com"},
@@ -335,7 +337,7 @@ func TestElicitationAutoDeclineInJSONMode(t *testing.T) {
 func TestMaxIterationsSafetyCapJSONMode(t *testing.T) {
 	t.Parallel()
 
-	events := make([]runtime.Event, maxAutoExtensions+1)
+	events := make([]contract.Event, maxAutoExtensions+1)
 	for i := range events {
 		events[i] = maxIterEvent(60 + i*10)
 	}
@@ -423,7 +425,7 @@ func TestPrepareUserMessage_AgentSwitching(t *testing.T) {
 			var setAgentCalled bool
 			var setAgentName string
 			rt := &mockRuntimeWithOverrides{
-				mockRuntime: &mockRuntime{events: []runtime.Event{}},
+				mockRuntime: &mockRuntime{events: []contract.Event{}},
 			}
 
 			// Override SetCurrentAgent to track calls and return the test error
@@ -434,7 +436,7 @@ func TestPrepareUserMessage_AgentSwitching(t *testing.T) {
 			}
 
 			// Override CurrentAgentInfo to return test commands
-			rt.currentAgentInfoFn = func(context.Context) runtime.CurrentAgentInfo {
+			rt.currentAgentInfoFn = func(context.Context) contract.CurrentAgentInfo {
 				commands := make(map[string]types.Command)
 				if tt.commandAgent != "" {
 					commands["plan"] = types.Command{
@@ -446,7 +448,7 @@ func TestPrepareUserMessage_AgentSwitching(t *testing.T) {
 						Instruction: "This is the test instruction",
 					}
 				}
-				return runtime.CurrentAgentInfo{
+				return contract.CurrentAgentInfo{
 					Name:     "test",
 					Commands: commands,
 				}
@@ -482,8 +484,8 @@ func TestPrepareUserMessage_EmptyMessageForAgentOnlyCommand(t *testing.T) {
 	rt := &mockRuntimeWithOverrides{
 		mockRuntime: &mockRuntime{},
 	}
-	rt.currentAgentInfoFn = func(context.Context) runtime.CurrentAgentInfo {
-		return runtime.CurrentAgentInfo{
+	rt.currentAgentInfoFn = func(context.Context) contract.CurrentAgentInfo {
+		return contract.CurrentAgentInfo{
 			Name: "test",
 			Commands: map[string]types.Command{
 				"plan": {Agent: "planner"}, // agent-only, no instruction
@@ -507,8 +509,8 @@ func TestPrepareUserMessage_CommandResolution(t *testing.T) {
 	rt := &mockRuntimeWithOverrides{
 		mockRuntime: &mockRuntime{},
 	}
-	rt.currentAgentInfoFn = func(context.Context) runtime.CurrentAgentInfo {
-		return runtime.CurrentAgentInfo{
+	rt.currentAgentInfoFn = func(context.Context) contract.CurrentAgentInfo {
+		return contract.CurrentAgentInfo{
 			Name: "test",
 			Commands: map[string]types.Command{
 				"fix": {
@@ -580,7 +582,7 @@ func TestRunPipedStdinStillWorks(t *testing.T) {
 	swapStdin(t, "hello agent\n")
 
 	rt := &mockRuntime{
-		events: []runtime.Event{&runtime.AgentChoiceEvent{Content: "4"}},
+		events: []contract.Event{&contract.AgentChoiceEvent{Content: "4"}},
 	}
 	var buf bytes.Buffer
 	sess := session.New()
@@ -596,7 +598,7 @@ func TestErrorEventReturnedNotPrinted(t *testing.T) {
 	t.Parallel()
 
 	rt := &mockRuntime{
-		events: []runtime.Event{runtime.Error("model failed: HTTP 404")},
+		events: []contract.Event{contract.Error("model failed: HTTP 404")},
 	}
 	var buf bytes.Buffer
 	sess := session.New()
@@ -621,14 +623,14 @@ func TestNonOAuthElicitationDeclinedAndStreamDrained(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drained := make(chan struct{})
 		rt := &mockRuntime{
-			runStreamFn: func(context.Context, *session.Session) <-chan runtime.Event {
-				ch := make(chan runtime.Event) // unbuffered: every send needs a live consumer
+			runStreamFn: func(context.Context, *session.Session) <-chan contract.Event {
+				ch := make(chan contract.Event) // unbuffered: every send needs a live consumer
 				go func() {
 					defer close(ch)
 					defer close(drained)
-					ch <- &runtime.ElicitationRequestEvent{Type: "elicitation_request", Message: "Choose a deployment region"}
-					ch <- runtime.Warning("The deployment choice was declined", "test")
-					ch <- runtime.AgentChoice("test", "sess", "Continuing without deployment.")
+					ch <- &contract.ElicitationRequestEvent{Type: "elicitation_request", Message: "Choose a deployment region"}
+					ch <- contract.Warning("The deployment choice was declined", "test")
+					ch <- contract.AgentChoice("test", "sess", "Continuing without deployment.")
 				}()
 				return ch
 			},

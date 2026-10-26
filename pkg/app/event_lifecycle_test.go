@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -35,7 +35,7 @@ func TestEventBusOwnerCancellation(t *testing.T) {
 				if subscribeFirst {
 					a.Start(ownerCtx)
 				}
-				a.sendEvent(t.Context(), runtime.SessionTitle(a.session.ID, "before close"))
+				a.sendEvent(t.Context(), contract.SessionTitle(a.session.ID, "before close"))
 				synctest.Wait()
 
 				cancelOwner()
@@ -48,7 +48,7 @@ func TestEventBusOwnerCancellation(t *testing.T) {
 				require.Empty(t, a.subs)
 				// Detached final events must not block after the bus has stopped.
 				for range cap(a.events) + 1 {
-					a.sendEvent(context.WithoutCancel(ownerCtx), runtime.StreamStopped(a.session.ID, "root", "canceled"))
+					a.sendEvent(context.WithoutCancel(ownerCtx), contract.StreamStopped(a.session.ID, "root", "canceled"))
 				}
 				// synctest also requires the throttler and fan-out goroutines to exit.
 			})
@@ -75,7 +75,7 @@ func TestEventBusSurvivesSubscriberCancellation(t *testing.T) {
 		received := make(chan tea.Msg, 1)
 		go a.SubscribeWith(t.Context(), func(msg tea.Msg) { received <- msg })
 		synctest.Wait()
-		want := runtime.SessionTitle(a.session.ID, "reconnected")
+		want := contract.SessionTitle(a.session.ID, "reconnected")
 		a.sendEvent(t.Context(), want)
 		synctest.Wait()
 		select {
@@ -97,12 +97,12 @@ func TestEventBusCancellationUnblocksProducer(t *testing.T) {
 		defer cancel()
 		a := New(ctx, &mockRuntime{}, session.New())
 		for range cap(a.events) {
-			a.events <- runtime.SessionTitle(a.session.ID, "full")
+			a.events <- contract.SessionTitle(a.session.ID, "full")
 		}
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			a.sendEvent(context.WithoutCancel(ctx), runtime.StreamStopped(a.session.ID, "root", "canceled"))
+			a.sendEvent(context.WithoutCancel(ctx), contract.StreamStopped(a.session.ID, "root", "canceled"))
 		}()
 		synctest.Wait()
 		cancel()
@@ -122,19 +122,19 @@ type teardownEventsRuntime struct {
 	drained chan struct{}
 }
 
-func (r *teardownEventsRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, sink runtime.EventSink) {
+func (r *teardownEventsRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, sink contract.EventSink) {
 	r.emit(ctx, sess, sink)
 }
 
-func (r *teardownEventsRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, sink runtime.EventSink) {
+func (r *teardownEventsRuntime) Summarize(ctx context.Context, sess *session.Session, _ string, sink contract.EventSink) {
 	r.emit(ctx, sess, sink)
 }
 
-func (r *teardownEventsRuntime) emit(ctx context.Context, sess *session.Session, sink runtime.EventSink) {
+func (r *teardownEventsRuntime) emit(ctx context.Context, sess *session.Session, sink contract.EventSink) {
 	close(r.started)
 	<-ctx.Done()
 	for range 256 {
-		sink.Emit(runtime.SessionTitle(sess.ID, "cleanup"))
+		sink.Emit(contract.SessionTitle(sess.ID, "cleanup"))
 	}
 	close(r.drained)
 }

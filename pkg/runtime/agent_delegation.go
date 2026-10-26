@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/inspection"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -318,20 +319,20 @@ func mergeExcludedTools(parent, child []string) []string {
 //
 // Use as `defer r.swapCurrentAgent(ctx, sessionID, from, to, evts)()` so the
 // swap takes effect immediately and the restore runs at function exit.
-func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, from, to *agent.Agent, evts EventSink) func() {
+func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, from, to *agent.Agent, evts contract.EventSink) func() {
 	// Restore the shared agent the conversation actually had, not the caller:
 	// a hook-routed caller runs on a session-local agent, and writing it back
 	// would replace the conversation's entry agent.
 	shared := r.currentAgentName()
-	evts.Emit(AgentSwitching(true, from.Name(), to.Name()))
+	evts.Emit(contract.AgentSwitching(true, from.Name(), to.Name()))
 	r.executeOnAgentSwitchHooks(ctx, from, sessionID, from.Name(), to.Name(), agentSwitchKindTransferTask)
 	r.setCurrentAgent(to.Name())
-	evts.Emit(AgentInfo(to.Name(), agentModelLabel(ctx, to), to.Description(), to.WelcomeMessage()))
+	evts.Emit(contract.AgentInfo(to.Name(), agentModelLabel(ctx, to), to.Description(), to.WelcomeMessage()))
 	return func() {
 		r.setCurrentAgent(cmp.Or(shared, from.Name()))
-		evts.Emit(AgentSwitching(false, to.Name(), from.Name()))
+		evts.Emit(contract.AgentSwitching(false, to.Name(), from.Name()))
 		r.executeOnAgentSwitchHooks(ctx, from, sessionID, to.Name(), from.Name(), agentSwitchKindTransferTaskReturn)
-		evts.Emit(AgentInfo(from.Name(), agentModelLabel(ctx, from), from.Description(), from.WelcomeMessage()))
+		evts.Emit(contract.AgentInfo(from.Name(), agentModelLabel(ctx, from), from.Description(), from.WelcomeMessage()))
 	}
 }
 
@@ -354,7 +355,7 @@ func (r *LocalRuntime) swapCurrentAgent(ctx context.Context, sessionID string, f
 // (if requested; downgraded to pinning the child when the parent session is
 // itself pinned), resolving the child agent, building the sub-session,
 // driving RunStream, and recording the sub-session on the parent.
-func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, callerAgent *agent.Agent, evts EventSink, req delegationRequest) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Session, callerAgent *agent.Agent, evts contract.EventSink, req delegationRequest) (*tools.ToolCallResult, error) {
 	span := trace.SpanFromContext(ctx)
 
 	// Retain the requesting agent for completion hooks, even if routing changed during preparation.
@@ -399,11 +400,11 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	var subSessionErr error
 	for event := range childEvents {
 		evts.Emit(event)
-		if budgetEvent, ok := event.(*BudgetExceededEvent); ok &&
+		if budgetEvent, ok := event.(*contract.BudgetExceededEvent); ok &&
 			req.directNativeTransfer && budgetEvent.SessionID == s.ID && subSessionErr == nil {
 			subSessionErr = errors.New(budgetEvent.Message)
 		}
-		if errEvent, ok := event.(*ErrorEvent); ok && subSessionErr == nil {
+		if errEvent, ok := event.(*contract.ErrorEvent); ok && subSessionErr == nil {
 			// Capture the first ErrorEvent but keep draining the channel so
 			// the sub-session's full transcript still streams through. The
 			// child's run loop may emit additional events (e.g. notifications,
@@ -419,7 +420,7 @@ func (r *LocalRuntime) runForwarding(ctx context.Context, parent *session.Sessio
 	// pipeline relies on SubSessionCompleted to write the sub-session's
 	// messages to the store; without this emission they are silently dropped.
 	parent.AddLiveSubSession(s)
-	evts.Emit(SubSessionCompleted(parent.ID, s, callerAgent.Name()))
+	evts.Emit(contract.SubSessionCompleted(parent.ID, s, callerAgent.Name()))
 
 	if subSessionErr == nil && ctx.Err() != nil {
 		subSessionErr = ctx.Err()
@@ -460,9 +461,9 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	}
 
 	s := newSubSession(parent, cfg, child)
-	r.emitBackgroundEvent(ctx, BackgroundAgentStatus(s.ID, cfg.AgentName, true))
+	r.emitBackgroundEvent(ctx, contract.BackgroundAgentStatus(s.ID, cfg.AgentName, true))
 	defer func() {
-		r.emitBackgroundEvent(context.WithoutCancel(ctx), BackgroundAgentStatus(s.ID, cfg.AgentName, false))
+		r.emitBackgroundEvent(context.WithoutCancel(ctx), contract.BackgroundAgentStatus(s.ID, cfg.AgentName, false))
 	}()
 
 	// subagent_stop fires after the background sub-session has fully
@@ -481,7 +482,7 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 		if ctx.Err() != nil {
 			break
 		}
-		if choice, ok := event.(*AgentChoiceEvent); ok && choice.Content != "" {
+		if choice, ok := event.(*contract.AgentChoiceEvent); ok && choice.Content != "" {
 			if onContent != nil {
 				onContent(choice.Content)
 			}
@@ -495,7 +496,7 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 		// delivery for the same request, which only a stateful App-side
 		// dedupe (since removed) papered over. This branch is intentionally
 		// absent; ElicitationRequestEvents seen here are simply ignored.
-		if errEvt, ok := event.(*ErrorEvent); ok {
+		if errEvt, ok := event.(*contract.ErrorEvent); ok {
 			errMsg = errEvt.Error
 			break
 		}
@@ -515,13 +516,13 @@ func (r *LocalRuntime) runCollecting(ctx context.Context, parent *session.Sessio
 	// sub-session row to the UI and clobber per-agent context accounting.
 	// Check that before resolving the context limit — the model lookup is
 	// pure overhead for a snapshot that is never emitted.
-	finalUsage := SessionUsage(s, 0, child.CompactionThreshold())
+	finalUsage := contract.SessionUsage(s, 0, child.CompactionThreshold())
 	usageCtx := context.WithoutCancel(ctx)
 	if finalUsage.ContextLength > 0 || finalUsage.Cost > 0 {
 		// usageCtx: the context-limit lookup must still resolve for a
 		// cancelled task.
 		finalUsage.ContextLimit = r.contextLimitForAgentModel(usageCtx, child, r.getEffectiveModelID(usageCtx, child))
-		r.emitBackgroundEvent(ctx, NewTokenUsageEvent(s.ID, cfg.AgentName, finalUsage))
+		r.emitBackgroundEvent(ctx, contract.NewTokenUsageEvent(s.ID, cfg.AgentName, finalUsage))
 	}
 
 	// Persist the sub-session unconditionally — the partial transcript is
@@ -686,7 +687,7 @@ func (r *LocalRuntime) RunAgent(ctx context.Context, params agenttool.RunParams)
 	}, params.OnContent)
 }
 
-func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, a *agent.Agent) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts contract.EventSink, a *agent.Agent) (*tools.ToolCallResult, error) {
 	var params struct {
 		Agent          string `json:"agent"`
 		Task           string `json:"task"`
@@ -835,9 +836,9 @@ func forcedHandoffNote(from string) string {
 }
 
 // Preserve accounting during cancellation drains, including nested children.
-func (r *LocalRuntime) forwardBackgroundUsage(ctx context.Context, event Event) {
+func (r *LocalRuntime) forwardBackgroundUsage(ctx context.Context, event contract.Event) {
 	switch event.(type) {
-	case *TokenUsageEvent, *EvaluationUsageEvent:
+	case *contract.TokenUsageEvent, *contract.EvaluationUsageEvent:
 		r.emitBackgroundEvent(ctx, event)
 	}
 }

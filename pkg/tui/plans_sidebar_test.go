@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/plans"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -73,7 +73,7 @@ func TestPlanSidebar_RefreshWithoutDialogs(t *testing.T) {
 
 	_, err := svc.SetStatus(t.Context(), plans.SetStatusRequest{Ref: plans.SharedRef(p.Name), Status: "awaiting-special-review", ExpectedVersion: p.Version})
 	require.NoError(t, err)
-	runPlanFlow(t, m, runtime.PlanChanged("shared", p.Name, "status", 2, ""))
+	runPlanFlow(t, m, contract.PlanChanged("shared", p.Name, "status", 2, ""))
 	assert.Equal(t, "awaiting-special-review", m.planSidebarData.Result.Plans[0].Status)
 }
 
@@ -311,7 +311,7 @@ func TestPlanSidebar_BackgroundEventsUpdateEveryPage(t *testing.T) {
 	m.activeTab = m.tabs[activeID]
 	msgs := runPlanFlow(t, m, messages.RoutedMsg{
 		SessionID: backgroundID,
-		Inner:     runtime.PlanChanged("shared", p.Name, "write", *p.Version, ""),
+		Inner:     contract.PlanChanged("shared", p.Name, "write", *p.Version, ""),
 	})
 	assert.True(t, hasMsg[timerMarkerMsg](msgs), "keep background tab work while refreshing")
 	assert.True(t, hasMsg[globalMarkerMsg](msgs), "keep existing global effects")

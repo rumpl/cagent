@@ -7,7 +7,7 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -16,9 +16,9 @@ func TestImageGenerationWarningPreservesTextAndPrintsAfterIt(t *testing.T) {
 
 	const warning = "The model returned text but no image for this image-generation request. Try rephrasing the request."
 	rt := &mockRuntime{
-		events: []runtime.Event{
-			runtime.AgentChoice("test", "sess", "Here's an image of Docker and its friends."),
-			runtime.Warning(warning, "test"),
+		events: []contract.Event{
+			contract.AgentChoice("test", "sess", "Here's an image of Docker and its friends."),
+			contract.Warning(warning, "test"),
 		},
 	}
 

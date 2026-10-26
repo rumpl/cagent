@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
 	"github.com/docker/docker-agent/pkg/tui/components/toolconfirm"
@@ -61,7 +62,7 @@ type ConfirmationSessionState interface {
 type toolConfirmationDialog struct {
 	common.BaseDialog
 
-	msg               *runtime.ToolCallConfirmationEvent
+	msg               *contract.ToolCallConfirmationEvent
 	keyMap            toolconfirm.KeyMap
 	sessionState      ConfirmationSessionState
 	scrollView        messages.Model
@@ -333,7 +334,7 @@ func (d *toolConfirmationDialog) renderMetadata(contentWidth int) string {
 }
 
 // NewToolConfirmationDialog creates a new tool confirmation dialog
-func NewToolConfirmationDialog(ar *animation.Runtime, msg *runtime.ToolCallConfirmationEvent, sessionState ConfirmationSessionState, opts ...messages.Option) common.Dialog {
+func NewToolConfirmationDialog(ar *animation.Runtime, msg *contract.ToolCallConfirmationEvent, sessionState ConfirmationSessionState, opts ...messages.Option) common.Dialog {
 	// Create scrollable view with minimal initial size (will be updated in SetSize)
 	scrollView := messages.NewScrollableView(ar, 1, 1, sessionState, opts...)
 

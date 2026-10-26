@@ -3,11 +3,11 @@ package acp
 import (
 	"math"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // recordUsage replaces cumulative costs; only the root owns the context gauge.
-func (s *Session) recordUsage(event *runtime.TokenUsageEvent) *runtime.Usage {
+func (s *Session) recordUsage(event *contract.TokenUsageEvent) *contract.Usage {
 	if event == nil || event.Usage == nil || event.SessionID == "" {
 		return nil
 	}
@@ -36,7 +36,7 @@ func (s *Session) recordUsage(event *runtime.TokenUsageEvent) *runtime.Usage {
 }
 
 // currentUsage refreshes root counters without a provider lookup.
-func (s *Session) currentUsage(agentName string) *runtime.Usage {
+func (s *Session) currentUsage(agentName string) *contract.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initUsageCosts()
@@ -44,7 +44,7 @@ func (s *Session) currentUsage(agentName string) *runtime.Usage {
 	if s.usageAgent != agentName {
 		limit = 0
 	}
-	usage := runtime.SessionUsage(s.sess, limit)
+	usage := contract.SessionUsage(s.sess, limit)
 	s.recordCost(s.sess.ID, usage.Cost)
 	usage.Cost = s.totalUsageCost()
 	return usage
@@ -54,7 +54,7 @@ func (s *Session) currentUsage(agentName string) *runtime.Usage {
 func (s *Session) initUsageCosts() {
 	if s.usageCosts == nil {
 		s.usageCosts = make(map[string]float64)
-		s.recordCost(s.sess.ID, runtime.SessionUsage(s.sess, 0).Cost)
+		s.recordCost(s.sess.ID, contract.SessionUsage(s.sess, 0).Cost)
 	}
 }
 
@@ -72,8 +72,8 @@ func (s *Session) recordCost(sid string, cost float64) {
 	}
 }
 
-func (s *Session) retainUsage(event runtime.Event) {
-	if usage, ok := event.(*runtime.TokenUsageEvent); ok {
+func (s *Session) retainUsage(event contract.Event) {
+	if usage, ok := event.(*contract.TokenUsageEvent); ok {
 		s.recordUsage(usage)
 	}
 }

@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // Session tracks a conversation independently of whether its UI is visible.
@@ -36,7 +36,7 @@ func (s *Session) Status() Status {
 func (s *Session) Apply(sessionID string, msg tea.Msg) {
 	root := func(id string) bool { return id == "" || id == sessionID }
 	switch ev := msg.(type) {
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		if s.canceled {
 			return
 		}
@@ -52,21 +52,21 @@ func (s *Session) Apply(sessionID string, msg tea.Msg) {
 			}
 			s.children[ev.SessionID] = true
 		}
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-			prompt, ok := msg.(*runtime.ElicitationRequestEvent)
+			prompt, ok := msg.(*contract.ElicitationRequestEvent)
 			return ok && prompt.SessionID == ev.SessionID
 		})
 		if !root(ev.SessionID) && (!s.streaming || ev.SessionID != s.foreground) {
 			return
 		}
 		s.Finish(sessionID, ev.Reason)
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		if root(ev.SessionID) {
 			s.Cancel(sessionID)
 			s.canceled = false
 		}
-	case *runtime.ErrorEvent:
+	case *contract.ErrorEvent:
 		if s.canceled {
 			return
 		}
@@ -76,19 +76,19 @@ func (s *Session) Apply(sessionID string, msg tea.Msg) {
 				s.status = Status{State: "error"}
 			}
 		}
-	case *runtime.ElicitationClosedEvent:
+	case *contract.ElicitationClosedEvent:
 		s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-			prompt, ok := msg.(*runtime.ElicitationRequestEvent)
+			prompt, ok := msg.(*contract.ElicitationRequestEvent)
 			return ok && prompt.ElicitationID == ev.ElicitationID
 		})
-	case *runtime.ToolCallConfirmationEvent, *runtime.MaxIterationsReachedEvent, *runtime.ElicitationRequestEvent:
+	case *contract.ToolCallConfirmationEvent, *contract.MaxIterationsReachedEvent, *contract.ElicitationRequestEvent:
 		s.pending = append(s.pending, msg)
-	case *runtime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-			ev2, ok := msg.(*runtime.ToolCallConfirmationEvent)
+			ev2, ok := msg.(*contract.ToolCallConfirmationEvent)
 			return ok && ev2.ToolCall.ID == ev.ToolCall.ID
 		})
-	case *runtime.SessionCompactionEvent:
+	case *contract.SessionCompactionEvent:
 		if !root(ev.SessionID) {
 			return
 		}
@@ -97,7 +97,7 @@ func (s *Session) Apply(sessionID string, msg tea.Msg) {
 				s.Start(sessionID)
 			}
 		} else if ev.Status == "completed" && !s.streaming {
-			if ev.Outcome == runtime.CompactionOutcomeFailed {
+			if ev.Outcome == contract.CompactionOutcomeFailed {
 				s.failed = true
 			}
 			s.Finish(sessionID, "normal")
@@ -140,7 +140,7 @@ func (s *Session) Acknowledge() {
 
 func (s *Session) retireForeground(sessionID string) {
 	s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-		ev, ok := msg.(*runtime.ElicitationRequestEvent)
+		ev, ok := msg.(*contract.ElicitationRequestEvent)
 		return !ok || ev.SessionID == "" || ev.SessionID == sessionID || ev.SessionID == s.foreground || s.children[ev.SessionID]
 	})
 	clear(s.children)
@@ -148,11 +148,11 @@ func (s *Session) retireForeground(sessionID string) {
 
 func promptStatus(msg tea.Msg) Status {
 	switch ev := msg.(type) {
-	case *runtime.ToolCallConfirmationEvent:
+	case *contract.ToolCallConfirmationEvent:
 		return Status{State: "blocked", Kind: "permission", Msg: "Approve tool execution"}
-	case *runtime.MaxIterationsReachedEvent:
+	case *contract.MaxIterationsReachedEvent:
 		return Status{State: "blocked", Kind: "question", Msg: "Continue after maximum iterations?"}
-	case *runtime.ElicitationRequestEvent:
+	case *contract.ElicitationRequestEvent:
 		if ev.Meta["docker-agent/type"] == "oauth_flow" {
 			return Status{State: "blocked", Kind: "auth", Msg: "Authentication required"}
 		}

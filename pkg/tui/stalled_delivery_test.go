@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
 )
@@ -18,10 +18,10 @@ import (
 type stalledDeliveryRuntime struct {
 	stubRuntime
 
-	emit func(agentruntime.Event)
+	emit func(contract.Event)
 }
 
-func (r *stalledDeliveryRuntime) OnBackgroundEvent(emit func(agentruntime.Event)) {
+func (r *stalledDeliveryRuntime) OnBackgroundEvent(emit func(contract.Event)) {
 	r.emit = emit
 }
 
@@ -44,7 +44,7 @@ func (m *stalledDeliveryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if routed, ok := msg.(messages.RoutedMsg); ok {
-		if _, ok := routed.Inner.(*agentruntime.SessionTitleEvent); ok {
+		if _, ok := routed.Inner.(*contract.SessionTitleEvent); ok {
 			select {
 			case <-m.subscribed:
 			default:
@@ -100,9 +100,9 @@ func TestActualProgramStalledDeliveryKeepsFinalResponse(t *testing.T) {
 			registered := make(chan struct{}, 1)
 			go a.SubscribeWith(ctx, func(msg tea.Msg) {
 				switch msg.(type) {
-				case *agentruntime.StreamStoppedEvent:
+				case *contract.StreamStoppedEvent:
 					witness <- struct{}{}
-				case *agentruntime.SessionTitleEvent:
+				case *contract.SessionTitleEvent:
 					select {
 					case registered <- struct{}{}:
 					default:
@@ -110,7 +110,7 @@ func TestActualProgramStalledDeliveryKeepsFinalResponse(t *testing.T) {
 				}
 			})
 			require.Eventually(t, func() bool {
-				rt.emit(agentruntime.SessionTitle("profile", "subscription-ready"))
+				rt.emit(contract.SessionTitle("profile", "subscription-ready"))
 				select {
 				case <-model.subscribed:
 					select {
@@ -122,7 +122,7 @@ func TestActualProgramStalledDeliveryKeepsFinalResponse(t *testing.T) {
 				}
 				return false
 			}, 5*time.Second, 10*time.Millisecond)
-			rt.emit(agentruntime.StreamStarted("profile", "root"))
+			rt.emit(contract.StreamStarted("profile", "root"))
 			select {
 			case <-model.started:
 			case <-time.After(30 * time.Second):
@@ -142,10 +142,10 @@ func TestActualProgramStalledDeliveryKeepsFinalResponse(t *testing.T) {
 				}
 			})
 			for range 1100 {
-				rt.emit(agentruntime.NewTokenUsageEvent("profile", "root", &agentruntime.Usage{}))
+				rt.emit(contract.NewTokenUsageEvent("profile", "root", &contract.Usage{}))
 			}
-			rt.emit(agentruntime.AgentChoice("root", "profile", "FINAL-RESPONSE-AFTER-STALL", "answer"))
-			rt.emit(agentruntime.StreamStopped("profile", "root", "normal"))
+			rt.emit(contract.AgentChoice("root", "profile", "FINAL-RESPONSE-AFTER-STALL", "answer"))
+			rt.emit(contract.StreamStopped("profile", "root", "normal"))
 			select {
 			case <-witness:
 			case <-time.After(30 * time.Second):

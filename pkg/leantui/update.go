@@ -20,6 +20,8 @@ import (
 	"github.com/docker/docker-agent/pkg/modelpicker"
 	"github.com/docker/docker-agent/pkg/programstatus"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
@@ -126,7 +128,7 @@ func (m *model) cancelPendingMessages(ctx context.Context) bool {
 	remaining := make([]ui.PendingUserMessage, 0, len(m.pendingUsers))
 	for _, pending := range m.pendingUsers {
 		followUp := pending.Kind == ui.PendingUserFollowUp
-		if pending.ID == "" || !m.app.CancelPendingMessage(ctx, runtime.QueuedMessage{ID: pending.ID}, followUp) {
+		if pending.ID == "" || !m.app.CancelPendingMessage(ctx, contract.QueuedMessage{ID: pending.ID}, followUp) {
 			remaining = append(remaining, pending)
 			continue
 		}
@@ -253,7 +255,7 @@ func (m *model) thinkingLevelChangeable() bool {
 // reportThinkingLevelError emits a notice for a failed thinking-level change,
 // distinguishing the unsupported-model case from other failures.
 func (m *model) reportThinkingLevelError(action string, err error) {
-	if errors.Is(err, runtime.ErrUnsupported) {
+	if errors.Is(err, contract.ErrUnsupported) {
 		m.addNotice("", "Current model does not support thinking levels", ui.StMuted())
 		return
 	}
@@ -572,7 +574,7 @@ func (m *model) loadSessionTranscript(sess *session.Session) {
 	}
 }
 
-func modelCommands(models []runtime.ModelChoice) []ui.Command {
+func modelCommands(models []modelcatalog.ModelChoice) []ui.Command {
 	cmds := make([]ui.Command, 0, len(models))
 	for _, choice := range models {
 		desc := choice.Name
@@ -641,7 +643,7 @@ func (m *model) dispatchUserMessage(ctx context.Context, display, content string
 	if m.busy {
 		switch mode {
 		case busySubmitSteer:
-			msg := runtime.QueuedMessage{ID: uuid.NewV4().String(), Content: content}
+			msg := contract.QueuedMessage{ID: uuid.NewV4().String(), Content: content}
 			if err := m.app.Steer(ctx, msg); err != nil {
 				m.addNotice("⚠ ", "Could not steer current response: "+err.Error(), ui.StWarning())
 				return
@@ -649,7 +651,7 @@ func (m *model) dispatchUserMessage(ctx context.Context, display, content string
 			m.addPendingUser(msg.ID, display, content, ui.PendingUserSteer)
 			return
 		case busySubmitFollowUp:
-			msg := runtime.QueuedMessage{ID: uuid.NewV4().String(), Content: content}
+			msg := contract.QueuedMessage{ID: uuid.NewV4().String(), Content: content}
 			if err := m.app.FollowUp(ctx, msg); err != nil {
 				m.addNotice("⚠ ", "Could not enqueue follow-up: "+err.Error(), ui.StWarning())
 				return

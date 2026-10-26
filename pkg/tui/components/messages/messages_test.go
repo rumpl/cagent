@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	transfertask "github.com/docker/docker-agent/pkg/tools/builtin/transfertask/types"
@@ -765,7 +765,7 @@ func TestTerminalReasoningFadeTickInvalidatesTranscript(t *testing.T) {
 		}
 		toolDef := tools.Tool{Name: "fading_tool"}
 		m.AddOrUpdateToolCall("root", toolCall, toolDef, types.ToolStatusRunning)
-		m.AddToolResult(&runtime.ToolCallResponseEvent{
+		m.AddToolResult(&contract.ToolCallResponseEvent{
 			ToolCallID:     toolCall.ID,
 			ToolDefinition: toolDef,
 			Response:       "done",
@@ -1906,7 +1906,7 @@ func TestNestedToolResultsKeepInvocationOrder(t *testing.T) {
 			}
 			assertOrder()
 			for _, name := range []string{"inner_second", "inner_first", "javascript_parent"} {
-				m.AddToolResult(&runtime.ToolCallResponseEvent{ToolCallID: name, Response: "done", Result: tools.ResultSuccess("done")}, types.ToolStatusCompleted)
+				m.AddToolResult(&contract.ToolCallResponseEvent{ToolCallID: name, Response: "done", Result: tools.ResultSuccess("done")}, types.ToolStatusCompleted)
 				assertOrder()
 			}
 		})

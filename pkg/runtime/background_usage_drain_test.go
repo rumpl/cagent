@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -36,9 +37,9 @@ func TestBackgroundDrainPreservesNestedUsage(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, worker, leaf)), WithSessionCompaction(false), WithModelStore(mockModelStoreWithCostAndLimit{limit: 100_000, cost: modelsdev.Cost{Input: 10, Output: 20}}))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rt.Close()) }()
-	snapshots := map[string]*Usage{}
-	rt.OnBackgroundEvent(func(event Event) {
-		if usage, ok := event.(*TokenUsageEvent); ok {
+	snapshots := map[string]*contract.Usage{}
+	rt.OnBackgroundEvent(func(event contract.Event) {
+		if usage, ok := event.(*contract.TokenUsageEvent); ok {
 			snapshots[usage.SessionID] = usage.Usage
 		}
 	})

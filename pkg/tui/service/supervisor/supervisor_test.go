@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/service/tabstate"
 )
 
@@ -118,14 +118,14 @@ func TestRestoredConversationKeepsTabRoutingIdentity(t *testing.T) {
 	t.Parallel()
 	s := newTestSupervisor([]string{"tab"}, "tab")
 	s.GetRunner("tab").State.ReplaceSession("restored")
-	s.GetRunner("tab").State.Apply(&runtime.StreamStartedEvent{SessionID: "restored"}, true)
+	s.GetRunner("tab").State.Apply(&contract.StreamStartedEvent{SessionID: "restored"}, true)
 	tabs, _ := s.GetTabs()
 	assert.Equal(t, "tab", tabs[0].SessionID)
 	assert.True(t, tabs[0].IsRunning)
-	s.GetRunner("tab").State.Apply(&runtime.StreamStoppedEvent{SessionID: "tab"}, true)
+	s.GetRunner("tab").State.Apply(&contract.StreamStoppedEvent{SessionID: "tab"}, true)
 	tabs, _ = s.GetTabs()
 	assert.True(t, tabs[0].IsRunning)
-	s.GetRunner("tab").State.Apply(&runtime.StreamStoppedEvent{SessionID: "restored"}, true)
+	s.GetRunner("tab").State.Apply(&contract.StreamStoppedEvent{SessionID: "restored"}, true)
 	tabs, _ = s.GetTabs()
 	assert.False(t, tabs[0].IsRunning)
 }

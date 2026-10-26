@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -69,7 +69,7 @@ func TestAppModelStateSwitching(t *testing.T) {
 func TestAppModelStateRejectedSwitch(t *testing.T) {
 	t.Parallel()
 
-	for _, err := range []error{errors.New("invalid model"), runtime.ErrUnsupported} {
+	for _, err := range []error{errors.New("invalid model"), contract.ErrUnsupported} {
 		t.Run(err.Error(), func(t *testing.T) {
 			t.Parallel()
 			sess := session.New()

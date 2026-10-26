@@ -12,6 +12,8 @@ import (
 
 	dagentcfg "github.com/docker/docker-agent/pkg/config"
 	dagentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -98,11 +100,11 @@ type Event struct {
 	// Elicitation is a pending MCP elicitation request (Config.ForwardElicitation
 	// only). The runtime is blocked until RespondToElicitation is called with
 	// its ElicitationID.
-	Elicitation *dagentruntime.ElicitationRequestEvent
+	Elicitation *contract.ElicitationRequestEvent
 	// RuntimeEvent is the original docker-agent runtime event. Without
 	// Config.ForwardAllEvents only projected events are forwarded; callers that
 	// need the full raw stream can also use Runtime().RunStream directly.
-	RuntimeEvent dagentruntime.Event
+	RuntimeEvent contract.Event
 }
 
 // ToolActivity describes one tool call surfaced by the runtime.
@@ -125,7 +127,7 @@ type ToolActivity struct {
 
 // runtimeRunner is the subset of runtime.Runtime the headless session needs.
 type runtimeRunner interface {
-	RunStream(ctx context.Context, sess *session.Session) <-chan dagentruntime.Event
+	RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event
 	Resume(ctx context.Context, req dagentruntime.ResumeRequest)
 	ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any, elicitationID ...string) error
 	Close() error
@@ -175,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		}
 		tm = loaded.Team
 
-		modelSwitcher := &dagentruntime.ModelSwitcherConfig{
+		modelSwitcher := &modelcatalog.Config{
 			Models:             loaded.Models,
 			Providers:          loaded.Providers,
 			ModelsGateway:      runConfig.ModelsGateway,
@@ -227,10 +229,10 @@ func (s *Session) WelcomeMessage() string { return s.welcome }
 
 // Runtime returns the underlying docker-agent runtime for advanced embedders.
 // It returns nil only for sessions not created by New.
-func (s *Session) Runtime() dagentruntime.Runtime {
+func (s *Session) Runtime() contract.Runtime {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rt, _ := s.rt.(dagentruntime.Runtime)
+	rt, _ := s.rt.(contract.Runtime)
 	return rt
 }
 
@@ -358,7 +360,7 @@ func (s *Session) RespondToElicitation(ctx context.Context, action tools.Elicita
 	return rt.ResumeElicitation(ctx, action, content, elicitationID)
 }
 
-func (s *Session) forwardEvents(ctx context.Context, events <-chan dagentruntime.Event, out chan<- Event, cancel context.CancelFunc, runID int) {
+func (s *Session) forwardEvents(ctx context.Context, events <-chan contract.Event, out chan<- Event, cancel context.CancelFunc, runID int) {
 	defer close(out)
 	defer cancel()
 	defer func() {
@@ -385,7 +387,7 @@ func (s *Session) forwardEvents(ctx context.Context, events <-chan dagentruntime
 		}
 
 		switch e := event.(type) {
-		case *dagentruntime.ToolCallConfirmationEvent:
+		case *contract.ToolCallConfirmationEvent:
 			if errSent {
 				s.rt.Resume(ctx, dagentruntime.ResumeReject("The run was aborted."))
 				continue
@@ -393,16 +395,16 @@ func (s *Session) forwardEvents(ctx context.Context, events <-chan dagentruntime
 			if !emit(Event{RuntimeEvent: event, Tool: &ToolActivity{Call: e.ToolCall, Def: e.ToolDefinition, NeedsConfirmation: true}}) {
 				s.rt.Resume(ctx, dagentruntime.ResumeReject("The run was aborted."))
 			}
-		case *dagentruntime.ElicitationRequestEvent:
+		case *contract.ElicitationRequestEvent:
 			// Without ForwardElicitation this headless wrapper has no elicitation
 			// UI, so decline rather than let the run hang forever. Forwarded
 			// requests are declined too once the run errored or was cancelled.
 			if errSent || !s.cfg.ForwardElicitation || !emit(Event{RuntimeEvent: event, Elicitation: e}) {
 				_ = s.rt.ResumeElicitation(ctx, tools.ElicitationActionDecline, nil, e.ElicitationID)
 			}
-		case *dagentruntime.MaxIterationsReachedEvent:
+		case *contract.MaxIterationsReachedEvent:
 			s.rt.Resume(ctx, dagentruntime.ResumeReject(""))
-		case *dagentruntime.ErrorEvent:
+		case *contract.ErrorEvent:
 			if errSent {
 				continue
 			}
@@ -437,16 +439,16 @@ func eventBufferSize(configured int) int {
 
 // TranslateRuntimeEvent translates content-bearing runtime events into the
 // compact Event shape used by embedded chat UIs.
-func TranslateRuntimeEvent(event dagentruntime.Event) (Event, bool) {
+func TranslateRuntimeEvent(event contract.Event) (Event, bool) {
 	switch e := event.(type) {
-	case *dagentruntime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		if e.Content == "" {
 			return Event{}, false
 		}
 		return Event{RuntimeEvent: event, Text: e.Content}, true
-	case *dagentruntime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		return Event{RuntimeEvent: event, Tool: &ToolActivity{Call: e.ToolCall, Def: e.ToolDefinition}}, true
-	case *dagentruntime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		if e.Output == "" {
 			return Event{}, false
 		}
@@ -455,7 +457,7 @@ func TranslateRuntimeEvent(event dagentruntime.Event) (Event, bool) {
 			Def:    e.ToolDefinition,
 			Output: e.Output,
 		}}, true
-	case *dagentruntime.ToolCallResponseEvent:
+	case *contract.ToolCallResponseEvent:
 		return Event{RuntimeEvent: event, Tool: &ToolActivity{
 			Call:     tools.ToolCall{ID: e.ToolCallID},
 			Def:      e.ToolDefinition,

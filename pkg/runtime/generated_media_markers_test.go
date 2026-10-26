@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -167,7 +168,7 @@ func markerTurnMedia(t *testing.T, stream *mockStream, wantContent string) []cha
 
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,

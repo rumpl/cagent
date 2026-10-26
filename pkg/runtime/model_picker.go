@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/modelpicker"
 )
@@ -24,7 +25,7 @@ func findModelPickerTool(a *agent.Agent) *modelpicker.ToolSet {
 }
 
 // handleChangeModel handles the change_model tool call by switching the current agent's model.
-func (r *LocalRuntime) handleChangeModel(ctx context.Context, a *agent.Agent, toolCall tools.ToolCall, events EventSink) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleChangeModel(ctx context.Context, a *agent.Agent, toolCall tools.ToolCall, events contract.EventSink) (*tools.ToolCallResult, error) {
 	var params modelpicker.ChangeModelArgs
 	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
@@ -51,20 +52,20 @@ func (r *LocalRuntime) handleChangeModel(ctx context.Context, a *agent.Agent, to
 }
 
 // handleRevertModel handles the revert_model tool call by reverting the current agent to its default model.
-func (r *LocalRuntime) handleRevertModel(ctx context.Context, a *agent.Agent, events EventSink) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleRevertModel(ctx context.Context, a *agent.Agent, events contract.EventSink) (*tools.ToolCallResult, error) {
 	return r.setModelAndEmitInfo(ctx, a, "", events)
 }
 
 // setModelAndEmitInfo sets the model for the current agent and emits an updated
 // AgentInfo event so the UI reflects the change. An empty modelRef reverts to
 // the agent's default model.
-func (r *LocalRuntime) setModelAndEmitInfo(ctx context.Context, a *agent.Agent, modelRef string, events EventSink) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) setModelAndEmitInfo(ctx context.Context, a *agent.Agent, modelRef string, events contract.EventSink) (*tools.ToolCallResult, error) {
 	currentName := a.Name()
 	if err := r.SetAgentModel(ctx, currentName, modelRef); err != nil {
 		return tools.ResultError(fmt.Sprintf("failed to set model: %v", err)), nil
 	}
 
-	events.Emit(AgentInfo(a.Name(), r.getEffectiveModelID(ctx, a).String(), a.Description(), a.WelcomeMessage()))
+	events.Emit(contract.AgentInfo(a.Name(), r.getEffectiveModelID(ctx, a).String(), a.Description(), a.WelcomeMessage()))
 
 	if modelRef == "" {
 		slog.InfoContext(ctx, "Model reverted via model_picker tool", "agent", currentName)

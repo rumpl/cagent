@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -25,8 +25,8 @@ func newExitAfterResponseModel(t *testing.T) (*appModel, string) {
 	m.application = a
 	m.bindTabSession(id, sess.ID)
 	m.initSessionComponents(id, a, sess)
-	_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.StreamStarted(sess.ID, "root")})
-	_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.AgentChoice("root", sess.ID, "answer")})
+	_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.StreamStarted(sess.ID, "root")})
+	_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.AgentChoice("root", sess.ID, "answer")})
 	return m, id
 }
 
@@ -34,7 +34,7 @@ func TestHiddenTabExitAfterResponseIsGlobal(t *testing.T) {
 	t.Parallel()
 	m, id := newExitAfterResponseModel(t)
 	_, _ = m.handleSpawnSession("/other")
-	_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.StreamStopped("", "root", "normal")})
+	_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.StreamStopped("", "root", "normal")})
 	msgs := collectMsgs(cmd)
 	require.Len(t, msgs, 1, "only the global exit is dispatched; visible chrome stays untouched")
 	effect, ok := msgs[0].(chat.GlobalMsg)
@@ -52,7 +52,7 @@ func TestPageGlobalEffectRejectsRetiredOrigin(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
 			m, id := newExitAfterResponseModel(t)
-			_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.StreamStopped("", "root", "normal")})
+			_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.StreamStopped("", "root", "normal")})
 			var effect chat.GlobalMsg
 			for _, msg := range collectMsgs(cmd) {
 				if global, ok := msg.(chat.GlobalMsg); ok {
@@ -95,8 +95,8 @@ func TestHiddenAttentionEffectsDoNotDuplicateFIFO(t *testing.T) {
 	id := m.supervisor.ActiveID()
 	origin, application := m.activeTab, m.application
 	_, _ = m.handleSpawnSession("/other")
-	first := &runtime.ElicitationRequestEvent{ElicitationID: "first", Message: "first prompt"}
-	second := &runtime.ElicitationRequestEvent{ElicitationID: "second", Message: "second prompt"}
+	first := &contract.ElicitationRequestEvent{ElicitationID: "first", Message: "first prompt"}
+	second := &contract.ElicitationRequestEvent{ElicitationID: "second", Message: "second prompt"}
 	for _, event := range []tea.Msg{first, second} {
 		_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: event})
 		assert.False(t, hasMsg[dialog.OpenDialogMsg](collectMsgs(cmd)), "hidden attention must not dispatch a dialog command")

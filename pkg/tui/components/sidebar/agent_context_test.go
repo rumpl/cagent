@@ -8,16 +8,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // recordAgentUsage feeds a TokenUsageEvent through the sidebar's normal entry
 // point, as the chat page does for live, sub-session, and background events.
 func recordAgentUsage(m *model, sessionID, agentName string, contextLen, contextLimit int64) {
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sessionID,
-		AgentContext: runtime.AgentContext{AgentName: agentName},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: agentName},
+		Usage: &contract.Usage{
 			InputTokens:   contextLen / 2,
 			OutputTokens:  contextLen - contextLen/2,
 			ContextLength: contextLen,
@@ -35,9 +35,9 @@ func TestAgentRosterShowsPerAgentContextPercent(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-		runtime.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o", Thinking: "off"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+		contract.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o", Thinking: "off"},
 	)
 
 	recordAgentUsage(m, "session-root", "root", 30_000, 100_000)
@@ -62,7 +62,7 @@ func TestAgentContextPercent_LatestSnapshotWins(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
 	)
 
 	recordAgentUsage(m, "session-1", "root", 80_000, 100_000)
@@ -79,7 +79,7 @@ func TestAgentContextPercent_UnknownLimit(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
 	)
 
 	assert.Empty(t, m.agentContextPercent("root"), "no usage recorded yet")
@@ -100,8 +100,8 @@ func TestAgentContextPercent_BackgroundAgentUsage(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "worker", Provider: "openai", Model: "gpt-5.4"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "worker", Provider: "openai", Model: "gpt-5.4"},
 	)
 
 	// Parent runs on the main session; the background worker's events carry
@@ -124,7 +124,7 @@ func TestAgentCardMetricLinesFitNarrowWidth(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, MinWidth,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
 	)
 	recordAgentUsage(m, "session-1", "root", 100_000, 100_000)
 

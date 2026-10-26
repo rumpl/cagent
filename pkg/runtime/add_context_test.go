@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -45,7 +46,7 @@ func TestRunStreamAddContext(t *testing.T) {
 			sess := session.New(session.WithUserMessage("hello"))
 			sess.Title = "add_context test"
 			for ev := range rt.RunStream(t.Context(), sess) {
-				if userEvent, ok := ev.(*UserMessageEvent); ok {
+				if userEvent, ok := ev.(*contract.UserMessageEvent); ok {
 					assert.Equal(t, "hello", userEvent.Message)
 				}
 			}

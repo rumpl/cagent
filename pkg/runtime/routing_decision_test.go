@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 )
@@ -21,10 +22,10 @@ func routingDecisions(sess *session.Session) []*session.RoutingDecision {
 	return sess.RoutingDecisionHistory()
 }
 
-func routingDecisionEvents(events []Event) []*RoutingDecisionEvent {
-	var out []*RoutingDecisionEvent
+func routingDecisionEvents(events []contract.Event) []*contract.RoutingDecisionEvent {
+	var out []*contract.RoutingDecisionEvent
 	for _, ev := range events {
-		if e, ok := ev.(*RoutingDecisionEvent); ok {
+		if e, ok := ev.(*contract.RoutingDecisionEvent); ok {
 			out = append(out, e)
 		}
 	}
@@ -162,7 +163,7 @@ func TestRoutingDecision_PersistsAndReloadsWithoutTaskText(t *testing.T) {
 	assert.Equal(t, want, got)
 
 	// A replayed event must not duplicate the stored decision.
-	observer.OnEvent(t.Context(), sess, &RoutingDecisionEvent{SessionID: sess.ID, Decision: routingDecisions(sess)[0]})
+	observer.OnEvent(t.Context(), sess, &contract.RoutingDecisionEvent{SessionID: sess.ID, Decision: routingDecisions(sess)[0]})
 	reloaded, err = store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
 	assert.Len(t, routingDecisions(reloaded), 1)

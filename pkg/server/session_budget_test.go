@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -41,14 +42,14 @@ func cleanupAPIBudgetRuntimes(t *testing.T, sm *SessionManager) {
 	})
 }
 
-func runAPIBudgetTurn(t *testing.T, sm *SessionManager, sessionID, selected string) []runtime.Event {
+func runAPIBudgetTurn(t *testing.T, sm *SessionManager, sessionID, selected string) []contract.Event {
 	t.Helper()
 	stream, err := sm.RunSession(t.Context(), sessionID, "agent.yaml", selected,
 		[]api.Message{{Role: chat.MessageRoleUser, Content: "Reply offline"}}, "")
 	require.NoError(t, err)
-	var events []runtime.Event
+	var events []contract.Event
 	for event := range stream {
-		if failure, ok := event.(*runtime.ErrorEvent); ok {
+		if failure, ok := event.(*contract.ErrorEvent); ok {
 			t.Errorf("runtime error: %s", failure.Error)
 		}
 		events = append(events, event)
@@ -56,10 +57,10 @@ func runAPIBudgetTurn(t *testing.T, sm *SessionManager, sessionID, selected stri
 	return events
 }
 
-func lastAPIBudgetUsage(t *testing.T, events []runtime.Event) *runtime.BudgetUsageEvent {
+func lastAPIBudgetUsage(t *testing.T, events []contract.Event) *contract.BudgetUsageEvent {
 	t.Helper()
 	for _, event := range slices.Backward(events) {
-		if usage, ok := event.(*runtime.BudgetUsageEvent); ok {
+		if usage, ok := event.(*contract.BudgetUsageEvent); ok {
 			return usage
 		}
 	}
@@ -67,14 +68,14 @@ func lastAPIBudgetUsage(t *testing.T, events []runtime.Event) *runtime.BudgetUsa
 	return nil
 }
 
-func requireAPIBudgetStop(t *testing.T, events []runtime.Event, agentName, budget, limit string) {
+func requireAPIBudgetStop(t *testing.T, events []contract.Event, agentName, budget, limit string) {
 	t.Helper()
-	var stops []*runtime.BudgetExceededEvent
+	var stops []*contract.BudgetExceededEvent
 	for _, event := range events {
 		switch e := event.(type) {
-		case *runtime.BudgetExceededEvent:
+		case *contract.BudgetExceededEvent:
 			stops = append(stops, e)
-		case *runtime.TokenUsageEvent:
+		case *contract.TokenUsageEvent:
 			t.Errorf("blocked turn must not spend: %T", event)
 		}
 	}
@@ -127,7 +128,7 @@ budgets:
 	require.NoError(t, cached.runtime.SetCurrentAgent(t.Context(), "sibling"))
 	events := runAPIBudgetTurn(t, sm, sess.ID, "root")
 	for _, event := range events {
-		if _, ok := event.(*runtime.BudgetExceededEvent); ok {
+		if _, ok := event.(*contract.BudgetExceededEvent); ok {
 			t.Errorf("unbudgeted sibling must not be blocked: %T", event)
 		}
 	}
@@ -246,7 +247,7 @@ budgets:
 			cleanupAPIBudgetRuntimes(t, sm)
 			models := make(map[string]*apiBudgetDelegatingModel)
 			var builds int
-			sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (runtime.Runtime, error) {
+			sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (contract.Runtime, error) {
 				builds++
 				for _, name := range []string{"root", "child"} {
 					a, err := tm.Agent(name)
@@ -279,9 +280,9 @@ budgets:
 					assert.InDelta(t, 0.0006, spend.Cost, 1e-9)
 				}
 			}
-			var completed *runtime.SubSessionCompletedEvent
+			var completed *contract.SubSessionCompletedEvent
 			for _, event := range events {
-				if e, ok := event.(*runtime.SubSessionCompletedEvent); ok {
+				if e, ok := event.(*contract.SubSessionCompletedEvent); ok {
 					completed = e
 				}
 			}
@@ -419,7 +420,7 @@ func TestAPISessionBudget_ActiveTimeAccumulatesWithoutChargingIdle(t *testing.T)
 			cleanupAPIBudgetRuntimes(t, sm)
 			var elapsed atomic.Int64
 			var model *apiBudgetDelegatingModel
-			sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (runtime.Runtime, error) {
+			sm.newRuntime = func(ctx context.Context, tm *team.Team, opts ...runtime.Opt) (contract.Runtime, error) {
 				a, err := tm.Agent("root")
 				if err != nil {
 					return nil, err

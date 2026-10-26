@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -37,7 +38,7 @@ type EventObserver interface {
 	// modify or suppress events (a future extension may relax this);
 	// to drop an event from persistence, simply ignore it inside
 	// OnEvent.
-	OnEvent(ctx context.Context, sess *session.Session, event Event)
+	OnEvent(ctx context.Context, sess *session.Session, event contract.Event)
 }
 
 // WithEventObserver appends o to the runtime's observer chain.
@@ -77,7 +78,7 @@ func WithEventObserverFactory(factory func() EventObserver) Opt {
 // in registration order before being forwarded to the returned
 // channel. Observers run synchronously, so a slow observer
 // back-pressures the consumer.
-func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner <-chan Event) <-chan Event {
+func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner <-chan contract.Event) <-chan contract.Event {
 	observers := make([]EventObserver, 0, len(r.observers))
 	for _, factory := range r.observers {
 		if obs := factory(); obs != nil {
@@ -87,7 +88,7 @@ func (r *LocalRuntime) observe(ctx context.Context, sess *session.Session, inner
 	for _, obs := range observers {
 		obs.OnRunStart(ctx, sess)
 	}
-	out := make(chan Event, cap(inner))
+	out := make(chan contract.Event, cap(inner))
 	go func() {
 		defer close(out)
 		for event := range inner {

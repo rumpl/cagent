@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -80,10 +80,10 @@ func TestAgentSwitchingReturnAddsTransition(t *testing.T) {
 
 	p, rec := newSwitchingTestPage(t)
 
-	handled, _ := p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "researcher"))
+	handled, _ := p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "researcher"))
 	require.True(t, handled)
 
-	handled, cmd := p.handleRuntimeEvent(runtime.AgentSwitching(false, "researcher", "root"))
+	handled, cmd := p.handleRuntimeEvent(contract.AgentSwitching(false, "researcher", "root"))
 	require.True(t, handled)
 	require.NotNil(t, cmd)
 
@@ -105,7 +105,7 @@ func TestAgentSwitchingStartAddsNoTransition(t *testing.T) {
 
 	p, rec := newSwitchingTestPage(t)
 
-	handled, _ := p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "researcher"))
+	handled, _ := p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "researcher"))
 	require.True(t, handled)
 
 	assert.NotContains(t, ansi.Strip(p.messages.View()), types.AgentReturnLabel)
@@ -122,23 +122,23 @@ func TestAgentSwitchingStaleStopAddsNothing(t *testing.T) {
 	p, rec := newSwitchingTestPage(t)
 
 	// Stop on an empty stack: no label.
-	handled, _ := p.handleRuntimeEvent(runtime.AgentSwitching(false, "researcher", "root"))
+	handled, _ := p.handleRuntimeEvent(contract.AgentSwitching(false, "researcher", "root"))
 	require.True(t, handled)
 	assert.NotContains(t, ansi.Strip(p.messages.View()), types.AgentReturnLabel)
 	require.Len(t, rec.results, 1)
 	assert.False(t, rec.results[0].Accepted)
 
 	// A different hop is in flight; the stale stop must not pop it nor label.
-	handled, _ = p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "coder"))
+	handled, _ = p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "coder"))
 	require.True(t, handled)
-	handled, _ = p.handleRuntimeEvent(runtime.AgentSwitching(false, "researcher", "root"))
+	handled, _ = p.handleRuntimeEvent(contract.AgentSwitching(false, "researcher", "root"))
 	require.True(t, handled)
 	assert.NotContains(t, ansi.Strip(p.messages.View()), types.AgentReturnLabel)
 	require.Len(t, rec.results, 3)
 	assert.False(t, rec.results[2].Accepted, "the stale stop must not match the root→coder hop")
 
 	// The genuine stop still labels.
-	handled, _ = p.handleRuntimeEvent(runtime.AgentSwitching(false, "coder", "root"))
+	handled, _ = p.handleRuntimeEvent(contract.AgentSwitching(false, "coder", "root"))
 	require.True(t, handled)
 	assert.Contains(t, ansi.Strip(p.messages.View()), types.AgentReturnLabel)
 }
@@ -152,11 +152,11 @@ func TestAgentSwitchingReturnAfterCancelStaysSilent(t *testing.T) {
 	p, rec := newSwitchingTestPage(t)
 
 	// The hop started before the cancel; its end races the cancel teardown.
-	handled, _ := p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "researcher"))
+	handled, _ := p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "researcher"))
 	require.True(t, handled)
 	p.streamCancelled = true
 
-	handled, cmd := p.handleRuntimeEvent(runtime.AgentSwitching(false, "researcher", "root"))
+	handled, cmd := p.handleRuntimeEvent(contract.AgentSwitching(false, "researcher", "root"))
 	require.True(t, handled)
 	assert.Nil(t, cmd)
 	assert.NotContains(t, ansi.Strip(p.messages.View()), types.AgentReturnLabel)
@@ -170,12 +170,12 @@ func TestChildActivityEventsAckSidebar(t *testing.T) {
 	t.Parallel()
 
 	p, rec := newSwitchingTestPage(t)
-	p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "researcher"))
+	p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "researcher"))
 
 	events := []tea.Msg{
-		runtime.AgentChoiceReasoning("researcher", "s1", "thinking…"),
-		runtime.AgentChoice("researcher", "s1", "found it"),
-		runtime.PartialToolCall(tools.ToolCall{ID: "t1"}, tools.Tool{Name: "shell"}, "researcher"),
+		contract.AgentChoiceReasoning("researcher", "s1", "thinking…"),
+		contract.AgentChoice("researcher", "s1", "found it"),
+		contract.PartialToolCall(tools.ToolCall{ID: "t1"}, tools.Tool{Name: "shell"}, "researcher"),
 	}
 	for _, evt := range events {
 		handled, _ := p.handleRuntimeEvent(evt)
@@ -194,7 +194,7 @@ func TestChildActivityIgnoredAfterCancel(t *testing.T) {
 	p, rec := newSwitchingTestPage(t)
 	p.streamCancelled = true
 
-	handled, _ := p.handleRuntimeEvent(runtime.AgentChoice("researcher", "s1", "late chunk"))
+	handled, _ := p.handleRuntimeEvent(contract.AgentChoice("researcher", "s1", "late chunk"))
 	require.True(t, handled)
 	assert.Empty(t, rec.activity)
 }
@@ -251,11 +251,11 @@ func TestAgentSwitchingReturnsLocalWorkPerUpdate(t *testing.T) {
 	p, _ := newSwitchingTestPage(t)
 	p.SetRoutingID("tab-1")
 
-	_, start := p.UpdateEffects(runtime.AgentSwitching(true, "root", "researcher"))
+	_, start := p.UpdateEffects(contract.AgentSwitching(true, "root", "researcher"))
 	require.NotNil(t, start.Local, "a start arms min/max timers")
 	assert.Nil(t, p.effects, "collection ends when UpdateEffects returns")
 
-	_, stop := p.UpdateEffects(runtime.AgentSwitching(false, "researcher", "root"))
+	_, stop := p.UpdateEffects(contract.AgentSwitching(false, "researcher", "root"))
 	require.NotNil(t, stop.Local, "an accepted stop arms the Return timer")
 
 	_, cancelled := p.UpdateEffects(msgtypes.StreamCancelledMsg{})
@@ -275,7 +275,7 @@ func TestRoutedTimerExpiryDrivesSidebarOnOwnerPage(t *testing.T) {
 		p.SetRoutingID("tab-1")
 		p.sessionState.SetCurrentAgentName("root")
 
-		handled, _ := p.handleRuntimeEvent(runtime.AgentSwitching(true, "root", "researcher"))
+		handled, _ := p.handleRuntimeEvent(contract.AgentSwitching(true, "root", "researcher"))
 		require.True(t, handled)
 		require.Contains(t, ansi.Strip(p.sidebar.View()), transferBoxMarker, "the outbound box shows on the hop start")
 		require.Len(t, rec.results, 1)

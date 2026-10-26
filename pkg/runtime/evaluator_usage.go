@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/evaluator"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -20,7 +21,7 @@ type evaluatorAccounting struct {
 	r      *LocalRuntime
 	sess   *session.Session
 	a      *agent.Agent
-	events EventSink
+	events contract.EventSink
 	mu     sync.Mutex
 	used   bool
 }
@@ -112,7 +113,7 @@ func (ac *evaluatorAccounting) record(ctx context.Context, name string, record e
 		evaluation.Usage = &chat.Usage{InputTokens: record.Usage.InputTokens, OutputTokens: record.Usage.OutputTokens}
 	}
 	ac.sess.AddEvaluation(evaluation)
-	ac.events.Emit(&EvaluationUsageEvent{
+	ac.events.Emit(&contract.EvaluationUsageEvent{
 		Type: "evaluation_usage", SessionID: ac.sess.ID, Evaluation: evaluation,
 		AgentContext: newAgentContext(ac.a.Name()),
 	})
@@ -125,11 +126,11 @@ func (ac *evaluatorAccounting) record(ctx context.Context, name string, record e
 	}
 	ac.r.recordBudgetSpend(ac.sess, ac.a, evaluation.Usage, evaluation.Cost, elapsed, ac.events, evaluation.Cost == nil)
 	if evaluation.Cost == nil {
-		ac.events.Emit(Warning(fmt.Sprintf("Evaluator %q spend is unknown; session cost is incomplete. Configure evaluator cost rates when pricing is missing; requests without reported usage cannot be priced.", name), ac.a.Name()))
+		ac.events.Emit(contract.Warning(fmt.Sprintf("Evaluator %q spend is unknown; session cost is incomplete. Configure evaluator cost rates when pricing is missing; requests without reported usage cannot be priced.", name), ac.a.Name()))
 	}
 	contextLimit := ac.r.contextLimitForAgentModel(ctx, ac.a, ac.r.getEffectiveModelID(ctx, ac.a))
-	usage := SessionUsage(ac.sess, contextLimit, ac.a.CompactionThreshold())
+	usage := contract.SessionUsage(ac.sess, contextLimit, ac.a.CompactionThreshold())
 	usage.SnapshotOnly = true
-	ac.events.Emit(NewTokenUsageEvent(ac.sess.ID, ac.a.Name(), usage))
+	ac.events.Emit(contract.NewTokenUsageEvent(ac.sess.ID, ac.a.Name(), usage))
 	return valid
 }

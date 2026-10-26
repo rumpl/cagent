@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -31,7 +32,7 @@ func TestElicitationBridge_SendBeforeSwapReturnsError(t *testing.T) {
 	t.Parallel()
 
 	var b elicitationBridge
-	err := b.send(t.Context(), Error("nothing"))
+	err := b.send(t.Context(), contract.Error("nothing"))
 	assert.ErrorIs(t, err, errNoElicitationChannel)
 }
 
@@ -39,8 +40,8 @@ func TestElicitationBridge_SwapReturnsPrevious(t *testing.T) {
 	t.Parallel()
 
 	var b elicitationBridge
-	first := make(chan Event, 1)
-	second := make(chan Event, 1)
+	first := make(chan contract.Event, 1)
+	second := make(chan contract.Event, 1)
 
 	prev := b.swap(first)
 	assert.Nil(t, prev, "first swap should return nil prev")
@@ -56,14 +57,14 @@ func TestElicitationBridge_SendDeliversToCurrentChannel(t *testing.T) {
 	t.Parallel()
 
 	var b elicitationBridge
-	ch := make(chan Event, 1)
+	ch := make(chan contract.Event, 1)
 	b.swap(ch)
 
-	require.NoError(t, b.send(t.Context(), Error("hello")))
+	require.NoError(t, b.send(t.Context(), contract.Error("hello")))
 
 	select {
 	case ev := <-ch:
-		ee, ok := ev.(*ErrorEvent)
+		ee, ok := ev.(*contract.ErrorEvent)
 		require.True(t, ok)
 		assert.Equal(t, "hello", ee.Error)
 	case <-time.After(time.Second):
@@ -75,11 +76,11 @@ func TestElicitationBridge_SendRecoversClosedChannel(t *testing.T) {
 	t.Parallel()
 
 	var b elicitationBridge
-	ch := make(chan Event)
+	ch := make(chan contract.Event)
 	b.swap(ch)
 	close(ch)
 
-	err := b.send(t.Context(), Error("closed"))
+	err := b.send(t.Context(), contract.Error("closed"))
 	assert.ErrorIs(t, err, errNoElicitationChannel)
 }
 
@@ -95,13 +96,13 @@ func TestElicitationBridge_RestoreAndCloseWaitsForInflightSenders(t *testing.T) 
 	t.Parallel()
 
 	var b elicitationBridge
-	current := make(chan Event)
-	parent := make(chan Event, 1)
+	current := make(chan contract.Event)
+	parent := make(chan contract.Event, 1)
 	b.swap(current)
 
 	sendDone := make(chan error, 1)
 	go func() {
-		sendDone <- b.send(t.Context(), Error("inflight"))
+		sendDone <- b.send(t.Context(), contract.Error("inflight"))
 	}()
 
 	// Wait until the sender holds the read lock: TryLock fails only while
@@ -128,7 +129,7 @@ func TestElicitationBridge_RestoreAndCloseWaitsForInflightSenders(t *testing.T) 
 
 	select {
 	case ev := <-current:
-		ee, ok := ev.(*ErrorEvent)
+		ee, ok := ev.(*contract.ErrorEvent)
 		require.True(t, ok)
 		assert.Equal(t, "inflight", ee.Error)
 	case <-time.After(time.Second):
@@ -164,15 +165,15 @@ func TestElicitationBridge_ConcurrentSendsAndCloseAreSerializedSafely(t *testing
 
 	synctest.Test(t, func(t *testing.T) {
 		var b elicitationBridge
-		ch := make(chan Event, 64)
-		parent := make(chan Event, 1)
+		ch := make(chan contract.Event, 64)
+		parent := make(chan contract.Event, 1)
 		b.swap(ch)
 
 		var wg sync.WaitGroup
 		for range 10 {
 			wg.Go(func() {
 				for range 5 {
-					_ = b.send(t.Context(), Error("x"))
+					_ = b.send(t.Context(), contract.Error("x"))
 				}
 			})
 		}
@@ -200,15 +201,15 @@ func TestLocalRuntime_FinalizeEventChannelEmitsStreamStoppedOnce(t *testing.T) {
 
 	rt := newElicitationTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 1)
-	parent := make(chan Event, 1)
+	events := make(chan contract.Event, 1)
+	parent := make(chan contract.Event, 1)
 	rt.elicitation.swap(events)
 
 	rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
 
 	var stopped int
 	for ev := range events {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
+		if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 			stopped++
 		}
 	}
@@ -228,9 +229,9 @@ func TestLocalRuntime_FinalizeEventChannelDropsStreamStoppedAfterBoundedTimeout(
 		const timeout = 50 * time.Millisecond
 		rt.streamStoppedDeliveryTimeout = timeout
 		sess := session.New()
-		events := make(chan Event, 1)
-		parent := make(chan Event, 1)
-		events <- Error("buffer already full")
+		events := make(chan contract.Event, 1)
+		parent := make(chan contract.Event, 1)
+		events <- contract.Error("buffer already full")
 		rt.elicitation.swap(events)
 
 		done := make(chan struct{})
@@ -252,7 +253,7 @@ func TestLocalRuntime_FinalizeEventChannelDropsStreamStoppedAfterBoundedTimeout(
 
 		var stopped int
 		for ev := range events {
-			if _, ok := ev.(*StreamStoppedEvent); ok {
+			if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 				stopped++
 			}
 		}
@@ -273,19 +274,19 @@ func TestLocalRuntime_FinalizeEventChannelStreamStoppedIsLastBeforeClose(t *test
 
 	rt := newElicitationTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, defaultEventChannelCapacity)
-	parent := make(chan Event, 1)
+	events := make(chan contract.Event, defaultEventChannelCapacity)
+	parent := make(chan contract.Event, 1)
 
 	// Seed events that stand in for the stream's prior output so asserting
 	// StreamStopped is *last* is a real ordering check, not merely "it was the
 	// only event delivered".
-	events <- Error("prior stream output 1")
-	events <- Error("prior stream output 2")
+	events <- contract.Error("prior stream output 1")
+	events <- contract.Error("prior stream output 2")
 	rt.elicitation.swap(events)
 
 	rt.finalizeEventChannel(t.Context(), sess, turnEndReasonNormal, "", parent, events)
 
-	var delivered []Event
+	var delivered []contract.Event
 	for ev := range events {
 		delivered = append(delivered, ev)
 	}
@@ -294,12 +295,12 @@ func TestLocalRuntime_FinalizeEventChannelStreamStoppedIsLastBeforeClose(t *test
 
 	var stopped int
 	for _, ev := range delivered {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
+		if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 			stopped++
 		}
 	}
 	assert.Equal(t, 1, stopped, "exactly one StreamStopped should be delivered")
-	assert.IsType(t, &StreamStoppedEvent{}, delivered[len(delivered)-1],
+	assert.IsType(t, &contract.StreamStoppedEvent{}, delivered[len(delivered)-1],
 		"StreamStopped must be the last event delivered before the channel closes")
 }
 
@@ -346,7 +347,7 @@ func TestRunStreamClosesChannelAndRestoresElicitationOnEarlyReturn(t *testing.T)
 		// Seed a sentinel "parent" elicitation channel. After the stream tears
 		// down, the bridge must be restored to this channel — not left pointing
 		// at the stream's own (now closed) events channel.
-		parent := make(chan Event, 1)
+		parent := make(chan contract.Event, 1)
 		rt.elicitation.swap(parent)
 
 		sess := session.New(session.WithUserMessage("hi"))
@@ -392,7 +393,7 @@ func TestDirectElicitationHandlerBypassesEventsAndHonorsHeadless(t *testing.T) {
 				return tools.ElicitationResult{Action: tools.ElicitationActionAccept, Content: map[string]any{"answer": "yes"}}, nil
 			}))
 		require.NoError(t, err)
-		rt.OnElicitationRequest(func(Event) { t.Error("direct handler must not also emit a request") })
+		rt.OnElicitationRequest(func(contract.Event) { t.Error("direct handler must not also emit a request") })
 		result, err := rt.elicitationHandler(tools.WithoutInteractivePrompts(t.Context()), &mcp.ElicitParams{Message: "ask"})
 		require.NoError(t, err)
 		if headless {
@@ -412,8 +413,8 @@ func TestContextualElicitationPreservesProducerContext(t *testing.T) {
 	type ownerKey struct{}
 	origin := context.WithValue(t.Context(), ownerKey{}, "original-conversation")
 	var observed string
-	rt.OnElicitationRequestWithContext(func(ctx context.Context, event Event) { observed = ctx.Value(ownerKey{}).(string) })
-	rt.emitElicitationRequestContext(origin, ElicitationRequest("request", "form", nil, "", "id", "", "child", nil, "root"))
+	rt.OnElicitationRequestWithContext(func(ctx context.Context, event contract.Event) { observed = ctx.Value(ownerKey{}).(string) })
+	rt.emitElicitationRequestContext(origin, contract.ElicitationRequest("request", "form", nil, "", "id", "", "child", nil, "root"))
 	require.Equal(t, "original-conversation", observed)
 	require.True(t, rt.hasElicitationSink())
 }
@@ -427,19 +428,19 @@ func TestElicitationClosureDelivery(t *testing.T) {
 			defer rt.Close()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			var request *ElicitationRequestEvent
-			rt.OnElicitationRequest(func(event Event) {
-				request = event.(*ElicitationRequestEvent)
+			var request *contract.ElicitationRequestEvent
+			rt.OnElicitationRequest(func(event contract.Event) {
+				request = event.(*contract.ElicitationRequestEvent)
 				if cancelRequest {
 					cancel()
 				} else {
 					require.NoError(t, rt.ResumeElicitation(ctx, tools.ElicitationActionAccept, nil, request.ElicitationID))
 				}
 			})
-			var closed *ElicitationClosedEvent
-			rt.OnBackgroundEventWithContext(func(origin context.Context, event Event) {
+			var closed *contract.ElicitationClosedEvent
+			rt.OnBackgroundEventWithContext(func(origin context.Context, event contract.Event) {
 				require.NoError(t, origin.Err(), "closure survives producer cancellation")
-				closed = event.(*ElicitationClosedEvent)
+				closed = event.(*contract.ElicitationClosedEvent)
 			})
 			_, err := rt.elicitationHandler(ctx, &mcp.ElicitParams{Message: "Question"})
 			if cancelRequest {

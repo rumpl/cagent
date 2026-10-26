@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/sessioncontext"
 )
 
-func (r *LocalRuntime) handleListSessions(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleListSessions(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ contract.EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
 	if r.sessionStore == nil {
 		return tools.ResultError("session history is not available in this runtime"), nil
 	}
@@ -51,7 +52,7 @@ func (r *LocalRuntime) handleListSessions(ctx context.Context, sess *session.Ses
 	return tools.ResultJSON(infos), nil
 }
 
-func (r *LocalRuntime) handleReadSession(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleReadSession(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ contract.EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
 	if r.sessionStore == nil {
 		return tools.ResultError("session history is not available in this runtime"), nil
 	}

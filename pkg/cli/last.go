@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 type lastResponse struct {
@@ -20,28 +21,28 @@ type lastResponse struct {
 	finishReason chat.FinishReason
 }
 
-func (r *lastResponse) observe(event runtime.Event) {
-	if scoped, ok := event.(runtime.SessionScoped); ok {
+func (r *lastResponse) observe(event contract.Event) {
+	if scoped, ok := event.(contract.SessionScoped); ok {
 		if id := scoped.GetSessionID(); id != "" && id != r.sessionID {
 			return
 		}
 	}
 
 	switch e := event.(type) {
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		if e.MessageID != r.messageID || e.AgentName != r.agentName {
 			r.content.Reset()
 		}
 		r.messageID = e.MessageID
 		r.agentName = e.AgentName
 		r.content.WriteString(e.Content)
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		if e.MessageID != r.messageID || e.AgentName != r.agentName {
 			r.content.Reset()
 			r.messageID = e.MessageID
 			r.agentName = e.AgentName
 		}
-	case *runtime.MessageAddedEvent:
+	case *contract.MessageAddedEvent:
 		if e.AssistantMessageEmpty || e.HasToolCalls {
 			r.content.Reset()
 		}
@@ -55,15 +56,15 @@ func (r *lastResponse) observe(event runtime.Event) {
 		if len(msg.ToolCalls) == 0 && msg.FunctionCall == nil {
 			r.content.WriteString(chat.VisibleAssistantContent(msg.Content))
 		}
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		r.stopReason = e.Reason
 		r.finishReason = e.FinishReason
 		if e.AgentName != "" && e.AgentName != r.agentName {
 			r.content.Reset()
 		}
-	case *runtime.MaxIterationsReachedEvent:
+	case *contract.MaxIterationsReachedEvent:
 		r.content.Reset()
-	case *runtime.TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		if e.AssistantMessageEmpty {
 			r.content.Reset()
 		}

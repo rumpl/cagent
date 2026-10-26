@@ -29,6 +29,8 @@ import (
 	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -282,7 +284,7 @@ func (m mockModelStore) GetModel(_ context.Context, _ modelsdev.ID) (*modelsdev.
 	return nil, nil
 }
 
-func runSession(t *testing.T, sess *session.Session, stream *mockStream) []Event {
+func runSession(t *testing.T, sess *session.Session, stream *mockStream) []contract.Event {
 	t.Helper()
 
 	prov := &mockProvider{id: "test/mock-model", stream: stream}
@@ -296,7 +298,7 @@ func runSession(t *testing.T, sess *session.Session, stream *mockStream) []Event
 
 	evCh := rt.RunStream(t.Context(), sess)
 
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -306,11 +308,11 @@ func runSession(t *testing.T, sess *session.Session, stream *mockStream) []Event
 func TestImageGenerationTextOnlyWarning(t *testing.T) {
 	t.Parallel()
 
-	warningFor := func(t *testing.T, prompt string, stream *mockStream) *WarningEvent {
+	warningFor := func(t *testing.T, prompt string, stream *mockStream) *contract.WarningEvent {
 		t.Helper()
 		events := runSession(t, session.New(session.WithUserMessage(prompt)), stream)
 		for _, event := range events {
-			if warning, ok := event.(*WarningEvent); ok && warning.Message == missingGeneratedImageWarning {
+			if warning, ok := event.(*contract.WarningEvent); ok && warning.Message == missingGeneratedImageWarning {
 				return warning
 			}
 		}
@@ -322,9 +324,9 @@ func TestImageGenerationTextOnlyWarning(t *testing.T) {
 		sess := session.New(session.WithUserMessage("draw an image of Docker and friends"))
 		events := runSession(t, sess, newStreamBuilder().AddContent("Here's an image of Docker and its friends.").AddStopWithUsage(10, 8).Build())
 
-		var warning *WarningEvent
+		var warning *contract.WarningEvent
 		for _, event := range events {
-			if candidate, ok := event.(*WarningEvent); ok && candidate.Message == missingGeneratedImageWarning {
+			if candidate, ok := event.(*contract.WarningEvent); ok && candidate.Message == missingGeneratedImageWarning {
 				warning = candidate
 			}
 		}
@@ -349,7 +351,7 @@ func TestImageGenerationTextOnlyWarning(t *testing.T) {
 	})
 }
 
-func hasEventType(t *testing.T, events []Event, target Event) bool {
+func hasEventType(t *testing.T, events []contract.Event, target contract.Event) bool {
 	t.Helper()
 
 	want := reflect.TypeOf(target)
@@ -363,7 +365,7 @@ func hasEventType(t *testing.T, events []Event, target Event) bool {
 
 // assertEventsEqual compares two event slices, ignoring timestamps.
 // Timestamps are inherently non-deterministic in tests.
-func assertEventsEqual(t *testing.T, expected, actual []Event) {
+func assertEventsEqual(t *testing.T, expected, actual []contract.Event) {
 	t.Helper()
 
 	require.Len(t, actual, len(expected), "event count mismatch")
@@ -379,12 +381,12 @@ func assertEventsEqual(t *testing.T, expected, actual []Event) {
 
 		// IDs are random; compare chunk content while requiring identified streams.
 		switch e := actual[i].(type) {
-		case *AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			require.NotEmpty(t, e.MessageID)
 			eventCopy := *e
 			eventCopy.MessageID = ""
 			actual[i] = &eventCopy
-		case *AgentChoiceReasoningEvent:
+		case *contract.AgentChoiceReasoningEvent:
 			require.NotEmpty(t, e.MessageID)
 			eventCopy := *e
 			eventCopy.MessageID = ""
@@ -395,7 +397,7 @@ func assertEventsEqual(t *testing.T, expected, actual []Event) {
 }
 
 // clearTimestamps sets Timestamp fields to zero value in events for comparison.
-func clearTimestamps(event Event) {
+func clearTimestamps(event contract.Event) {
 	if event == nil {
 		return
 	}
@@ -435,26 +437,26 @@ func TestSimple(t *testing.T) {
 	// Extract the actual message from MessageAddedEvent to use in comparison
 	// (it contains dynamic fields like CreatedAt that we can't predict)
 	require.Len(t, events, 10)
-	msgAdded := events[7].(*MessageAddedEvent)
+	msgAdded := events[7].(*contract.MessageAddedEvent)
 	require.NotNil(t, msgAdded.Message)
 	require.Equal(t, "Hello", msgAdded.Message.Message.Content)
 	require.Equal(t, chat.MessageRoleAssistant, msgAdded.Message.Message.Role)
 
-	expectedEvents := []Event{
-		TeamInfo([]AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
-		ToolsetInfo(0, false, "root"),
-		UserMessage("Hi", sess.ID, nil, 0),
-		StreamStarted(sess.ID, "root"),
-		ToolsetInfo(0, false, "root"),
-		AgentInfo("root", "test/mock-model", "", ""),
-		AgentChoice("root", sess.ID, "Hello"),
-		MessageAdded(sess.ID, msgAdded.Message, "root"),
-		NewTokenUsageEvent(sess.ID, "root", &Usage{InputTokens: 3, OutputTokens: 2, ContextLength: 5, LastMessage: &MessageUsage{
+	expectedEvents := []contract.Event{
+		contract.TeamInfo([]contract.AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.UserMessage("Hi", sess.ID, nil, 0),
+		contract.StreamStarted(sess.ID, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.AgentInfo("root", "test/mock-model", "", ""),
+		contract.AgentChoice("root", sess.ID, "Hello"),
+		contract.MessageAdded(sess.ID, msgAdded.Message, "root"),
+		contract.NewTokenUsageEvent(sess.ID, "root", &contract.Usage{InputTokens: 3, OutputTokens: 2, ContextLength: 5, LastMessage: &contract.MessageUsage{
 			Usage:        chat.Usage{InputTokens: 3, OutputTokens: 2},
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
+		&contract.StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -479,28 +481,28 @@ func TestMultipleContentChunks(t *testing.T) {
 	// Extract the actual message from MessageAddedEvent to use in comparison
 	// (it contains dynamic fields like CreatedAt that we can't predict)
 	require.Len(t, events, 14)
-	msgAdded := events[11].(*MessageAddedEvent)
+	msgAdded := events[11].(*contract.MessageAddedEvent)
 	require.NotNil(t, msgAdded.Message)
 
-	expectedEvents := []Event{
-		TeamInfo([]AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
-		ToolsetInfo(0, false, "root"),
-		UserMessage("Please greet me", sess.ID, nil, 0),
-		StreamStarted(sess.ID, "root"),
-		ToolsetInfo(0, false, "root"),
-		AgentInfo("root", "test/mock-model", "", ""),
-		AgentChoice("root", sess.ID, "Hello "),
-		AgentChoice("root", sess.ID, "there, "),
-		AgentChoice("root", sess.ID, "how "),
-		AgentChoice("root", sess.ID, "are "),
-		AgentChoice("root", sess.ID, "you?"),
-		MessageAdded(sess.ID, msgAdded.Message, "root"),
-		NewTokenUsageEvent(sess.ID, "root", &Usage{InputTokens: 8, OutputTokens: 12, ContextLength: 20, LastMessage: &MessageUsage{
+	expectedEvents := []contract.Event{
+		contract.TeamInfo([]contract.AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.UserMessage("Please greet me", sess.ID, nil, 0),
+		contract.StreamStarted(sess.ID, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.AgentInfo("root", "test/mock-model", "", ""),
+		contract.AgentChoice("root", sess.ID, "Hello "),
+		contract.AgentChoice("root", sess.ID, "there, "),
+		contract.AgentChoice("root", sess.ID, "how "),
+		contract.AgentChoice("root", sess.ID, "are "),
+		contract.AgentChoice("root", sess.ID, "you?"),
+		contract.MessageAdded(sess.ID, msgAdded.Message, "root"),
+		contract.NewTokenUsageEvent(sess.ID, "root", &contract.Usage{InputTokens: 8, OutputTokens: 12, ContextLength: 20, LastMessage: &contract.MessageUsage{
 			Usage:        chat.Usage{InputTokens: 8, OutputTokens: 12},
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
+		&contract.StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -523,26 +525,26 @@ func TestWithReasoning(t *testing.T) {
 	// Extract the actual message from MessageAddedEvent to use in comparison
 	// (it contains dynamic fields like CreatedAt that we can't predict)
 	require.Len(t, events, 12)
-	msgAdded := events[9].(*MessageAddedEvent)
+	msgAdded := events[9].(*contract.MessageAddedEvent)
 	require.NotNil(t, msgAdded.Message)
 
-	expectedEvents := []Event{
-		TeamInfo([]AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
-		ToolsetInfo(0, false, "root"),
-		UserMessage("Hi", sess.ID, nil, 0),
-		StreamStarted(sess.ID, "root"),
-		ToolsetInfo(0, false, "root"),
-		AgentInfo("root", "test/mock-model", "", ""),
-		AgentChoiceReasoning("root", sess.ID, "Let me think about this..."),
-		AgentChoiceReasoning("root", sess.ID, " I should respond politely."),
-		AgentChoice("root", sess.ID, "Hello, how can I help you?"),
-		MessageAdded(sess.ID, msgAdded.Message, "root"),
-		NewTokenUsageEvent(sess.ID, "root", &Usage{InputTokens: 10, OutputTokens: 15, ContextLength: 25, LastMessage: &MessageUsage{
+	expectedEvents := []contract.Event{
+		contract.TeamInfo([]contract.AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.UserMessage("Hi", sess.ID, nil, 0),
+		contract.StreamStarted(sess.ID, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.AgentInfo("root", "test/mock-model", "", ""),
+		contract.AgentChoiceReasoning("root", sess.ID, "Let me think about this..."),
+		contract.AgentChoiceReasoning("root", sess.ID, " I should respond politely."),
+		contract.AgentChoice("root", sess.ID, "Hello, how can I help you?"),
+		contract.MessageAdded(sess.ID, msgAdded.Message, "root"),
+		contract.NewTokenUsageEvent(sess.ID, "root", &contract.Usage{InputTokens: 10, OutputTokens: 15, ContextLength: 25, LastMessage: &contract.MessageUsage{
 			Usage:        chat.Usage{InputTokens: 10, OutputTokens: 15},
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
+		&contract.StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -566,27 +568,27 @@ func TestMixedContentAndReasoning(t *testing.T) {
 	// Extract the actual message from MessageAddedEvent to use in comparison
 	// (it contains dynamic fields like CreatedAt that we can't predict)
 	require.Len(t, events, 13)
-	msgAdded := events[10].(*MessageAddedEvent)
+	msgAdded := events[10].(*contract.MessageAddedEvent)
 	require.NotNil(t, msgAdded.Message)
 
-	expectedEvents := []Event{
-		TeamInfo([]AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
-		ToolsetInfo(0, false, "root"),
-		UserMessage("Hi there", sess.ID, nil, 0),
-		StreamStarted(sess.ID, "root"),
-		ToolsetInfo(0, false, "root"),
-		AgentInfo("root", "test/mock-model", "", ""),
-		AgentChoiceReasoning("root", sess.ID, "The user wants a greeting"),
-		AgentChoice("root", sess.ID, "Hello!"),
-		AgentChoiceReasoning("root", sess.ID, " I should be friendly"),
-		AgentChoice("root", sess.ID, " How can I help you today?"),
-		MessageAdded(sess.ID, msgAdded.Message, "root"),
-		NewTokenUsageEvent(sess.ID, "root", &Usage{InputTokens: 15, OutputTokens: 20, ContextLength: 35, LastMessage: &MessageUsage{
+	expectedEvents := []contract.Event{
+		contract.TeamInfo([]contract.AgentDetails{{Name: "root", Provider: "test", Model: "mock-model", ExecutionCapabilities: nativeExecutionProfile()}}, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.UserMessage("Hi there", sess.ID, nil, 0),
+		contract.StreamStarted(sess.ID, "root"),
+		contract.ToolsetInfo(0, false, "root"),
+		contract.AgentInfo("root", "test/mock-model", "", ""),
+		contract.AgentChoiceReasoning("root", sess.ID, "The user wants a greeting"),
+		contract.AgentChoice("root", sess.ID, "Hello!"),
+		contract.AgentChoiceReasoning("root", sess.ID, " I should be friendly"),
+		contract.AgentChoice("root", sess.ID, " How can I help you today?"),
+		contract.MessageAdded(sess.ID, msgAdded.Message, "root"),
+		contract.NewTokenUsageEvent(sess.ID, "root", &contract.Usage{InputTokens: 15, OutputTokens: 20, ContextLength: 35, LastMessage: &contract.MessageUsage{
 			Usage:        chat.Usage{InputTokens: 15, OutputTokens: 20},
 			Model:        "test/mock-model",
 			FinishReason: chat.FinishReasonStop,
 		}}),
-		&StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
+		&contract.StreamStoppedEvent{Type: "stream_stopped", SessionID: sess.ID, AgentContext: newAgentContext("root"), Reason: "normal", FinishReason: chat.FinishReasonStop},
 	}
 
 	assertEventsEqual(t, expectedEvents, events)
@@ -605,11 +607,11 @@ func TestToolCallSequence(t *testing.T) {
 
 	events := runSession(t, sess, stream)
 
-	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent")
-	require.False(t, hasEventType(t, events, &ToolCallEvent{}), "Should not have ToolCallEvent without actual tool execution")
+	require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}), "Expected PartialToolCallEvent")
+	require.False(t, hasEventType(t, events, &contract.ToolCallEvent{}), "Should not have ToolCallEvent without actual tool execution")
 
-	require.True(t, hasEventType(t, events, &StreamStartedEvent{}), "Expected StreamStartedEvent")
-	require.True(t, hasEventType(t, events, &StreamStoppedEvent{}), "Expected StreamStoppedEvent")
+	require.True(t, hasEventType(t, events, &contract.StreamStartedEvent{}), "Expected StreamStartedEvent")
+	require.True(t, hasEventType(t, events, &contract.StreamStoppedEvent{}), "Expected StreamStoppedEvent")
 }
 
 func TestRunStreamIncrementsActiveRootStreamsBeforeReturning(t *testing.T) {
@@ -638,12 +640,12 @@ func TestRecallUsesSteerWhileRootStreamActive(t *testing.T) {
 	rt := &LocalRuntime{steerQueue: NewInMemoryMessageQueue(1)}
 	rt.activeRootStreams.Store(1)
 	handlerCalled := false
-	rt.SetRecallHandler(func(context.Context, QueuedMessage) bool {
+	rt.SetRecallHandler(func(context.Context, contract.QueuedMessage) bool {
 		handlerCalled = true
 		return true
 	})
 
-	recall := QueuedMessage{Content: "job finished"}
+	recall := contract.QueuedMessage{Content: "job finished"}
 	require.NoError(t, rt.recall(t.Context(), recall))
 	assert.False(t, handlerCalled)
 
@@ -674,7 +676,7 @@ func TestProcessToolCallsRecallEnqueuesSteeringMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	stopRun, stopMsg := rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{
 		ID:       "call_1",
 		Type:     "function",
@@ -689,7 +691,7 @@ func TestProcessToolCallsRecallEnqueuesSteeringMessage(t *testing.T) {
 
 	var sawRecall bool
 	for ev := range events {
-		if msg, ok := ev.(*UserMessageEvent); ok && msg.Message == recallMessage {
+		if msg, ok := ev.(*contract.UserMessageEvent); ok && msg.Message == recallMessage {
 			sawRecall = true
 		}
 	}
@@ -714,18 +716,18 @@ func TestXMLToolCallFallback(t *testing.T) {
 	events := runSession(t, sess, stream)
 
 	// The XML should be promoted to a PartialToolCall, not remain as plain text.
-	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent from XML extraction")
+	require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}), "Expected PartialToolCallEvent from XML extraction")
 
 	// No raw XML should have been emitted as an AgentChoice event.
 	for _, ev := range events {
-		if choice, ok := ev.(*AgentChoiceEvent); ok {
+		if choice, ok := ev.(*contract.AgentChoiceEvent); ok {
 			require.NotContains(t, choice.Content, "<tool_call>", "XML tool call block must not appear in AgentChoice events")
 		}
 	}
 
 	// Verify the extracted tool call fields.
 	for _, ev := range events {
-		if partial, ok := ev.(*PartialToolCallEvent); ok {
+		if partial, ok := ev.(*contract.PartialToolCallEvent); ok {
 			require.Equal(t, "shell_exec", partial.ToolCall.Function.Name)
 			require.JSONEq(t, `{"cmd": "ls -la"}`, partial.ToolCall.Function.Arguments)
 		}
@@ -749,7 +751,7 @@ func TestXMLToolCallFallback_WithPreamble(t *testing.T) {
 	// Preamble text must have been emitted as AgentChoice.
 	var choiceContents []string
 	for _, ev := range events {
-		if choice, ok := ev.(*AgentChoiceEvent); ok {
+		if choice, ok := ev.(*contract.AgentChoiceEvent); ok {
 			choiceContents = append(choiceContents, choice.Content)
 		}
 	}
@@ -762,7 +764,7 @@ func TestXMLToolCallFallback_WithPreamble(t *testing.T) {
 	}
 
 	// Tool must still be extracted.
-	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}))
+	require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}))
 }
 
 func TestErrorEvent(t *testing.T) {
@@ -780,22 +782,22 @@ func TestErrorEvent(t *testing.T) {
 
 	evCh := rt.RunStream(t.Context(), sess)
 
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	require.Len(t, events, 8)
-	require.IsType(t, &TeamInfoEvent{}, events[0])
-	require.IsType(t, &ToolsetInfoEvent{}, events[1])
-	require.IsType(t, &UserMessageEvent{}, events[2])
-	require.IsType(t, &StreamStartedEvent{}, events[3])
-	require.IsType(t, &ToolsetInfoEvent{}, events[4])
-	require.IsType(t, &AgentInfoEvent{}, events[5])
-	require.IsType(t, &ErrorEvent{}, events[6])
-	require.IsType(t, &StreamStoppedEvent{}, events[7])
+	require.IsType(t, &contract.TeamInfoEvent{}, events[0])
+	require.IsType(t, &contract.ToolsetInfoEvent{}, events[1])
+	require.IsType(t, &contract.UserMessageEvent{}, events[2])
+	require.IsType(t, &contract.StreamStartedEvent{}, events[3])
+	require.IsType(t, &contract.ToolsetInfoEvent{}, events[4])
+	require.IsType(t, &contract.AgentInfoEvent{}, events[5])
+	require.IsType(t, &contract.ErrorEvent{}, events[6])
+	require.IsType(t, &contract.StreamStoppedEvent{}, events[7])
 
-	errorEvent := events[6].(*ErrorEvent)
+	errorEvent := events[6].(*contract.ErrorEvent)
 	require.Contains(t, errorEvent.Error, "simulated error")
 }
 
@@ -822,17 +824,17 @@ func TestContextCancellation(t *testing.T) {
 
 	cancel()
 
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	require.GreaterOrEqual(t, len(events), 4)
-	require.IsType(t, &TeamInfoEvent{}, events[0])
-	require.IsType(t, &ToolsetInfoEvent{}, events[1])
-	require.IsType(t, &UserMessageEvent{}, events[2])
-	require.IsType(t, &StreamStartedEvent{}, events[3])
-	require.IsType(t, &StreamStoppedEvent{}, events[len(events)-1])
+	require.IsType(t, &contract.TeamInfoEvent{}, events[0])
+	require.IsType(t, &contract.ToolsetInfoEvent{}, events[1])
+	require.IsType(t, &contract.UserMessageEvent{}, events[2])
+	require.IsType(t, &contract.StreamStartedEvent{}, events[3])
+	require.IsType(t, &contract.StreamStoppedEvent{}, events[len(events)-1])
 }
 
 func TestToolCallVariations(t *testing.T) {
@@ -885,9 +887,9 @@ func TestToolCallVariations(t *testing.T) {
 			sess := session.New(session.WithUserMessage("Use tools"))
 			events := runSession(t, sess, stream)
 
-			require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent for %s", tt.description)
-			require.True(t, hasEventType(t, events, &StreamStartedEvent{}), "Expected StreamStartedEvent")
-			require.True(t, hasEventType(t, events, &StreamStoppedEvent{}), "Expected StreamStoppedEvent")
+			require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}), "Expected PartialToolCallEvent for %s", tt.description)
+			require.True(t, hasEventType(t, events, &contract.StreamStartedEvent{}), "Expected StreamStartedEvent")
+			require.True(t, hasEventType(t, events, &contract.StreamStoppedEvent{}), "Expected StreamStoppedEvent")
 		})
 	}
 }
@@ -961,14 +963,14 @@ func TestCompaction(t *testing.T) {
 	sess.AddMessage(session.UserMessage("Again"))
 	events := rt.RunStream(t.Context(), sess)
 
-	var seen []Event
+	var seen []contract.Event
 	for ev := range events {
 		seen = append(seen, ev)
 	}
 
 	compactionStartIdx := -1
 	for i, ev := range seen {
-		if e, ok := ev.(*SessionCompactionEvent); ok {
+		if e, ok := ev.(*contract.SessionCompactionEvent); ok {
 			if e.Status == "started" && compactionStartIdx == -1 {
 				compactionStartIdx = i
 			}
@@ -1015,10 +1017,10 @@ func TestCompactionOverflowDoesNotLoop(t *testing.T) {
 	var compactionCount int
 	var sawError bool
 	for ev := range events {
-		if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "started" {
+		if e, ok := ev.(*contract.SessionCompactionEvent); ok && e.Status == "started" {
 			compactionCount++
 		}
-		if _, ok := ev.(*ErrorEvent); ok {
+		if _, ok := ev.(*contract.ErrorEvent); ok {
 			sawError = true
 		}
 	}
@@ -1040,25 +1042,25 @@ func TestSessionWithoutUserMessage(t *testing.T) {
 
 	events := runSession(t, sess, stream)
 
-	require.True(t, hasEventType(t, events, &StreamStartedEvent{}), "Expected StreamStartedEvent")
-	require.True(t, hasEventType(t, events, &StreamStoppedEvent{}), "Expected StreamStoppedEvent")
-	require.False(t, hasEventType(t, events, &UserMessageEvent{}), "Should not have UserMessageEvent when SendUserMessage is false")
+	require.True(t, hasEventType(t, events, &contract.StreamStartedEvent{}), "Expected StreamStartedEvent")
+	require.True(t, hasEventType(t, events, &contract.StreamStoppedEvent{}), "Expected StreamStoppedEvent")
+	require.False(t, hasEventType(t, events, &contract.UserMessageEvent{}), "Should not have UserMessageEvent when SendUserMessage is false")
 }
 
 // --- Tool setup failure handling tests ---
 
-func collectEvents(ch <-chan Event) []Event {
+func collectEvents(ch <-chan contract.Event) []contract.Event {
 	n := len(ch)
-	evs := make([]Event, 0, n)
+	evs := make([]contract.Event, 0, n)
 	for range n {
 		evs = append(evs, <-ch)
 	}
 	return evs
 }
 
-func hasWarningEvent(evs []Event) bool {
+func hasWarningEvent(evs []contract.Event) bool {
 	for _, e := range evs {
-		if _, ok := e.(*WarningEvent); ok {
+		if _, ok := e.(*contract.WarningEvent); ok {
 			return true
 		}
 	}
@@ -1107,7 +1109,7 @@ func TestGetTools_WarningHandling(t *testing.T) {
 			rt, err := NewLocalRuntime(t.Context(), tm, WithModelStore(mockModelStore{}))
 			require.NoError(t, err)
 
-			events := make(chan Event, 10)
+			events := make(chan contract.Event, 10)
 			sessionSpan := trace.SpanFromContext(t.Context())
 
 			// First call
@@ -1163,7 +1165,7 @@ func TestNewRuntime_ModelStorePrecedence(t *testing.T) {
 		cfgStore := &mockCatalogStore{}
 		rt, err := NewLocalRuntime(t.Context(), newTeam(),
 			WithModelStore(explicit),
-			WithModelSwitcherConfig(&ModelSwitcherConfig{ModelsStore: cfgStore}),
+			WithModelSwitcherConfig(&modelcatalog.Config{ModelsStore: cfgStore}),
 		)
 		require.NoError(t, err)
 		assert.Same(t, explicit, rt.modelsStore)
@@ -1173,7 +1175,7 @@ func TestNewRuntime_ModelStorePrecedence(t *testing.T) {
 		t.Parallel()
 		cfgStore := &mockCatalogStore{}
 		rt, err := NewLocalRuntime(t.Context(), newTeam(),
-			WithModelSwitcherConfig(&ModelSwitcherConfig{ModelsStore: cfgStore}),
+			WithModelSwitcherConfig(&modelcatalog.Config{ModelsStore: cfgStore}),
 		)
 		require.NoError(t, err)
 		assert.Same(t, cfgStore, rt.modelsStore)
@@ -1182,7 +1184,7 @@ func TestNewRuntime_ModelStorePrecedence(t *testing.T) {
 	t.Run("falls back to lazy store when neither is set", func(t *testing.T) {
 		t.Parallel()
 		rt, err := NewLocalRuntime(t.Context(), newTeam(),
-			WithModelSwitcherConfig(&ModelSwitcherConfig{}),
+			WithModelSwitcherConfig(&modelcatalog.Config{}),
 		)
 		require.NoError(t, err)
 		assert.IsType(t, &lazyModelStore{}, rt.modelsStore)
@@ -1207,7 +1209,7 @@ func TestProcessToolCalls_UnknownTool_ReturnsErrorResponse(t *testing.T) {
 		Function: tools.FunctionCall{Name: "non_existent_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, nil, NewChannelSink(events))
 	close(events)
 	for range events {
@@ -1316,7 +1318,7 @@ func TestEmitStartupInfo_DoesNotBlockOnInteractiveOAuth(t *testing.T) {
 		rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 		require.NoError(t, err)
 
-		events := make(chan Event, 20)
+		events := make(chan contract.Event, 20)
 
 		done := make(chan struct{})
 		go func() {
@@ -1380,13 +1382,13 @@ func TestEmitStartupInfo_SurfacesToolsetStartFailureAsWarning(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
-	var warning *WarningEvent
+	var warning *contract.WarningEvent
 	for e := range events {
-		if w, ok := e.(*WarningEvent); ok {
+		if w, ok := e.(*contract.WarningEvent); ok {
 			warning = w
 		}
 	}
@@ -1429,7 +1431,7 @@ func TestEmitStartupInfo_SkipsToolsetWhoseListingHangs(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		events := make(chan Event, 32)
+		events := make(chan contract.Event, 32)
 		done := make(chan struct{})
 		go func() {
 			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
@@ -1443,9 +1445,9 @@ func TestEmitStartupInfo_SkipsToolsetWhoseListingHangs(t *testing.T) {
 			t.Fatal("EmitStartupInfo did not return: a hung toolset blocked startup tool loading")
 		}
 
-		var toolsetInfos []*ToolsetInfoEvent
+		var toolsetInfos []*contract.ToolsetInfoEvent
 		for e := range events {
-			if ti, ok := e.(*ToolsetInfoEvent); ok {
+			if ti, ok := e.(*contract.ToolsetInfoEvent); ok {
 				toolsetInfos = append(toolsetInfos, ti)
 			}
 		}
@@ -1491,7 +1493,7 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		events := make(chan Event, 32)
+		events := make(chan contract.Event, 32)
 		done := make(chan struct{})
 		go func() {
 			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
@@ -1505,13 +1507,13 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartHangs(t *testing.T) {
 			t.Fatal("EmitStartupInfo did not return: a toolset with a hung Start blocked startup tool loading")
 		}
 
-		var toolsetInfos []*ToolsetInfoEvent
-		var warning *WarningEvent
+		var toolsetInfos []*contract.ToolsetInfoEvent
+		var warning *contract.WarningEvent
 		for e := range events {
 			switch ev := e.(type) {
-			case *ToolsetInfoEvent:
+			case *contract.ToolsetInfoEvent:
 				toolsetInfos = append(toolsetInfos, ev)
-			case *WarningEvent:
+			case *contract.WarningEvent:
 				warning = ev
 			}
 		}
@@ -1570,7 +1572,7 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight(t *testing.T) {
 		go func() { wedgedDone <- startable.Start(t.Context()) }()
 		<-inFlight.entered
 
-		events := make(chan Event, 32)
+		events := make(chan contract.Event, 32)
 		done := make(chan struct{})
 		go func() {
 			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
@@ -1584,13 +1586,13 @@ func TestEmitStartupInfo_SkipsToolsetWhoseStartIsAlreadyInFlight(t *testing.T) {
 			t.Fatal("EmitStartupInfo did not return promptly: an in-flight toolset start was joined instead of skipped")
 		}
 
-		var toolsetInfos []*ToolsetInfoEvent
-		var warnings []*WarningEvent
+		var toolsetInfos []*contract.ToolsetInfoEvent
+		var warnings []*contract.WarningEvent
 		for e := range events {
 			switch ev := e.(type) {
-			case *ToolsetInfoEvent:
+			case *contract.ToolsetInfoEvent:
 				toolsetInfos = append(toolsetInfos, ev)
-			case *WarningEvent:
+			case *contract.WarningEvent:
 				warnings = append(warnings, ev)
 			}
 		}
@@ -1648,7 +1650,7 @@ func TestEmitStartupInfo_ReturnsOnCancelWhileStartIsWedged(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(t.Context())
-		events := make(chan Event, 32)
+		events := make(chan contract.Event, 32)
 		done := make(chan struct{})
 		go func() {
 			rt.EmitStartupInfo(ctx, nil, NewChannelSink(events))
@@ -1672,7 +1674,7 @@ func TestEmitStartupInfo_ReturnsOnCancelWhileStartIsWedged(t *testing.T) {
 
 		close(events)
 		for e := range events {
-			if w, ok := e.(*WarningEvent); ok {
+			if w, ok := e.(*contract.WarningEvent); ok {
 				t.Fatalf("cancellation during a wedged start must not surface a warning; got %q", w.Message)
 			}
 		}
@@ -1714,7 +1716,7 @@ func TestEmitStartupInfo_EmitsProgressWhileSlowToolsetStarts(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		events := make(chan Event, 32)
+		events := make(chan contract.Event, 32)
 		go func() {
 			rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 			close(events)
@@ -1726,7 +1728,7 @@ func TestEmitStartupInfo_EmitsProgressWhileSlowToolsetStarts(t *testing.T) {
 		for {
 			select {
 			case e := <-events:
-				ti, ok := e.(*ToolsetInfoEvent)
+				ti, ok := e.(*contract.ToolsetInfoEvent)
 				if !ok {
 					continue
 				}
@@ -1768,12 +1770,12 @@ func TestEmitStartupInfo_AuthRequiredIsSilent(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	for e := range events {
-		if w, ok := e.(*WarningEvent); ok {
+		if w, ok := e.(*contract.WarningEvent); ok {
 			t.Fatalf("deferred-OAuth must not produce a WarningEvent (would be redundant noise); got: %q", w.Message)
 		}
 	}
@@ -1810,7 +1812,7 @@ func TestEmitStartupInfo_DeferredAuthDoesNotConsumeFailureGate(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 	for range events {
@@ -1883,7 +1885,7 @@ func TestEmitStartupInfo_RecoveryAuthNoticeEmittedOnce(t *testing.T) {
 	require.NotNil(t, wrapped, "agent.ToolSets() must wrap the inner toolset in a *tools.StartableToolSet")
 
 	// nopSend discards sidebar events; we inspect agent.DrainWarnings() instead.
-	nopSend := func(Event) bool { return true }
+	nopSend := func(contract.Event) bool { return true }
 	// Mirror EmitStartupInfo\'s non-interactive context so toolsets with OAuth
 	// fail fast rather than blocking on a prompt.
 	ctx := mcptools.WithoutInteractivePrompts(t.Context())
@@ -1953,17 +1955,17 @@ func TestEmitStartupInfo_PartialStartStillCountsCodeModeTools(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
-	var toolsetInfos []*ToolsetInfoEvent
-	var warning *WarningEvent
+	var toolsetInfos []*contract.ToolsetInfoEvent
+	var warning *contract.WarningEvent
 	for e := range events {
 		switch ev := e.(type) {
-		case *ToolsetInfoEvent:
+		case *contract.ToolsetInfoEvent:
 			toolsetInfos = append(toolsetInfos, ev)
-		case *WarningEvent:
+		case *contract.WarningEvent:
 			warning = ev
 		}
 	}
@@ -2003,7 +2005,7 @@ func TestConfigureToolsetHandlers_ReachesThroughCodeModeWrapper(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), tm, WithCurrentAgent("root"), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	rt.configureToolsetHandlers(root)
 	close(events)
 	for range events {
@@ -2036,9 +2038,9 @@ func TestEmitAgentWarnings_OnlyEmitsFailures(t *testing.T) {
 
 	root.AddToolWarning("toolset_a start failed: connection refused")
 
-	var emitted []*WarningEvent
-	rt.emitAgentWarnings(root, EventSinkFunc(func(e Event) {
-		if w, ok := e.(*WarningEvent); ok {
+	var emitted []*contract.WarningEvent
+	rt.emitAgentWarnings(root, EventSinkFunc(func(e contract.Event) {
+		if w, ok := e.(*contract.WarningEvent); ok {
 			emitted = append(emitted, w)
 		}
 	}))
@@ -2065,7 +2067,7 @@ func TestEmitAgentWarnings_NoEventsWhenQueueEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	var emitted int
-	rt.emitAgentWarnings(root, EventSinkFunc(func(Event) { emitted++ }))
+	rt.emitAgentWarnings(root, EventSinkFunc(func(contract.Event) { emitted++ }))
 	assert.Zero(t, emitted, "empty warnings queue must produce zero events")
 }
 
@@ -2089,38 +2091,38 @@ func TestEmitStartupInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a channel to collect events
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 
 	// Call EmitStartupInfo
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	// Collect events
-	var collectedEvents []Event
+	var collectedEvents []contract.Event
 	for event := range events {
 		collectedEvents = append(collectedEvents, event)
 	}
 
 	// Verify expected events are emitted
-	info := AgentInfo("startup-test-agent", "test/startup-model", "This is a startup test agent", "Welcome!").(*AgentInfoEvent)
+	info := contract.AgentInfo("startup-test-agent", "test/startup-model", "This is a startup test agent", "Welcome!").(*contract.AgentInfoEvent)
 	info.ExecutionCapabilities = nativeExecutionProfile()
-	expectedEvents := []Event{
+	expectedEvents := []contract.Event{
 		info,
-		TeamInfo([]AgentDetails{
+		contract.TeamInfo([]contract.AgentDetails{
 			{Name: "startup-test-agent", Description: "This is a startup test agent", Provider: "test", Model: "startup-model", ExecutionCapabilities: nativeExecutionProfile()},
 			{Name: "other-agent", Description: "This is another agent", Provider: "test", Model: "startup-model", ExecutionCapabilities: nativeExecutionProfile()},
 		}, "startup-test-agent"),
-		ToolsetInfo(0, false, "startup-test-agent"), // No tools configured
+		contract.ToolsetInfo(0, false, "startup-test-agent"), // No tools configured
 	}
 
 	assertEventsEqual(t, expectedEvents, collectedEvents)
 
 	// Test that calling EmitStartupInfo again doesn't emit duplicate events
-	events2 := make(chan Event, 10)
+	events2 := make(chan contract.Event, 10)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events2))
 	close(events2)
 
-	var collectedEvents2 []Event
+	var collectedEvents2 []contract.Event
 	for event := range events2 {
 		collectedEvents2 = append(collectedEvents2, event)
 	}
@@ -2140,13 +2142,13 @@ func TestEmitStartupInfo_AgentInfoCarriesContextLimit(t *testing.T) {
 		WithModelStore(mockModelStoreWithLimit{limit: 200_000}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
-	var agentInfo *AgentInfoEvent
+	var agentInfo *contract.AgentInfoEvent
 	for event := range events {
-		if e, ok := event.(*AgentInfoEvent); ok {
+		if e, ok := event.(*contract.AgentInfoEvent); ok {
 			agentInfo = e
 		}
 	}
@@ -2177,14 +2179,14 @@ func TestEmitStartupInfo_WithSessionTokenData(t *testing.T) {
 	sess.InputTokens = 5000
 	sess.OutputTokens = 1000
 
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
 	// Collect events and find the TokenUsageEvent
-	var tokenEvent *TokenUsageEvent
+	var tokenEvent *contract.TokenUsageEvent
 	for event := range events {
-		if te, ok := event.(*TokenUsageEvent); ok {
+		if te, ok := event.(*contract.TokenUsageEvent); ok {
 			tokenEvent = te
 		}
 	}
@@ -2248,13 +2250,13 @@ func TestEmitStartupInfo_CostIncludesSubSessions(t *testing.T) {
 	})
 	sess.Messages = append(sess.Messages, session.Item{SubSession: subSess})
 
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
-	var tokenEvent *TokenUsageEvent
+	var tokenEvent *contract.TokenUsageEvent
 	for event := range events {
-		if te, ok := event.(*TokenUsageEvent); ok {
+		if te, ok := event.(*contract.TokenUsageEvent); ok {
 			tokenEvent = te
 		}
 	}
@@ -2300,13 +2302,13 @@ func TestEmitStartupInfo_LastMessageFinishReason(t *testing.T) {
 		},
 	})
 
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 	close(events)
 
-	var tokenEvent *TokenUsageEvent
+	var tokenEvent *contract.TokenUsageEvent
 	for event := range events {
-		if te, ok := event.(*TokenUsageEvent); ok {
+		if te, ok := event.(*contract.TokenUsageEvent); ok {
 			tokenEvent = te
 		}
 	}
@@ -2335,12 +2337,12 @@ func TestEmitStartupInfo_NilSessionNoTokenEvent(t *testing.T) {
 		WithModelStore(mockModelStoreWithLimit{limit: 200_000}))
 	require.NoError(t, err)
 
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
 	for event := range events {
-		_, isTokenEvent := event.(*TokenUsageEvent)
+		_, isTokenEvent := event.(*contract.TokenUsageEvent)
 		assert.False(t, isTokenEvent, "EmitStartupInfo should not emit TokenUsageEvent when session is nil")
 	}
 }
@@ -2381,14 +2383,14 @@ func TestPermissions_DenyBlocksToolExecution(t *testing.T) {
 		},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied, look for a ToolCallResponseEvent with error
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if tr, ok := ev.(*ToolCallResponseEvent); ok {
+		if tr, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = tr
 			break
 		}
@@ -2439,7 +2441,7 @@ func TestPermissions_AllowAutoApprovesTool(t *testing.T) {
 		Function: tools.FunctionCall{Name: "safe_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
@@ -2482,14 +2484,14 @@ func TestPermissions_DenyTakesPriorityOverAllow(t *testing.T) {
 		},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// The tool should be denied despite wildcard allow
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if tr, ok := ev.(*ToolCallResponseEvent); ok {
+		if tr, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = tr
 			break
 		}
@@ -2532,13 +2534,13 @@ func TestSessionPermissions_DenyBlocksToolExecution(t *testing.T) {
 		},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if tr, ok := ev.(*ToolCallResponseEvent); ok {
+		if tr, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = tr
 			break
 		}
@@ -2587,7 +2589,7 @@ func TestSessionPermissions_AllowAutoApprovesTool(t *testing.T) {
 		Function: tools.FunctionCall{Name: "allowed_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
@@ -2635,14 +2637,14 @@ func TestSessionPermissions_TakePriorityOverTeamPermissions(t *testing.T) {
 		},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
 	// Session deny should take priority over team allow
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if tr, ok := ev.(*ToolCallResponseEvent); ok {
+		if tr, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = tr
 			break
 		}
@@ -2684,7 +2686,7 @@ func TestToolRejectionWithReason(t *testing.T) {
 		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
@@ -2693,13 +2695,13 @@ func TestToolRejectionWithReason(t *testing.T) {
 	}()
 
 	// Wait for confirmation request and then reject with a reason
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if _, ok := ev.(*ToolCallConfirmationEvent); ok {
+		if _, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 			// Send rejection with a specific reason
 			rt.resumeChan <- ResumeReject("The arguments provided are incorrect.")
 		}
-		if resp, ok := ev.(*ToolCallResponseEvent); ok {
+		if resp, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = resp
 		}
 	}
@@ -2742,7 +2744,7 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 		Function: tools.FunctionCall{Name: "shell", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 
 	// Run in goroutine since it will block waiting for confirmation
 	go func() {
@@ -2751,13 +2753,13 @@ func TestToolRejectionWithoutReason(t *testing.T) {
 	}()
 
 	// Wait for confirmation request and then reject without a reason
-	var toolResponse *ToolCallResponseEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for ev := range events {
-		if _, ok := ev.(*ToolCallConfirmationEvent); ok {
+		if _, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 			// Send rejection without a reason
 			rt.resumeChan <- ResumeReject("")
 		}
-		if resp, ok := ev.(*ToolCallResponseEvent); ok {
+		if resp, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			toolResponse = resp
 		}
 	}
@@ -2787,7 +2789,7 @@ func TestTransferTaskRejectsNonSubAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	toolCall := tools.ToolCall{
 		ID:   "call_1",
@@ -2827,7 +2829,7 @@ func TestTransferTaskAllowsSubAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	toolCall := tools.ToolCall{
 		ID:   "call_1",
@@ -2873,7 +2875,7 @@ func TestTransferTaskPersistsSubSessionOnError(t *testing.T) {
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	sess.NonInteractive = true // mirror --exec mode
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	toolCall := tools.ToolCall{
 		ID:   "call_1",
@@ -2914,9 +2916,9 @@ func TestTransferTaskPersistsSubSessionOnError(t *testing.T) {
 	var sawSubSessionCompleted, sawErrorEvent bool
 	for ev := range evts {
 		switch ev.(type) {
-		case *SubSessionCompletedEvent:
+		case *contract.SubSessionCompletedEvent:
 			sawSubSessionCompleted = true
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			sawErrorEvent = true
 		}
 	}
@@ -2967,7 +2969,7 @@ func TestDenyOverridesYoloMode(t *testing.T) {
 		Function: tools.FunctionCall{Name: "dangerous_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
@@ -3017,7 +3019,7 @@ func TestYoloMode_OverridesForceAsk(t *testing.T) {
 		Function: tools.FunctionCall{Name: "careful_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
@@ -3066,7 +3068,7 @@ func TestSessionDenyOverridesYoloMode(t *testing.T) {
 		Function: tools.FunctionCall{Name: "blocked_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 
@@ -3420,7 +3422,7 @@ func TestProcessToolCalls_UsesPinnedAgent(t *testing.T) {
 		Function: tools.FunctionCall{Name: "worker_tool", Arguments: "{}"},
 	}}
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, []tools.Tool{workerTool}, NewChannelSink(events))
 	close(events)
 
@@ -3608,7 +3610,7 @@ func TestRunStream_EmptyMessages_SendUserMessage(t *testing.T) {
 
 	// Must not panic.
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -3651,7 +3653,7 @@ func TestRunStream_AddEnvironmentInfo_DoesNotPolluteSession(t *testing.T) {
 	)
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -3672,9 +3674,9 @@ func TestRunStream_AddEnvironmentInfo_DoesNotPolluteSession(t *testing.T) {
 
 	// The UserMessageEvent must mirror the user's input, not the env
 	// info block produced by the hook.
-	var userEvts []*UserMessageEvent
+	var userEvts []*contract.UserMessageEvent
 	for _, ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok {
 			userEvts = append(userEvts, ue)
 		}
 	}
@@ -3797,7 +3799,7 @@ func TestReprobe_NewToolsAvailableAfterToolCall(t *testing.T) {
 	sess.ToolsApproved = true
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -3829,7 +3831,7 @@ func TestReprobe_NewToolsAvailableAfterToolCall(t *testing.T) {
 	// A ToolsetInfo event with the new count must have been emitted during reprobe.
 	var toolsetInfoCounts []int
 	for _, ev := range events {
-		if ti, ok := ev.(*ToolsetInfoEvent); ok {
+		if ti, ok := ev.(*contract.ToolsetInfoEvent); ok {
 			toolsetInfoCounts = append(toolsetInfoCounts, ti.AvailableTools)
 		}
 	}
@@ -3956,7 +3958,7 @@ func TestReprobe_NoChangeMeansNoExtraEvents(t *testing.T) {
 	sess.ToolsApproved = true
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -3964,7 +3966,7 @@ func TestReprobe_NoChangeMeansNoExtraEvents(t *testing.T) {
 	// Count ToolsetInfo events — reprobe should NOT emit an extra one.
 	var counts []int
 	for _, ev := range events {
-		if ti, ok := ev.(*ToolsetInfoEvent); ok {
+		if ti, ok := ev.(*contract.ToolsetInfoEvent); ok {
 			counts = append(counts, ti.AvailableTools)
 		}
 	}
@@ -4050,27 +4052,27 @@ func TestSteer_IdleWindowIsConsumedOnNextTurn(t *testing.T) {
 	// Enqueue a steer message BEFORE calling RunStream — simulating the
 	// idle-window race where a Steer call lands between two RunStream
 	// invocations.
-	err = rt.Steer(t.Context(), QueuedMessage{Content: "urgent: change direction"})
+	err = rt.Steer(t.Context(), contract.QueuedMessage{Content: "urgent: change direction"})
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Do the task"))
 	sess.Title = "steer idle-window test"
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	// The run must complete normally (StreamStopped as the last event).
 	require.NotEmpty(t, events)
-	assert.IsType(t, &StreamStoppedEvent{}, events[len(events)-1],
+	assert.IsType(t, &contract.StreamStoppedEvent{}, events[len(events)-1],
 		"expected StreamStopped as the final event")
 
 	// A UserMessageEvent must have been emitted for the steer message.
 	var steerEventFound bool
 	for _, ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok && strings.Contains(ue.Message, "urgent: change direction") {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok && strings.Contains(ue.Message, "urgent: change direction") {
 			steerEventFound = true
 			break
 		}
@@ -4144,7 +4146,7 @@ func TestSteer_EmptySessionBootstrap(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enqueue before RunStream — zero messages in the session.
-	err = rt.Steer(t.Context(), QueuedMessage{Content: "bootstrap message"})
+	err = rt.Steer(t.Context(), contract.QueuedMessage{Content: "bootstrap message"})
 	require.NoError(t, err)
 
 	// Fresh session with NO messages (SendUserMessage defaults to true but
@@ -4153,20 +4155,20 @@ func TestSteer_EmptySessionBootstrap(t *testing.T) {
 	sess.Title = "steer bootstrap test"
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	// The run must complete normally.
 	require.NotEmpty(t, events)
-	assert.IsType(t, &StreamStoppedEvent{}, events[len(events)-1],
+	assert.IsType(t, &contract.StreamStoppedEvent{}, events[len(events)-1],
 		"expected StreamStopped as the final event; got %T", events[len(events)-1])
 
 	// A UserMessageEvent must have been emitted for the steer message.
 	var steerEventFound bool
 	for _, ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok && strings.Contains(ue.Message, "bootstrap message") {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok && strings.Contains(ue.Message, "bootstrap message") {
 			steerEventFound = true
 			break
 		}
@@ -4299,7 +4301,7 @@ func TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream(t *testing.T) {
 	turn1 := &hookStream{
 		mockStream: turn1Base,
 		onStop: func() {
-			_ = rt.Steer(t.Context(), QueuedMessage{Content: "end-of-iter steer"})
+			_ = rt.Steer(t.Context(), contract.QueuedMessage{Content: "end-of-iter steer"})
 		},
 	}
 	// Turn 2: the loop re-entered after the steer was consumed; model acks.
@@ -4324,21 +4326,21 @@ func TestSteer_EndOfIterationRaceIsConsumedInCurrentRunStream(t *testing.T) {
 	sess.Title = "steer end-of-iter race test"
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	// The run must complete normally.
 	require.NotEmpty(t, events)
-	assert.IsType(t, &StreamStoppedEvent{}, events[len(events)-1],
+	assert.IsType(t, &contract.StreamStoppedEvent{}, events[len(events)-1],
 		"expected StreamStopped as the final event")
 
 	// The steer message must have been emitted as a UserMessageEvent
 	// within this RunStream (not deferred to a future one).
 	var steerEventFound bool
 	for _, ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok && strings.Contains(ue.Message, "end-of-iter steer") {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok && strings.Contains(ue.Message, "end-of-iter steer") {
 			steerEventFound = true
 			break
 		}
@@ -4377,14 +4379,14 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 	t.Parallel()
 
 	t.Run("plain-text message gets newline appended to Content", func(t *testing.T) {
-		sm := QueuedMessage{Content: "hello"}
+		sm := contract.QueuedMessage{Content: "hello"}
 		got := appendNewlineToQueuedMessage(sm)
 		assert.Equal(t, "hello\n", got.Content)
 		assert.Nil(t, got.MultiContent)
 	})
 
 	t.Run("multi-content message with last part text gets newline on that part", func(t *testing.T) {
-		sm := QueuedMessage{
+		sm := contract.QueuedMessage{
 			MultiContent: []chat.MessagePart{
 				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
 				{Type: chat.MessagePartTypeText, Text: "and this"},
@@ -4398,7 +4400,7 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 	})
 
 	t.Run("multi-content message with last part non-text is returned unchanged", func(t *testing.T) {
-		sm := QueuedMessage{
+		sm := contract.QueuedMessage{
 			MultiContent: []chat.MessagePart{
 				{Type: chat.MessagePartTypeText, Text: "look at this"},
 				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
@@ -4412,7 +4414,7 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 	})
 
 	t.Run("multi-content message with no text part is returned unchanged", func(t *testing.T) {
-		sm := QueuedMessage{
+		sm := contract.QueuedMessage{
 			MultiContent: []chat.MessagePart{
 				{Type: chat.MessagePartTypeImageURL, ImageURL: &chat.MessageImageURL{URL: "https://example.com/img.png"}},
 			},
@@ -4429,13 +4431,13 @@ func TestAppendNewlineToQueuedMessage(t *testing.T) {
 		parts := []chat.MessagePart{
 			{Type: chat.MessagePartTypeText, Text: "original"},
 		}
-		sm := QueuedMessage{MultiContent: parts}
+		sm := contract.QueuedMessage{MultiContent: parts}
 		_ = appendNewlineToQueuedMessage(sm)
 		assert.Equal(t, "original", parts[0].Text, "original slice must not be mutated")
 	})
 
 	t.Run("plain-text original not mutated", func(t *testing.T) {
-		sm := QueuedMessage{Content: "x"}
+		sm := contract.QueuedMessage{Content: "x"}
 		_ = appendNewlineToQueuedMessage(sm)
 		assert.Equal(t, "x", sm.Content)
 	})
@@ -4458,12 +4460,12 @@ func TestDrainAndEmitSteered_MultipleMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enqueue three plain-text steer messages before draining.
-	require.NoError(t, rt.Steer(t.Context(), QueuedMessage{Content: "first"}))
-	require.NoError(t, rt.Steer(t.Context(), QueuedMessage{Content: "second"}))
-	require.NoError(t, rt.Steer(t.Context(), QueuedMessage{Content: "third"}))
+	require.NoError(t, rt.Steer(t.Context(), contract.QueuedMessage{Content: "first"}))
+	require.NoError(t, rt.Steer(t.Context(), contract.QueuedMessage{Content: "second"}))
+	require.NoError(t, rt.Steer(t.Context(), contract.QueuedMessage{Content: "third"}))
 
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 
 	sr := rt.drainAndEmitSteered(t.Context(), sess, root, NewChannelSink(events))
 	close(events)
@@ -4487,7 +4489,7 @@ func TestDrainAndEmitSteered_MultipleMessages(t *testing.T) {
 	// The UserMessageEvent contents must mirror the session messages.
 	var eventMsgs []string
 	for ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok {
 			eventMsgs = append(eventMsgs, ue.Message)
 		}
 	}
@@ -4511,7 +4513,7 @@ func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Two multi-content messages.
-	require.NoError(t, rt.Steer(t.Context(), QueuedMessage{
+	require.NoError(t, rt.Steer(t.Context(), contract.QueuedMessage{
 		Content: "first",
 		MultiContent: []chat.MessagePart{
 			{Type: chat.MessagePartTypeText, Text: "first"},
@@ -4519,7 +4521,7 @@ func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
 			{Type: chat.MessagePartTypeText, Text: "first-text-after-img"},
 		},
 	}))
-	require.NoError(t, rt.Steer(t.Context(), QueuedMessage{
+	require.NoError(t, rt.Steer(t.Context(), contract.QueuedMessage{
 		Content: "second",
 		MultiContent: []chat.MessagePart{
 			{Type: chat.MessagePartTypeText, Text: "second"},
@@ -4527,7 +4529,7 @@ func TestDrainAndEmitSteered_MultiContent(t *testing.T) {
 	}))
 
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 
 	sr := rt.drainAndEmitSteered(t.Context(), sess, root, NewChannelSink(events))
 	close(events)
@@ -4600,7 +4602,7 @@ func TestPostToolHookReceivesToolResult(t *testing.T) {
 		Function: tools.FunctionCall{Name: "echo_tool", Arguments: `{"message":"hello"}`},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 
 	require.NotNil(t, got)
@@ -4654,16 +4656,16 @@ func TestPostToolHookEmitsLifecycleEvents(t *testing.T) {
 		Function: tools.FunctionCall{Name: "echo_tool", Arguments: `{}`},
 	}}
 
-	events := make(chan Event, 10)
+	events := make(chan contract.Event, 10)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 
-	var started *HookStartedEvent
-	var finished *HookFinishedEvent
+	var started *contract.HookStartedEvent
+	var finished *contract.HookFinishedEvent
 	for _, event := range drainEvents(events) {
 		switch ev := event.(type) {
-		case *HookStartedEvent:
+		case *contract.HookStartedEvent:
 			started = ev
-		case *HookFinishedEvent:
+		case *contract.HookFinishedEvent:
 			finished = ev
 		}
 	}
@@ -4865,7 +4867,7 @@ func TestImageGenerationProviderErrorDoesNotEmitWarning(t *testing.T) {
 
 	events := runAndCollect(t, rt, session.New(session.WithUserMessage("generate an image")))
 	for _, event := range events {
-		if warning, ok := event.(*WarningEvent); ok {
+		if warning, ok := event.(*contract.WarningEvent); ok {
 			assert.NotEqual(t, missingGeneratedImageWarning, warning.Message)
 		}
 	}
@@ -4894,8 +4896,8 @@ func TestRunAgentImmediateFailureEmitsNoZeroUsageEvent(t *testing.T) {
 		WithModelStore(mockModelStoreWithCostAndLimit{limit: 100_000, cost: modelsdev.Cost{Input: 10, Output: 20}}))
 	require.NoError(t, err)
 
-	var forwarded []Event
-	rt.OnBackgroundEvent(func(event Event) { forwarded = append(forwarded, event) })
+	var forwarded []contract.Event
+	rt.OnBackgroundEvent(func(event contract.Event) { forwarded = append(forwarded, event) })
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	result := rt.RunAgent(t.Context(), agenttool.RunParams{
@@ -4906,8 +4908,8 @@ func TestRunAgentImmediateFailureEmitsNoZeroUsageEvent(t *testing.T) {
 	require.NotEmpty(t, result.ErrMsg, "RunAgent should surface the sub-session error")
 
 	require.Len(t, forwarded, 2, "a failed child emits only its lifecycle events")
-	started := forwarded[0].(*BackgroundAgentStatusEvent)
-	stopped := forwarded[1].(*BackgroundAgentStatusEvent)
+	started := forwarded[0].(*contract.BackgroundAgentStatusEvent)
+	stopped := forwarded[1].(*contract.BackgroundAgentStatusEvent)
 	assert.True(t, started.Running)
 	assert.False(t, stopped.Running)
 	assert.Equal(t, started.SessionID, stopped.SessionID)
@@ -4959,8 +4961,8 @@ func TestRunAgentForwardsTokenUsageOutOfBand(t *testing.T) {
 		WithModelStore(mockModelStoreWithCostAndLimit{limit: 100_000, cost: modelsdev.Cost{Input: 10, Output: 20}}))
 	require.NoError(t, err)
 
-	var forwarded []Event
-	rt.OnBackgroundEvent(func(event Event) { forwarded = append(forwarded, event) })
+	var forwarded []contract.Event
+	rt.OnBackgroundEvent(func(event contract.Event) { forwarded = append(forwarded, event) })
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
 	result := rt.RunAgent(t.Context(), agenttool.RunParams{
@@ -4971,15 +4973,15 @@ func TestRunAgentForwardsTokenUsageOutOfBand(t *testing.T) {
 	require.Empty(t, result.ErrMsg, "RunAgent should succeed")
 
 	require.GreaterOrEqual(t, len(forwarded), 3)
-	started := forwarded[0].(*BackgroundAgentStatusEvent)
-	stopped := forwarded[len(forwarded)-1].(*BackgroundAgentStatusEvent)
+	started := forwarded[0].(*contract.BackgroundAgentStatusEvent)
+	stopped := forwarded[len(forwarded)-1].(*contract.BackgroundAgentStatusEvent)
 	assert.True(t, started.Running)
 	assert.False(t, stopped.Running)
 	assert.Equal(t, started.SessionID, stopped.SessionID)
 	assert.Equal(t, "worker", started.AgentName)
 	assert.Equal(t, "worker", stopped.AgentName)
 	for _, event := range forwarded[1 : len(forwarded)-1] {
-		usage, ok := event.(*TokenUsageEvent)
+		usage, ok := event.(*contract.TokenUsageEvent)
 		require.Truef(t, ok, "only TokenUsageEvents may be forwarded, got %T", event)
 		assert.Equal(t, "worker", usage.AgentName, "usage is attributed to the background agent")
 		assert.NotEqual(t, sess.ID, usage.SessionID, "usage carries the sub-session id, not the parent's")
@@ -4992,7 +4994,7 @@ func TestRunAgentForwardsTokenUsageOutOfBand(t *testing.T) {
 	// 50×$20 per 1M tokens), and the resolved context limit.
 	sub := lastAttachedSubSession(sess)
 	require.NotNil(t, sub)
-	last := forwarded[len(forwarded)-2].(*TokenUsageEvent)
+	last := forwarded[len(forwarded)-2].(*contract.TokenUsageEvent)
 	require.NotNil(t, last.Usage)
 	assert.Equal(t, sub.ID, last.SessionID)
 	assert.Equal(t, int64(150), last.Usage.ContextLength, "final snapshot carries the worker's cumulative usage")
@@ -5051,9 +5053,9 @@ func TestRunAgentEmitsFinalUsageOnCancellation(t *testing.T) {
 		WithModelStore(mockModelStoreWithCostAndLimit{limit: 100_000, cost: modelsdev.Cost{Input: 10, Output: 20}}))
 	require.NoError(t, err)
 
-	var forwarded []*TokenUsageEvent
-	rt.OnBackgroundEvent(func(event Event) {
-		if usage, ok := event.(*TokenUsageEvent); ok {
+	var forwarded []*contract.TokenUsageEvent
+	rt.OnBackgroundEvent(func(event contract.Event) {
+		if usage, ok := event.(*contract.TokenUsageEvent); ok {
 			forwarded = append(forwarded, usage)
 		}
 	})
@@ -5105,13 +5107,13 @@ func TestReasoningOnlyTurnEmitsWarning(t *testing.T) {
 	sess := session.New(session.WithUserMessage("List the files"))
 	events := runSession(t, sess, stream)
 
-	var warn *WarningEvent
+	var warn *contract.WarningEvent
 	assistantPersisted := false
 	for _, ev := range events {
 		switch e := ev.(type) {
-		case *WarningEvent:
+		case *contract.WarningEvent:
 			warn = e
-		case *MessageAddedEvent:
+		case *contract.MessageAddedEvent:
 			if e.Message != nil && e.Message.Message.Role == chat.MessageRoleAssistant {
 				assistantPersisted = true
 			}
@@ -5136,9 +5138,9 @@ func TestEmptyTurnEmitsWarning(t *testing.T) {
 	sess := session.New(session.WithUserMessage("hello"))
 	events := runSession(t, sess, stream)
 
-	var warn *WarningEvent
+	var warn *contract.WarningEvent
 	for _, ev := range events {
-		if w, ok := ev.(*WarningEvent); ok {
+		if w, ok := ev.(*contract.WarningEvent); ok {
 			warn = w
 		}
 	}
@@ -5193,13 +5195,13 @@ func TestEmptyTrailingTurnAfterToolCallsIsSilent(t *testing.T) {
 	sess.ToolsApproved = true
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
 
 	for _, ev := range events {
-		if w, ok := ev.(*WarningEvent); ok {
+		if w, ok := ev.(*contract.WarningEvent); ok {
 			assert.NotContains(t, w.Message, "empty response",
 				"a benign empty stop right after tool calls must not emit the empty-response warning")
 		}

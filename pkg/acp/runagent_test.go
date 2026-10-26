@@ -28,6 +28,8 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/team"
@@ -43,7 +45,7 @@ const testSessionID = "acp-test-session"
 // the mock in pkg/app/app_test.go: RunStream replays the configured events and
 // Resume records the requests it receives.
 type fakeRuntime struct {
-	events []runtime.Event
+	events []contract.Event
 	// onRunStream runs synchronously when RunStream is called, before any
 	// event is delivered (e.g. to cancel the turn context).
 	onRunStream func()
@@ -52,15 +54,15 @@ type fakeRuntime struct {
 	resumeCalls []runtime.ResumeRequest
 }
 
-var _ runtime.Runtime = (*fakeRuntime)(nil)
+var _ contract.Runtime = (*fakeRuntime)(nil)
 
 // RunStream returns a pre-filled closed channel so no producer goroutine can
 // leak when runAgent returns before draining all events.
-func (f *fakeRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
+func (f *fakeRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
 	if f.onRunStream != nil {
 		f.onRunStream()
 	}
-	ch := make(chan runtime.Event, len(f.events))
+	ch := make(chan contract.Event, len(f.events))
 	for _, e := range f.events {
 		ch <- e
 	}
@@ -80,18 +82,18 @@ func (f *fakeRuntime) resumeRequests() []runtime.ResumeRequest {
 	return slices.Clone(f.resumeCalls)
 }
 
-func (f *fakeRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{}
+func (f *fakeRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{}
 }
 func (f *fakeRuntime) CurrentAgentName(context.Context) string                 { return "fake" }
 func (f *fakeRuntime) SetCurrentAgent(context.Context, string) error           { return nil }
 func (f *fakeRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) { return nil, nil }
 func (f *fakeRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus      { return nil }
 func (f *fakeRuntime) RestartToolset(context.Context, string) error            { return nil }
-func (f *fakeRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {
+func (f *fakeRuntime) EmitStartupInfo(context.Context, *session.Session, contract.EventSink) {
 }
-func (f *fakeRuntime) EmitAgentInfo(context.Context, runtime.EventSink) {}
-func (f *fakeRuntime) ResetStartupInfo()                                {}
+func (f *fakeRuntime) EmitAgentInfo(context.Context, contract.EventSink) {}
+func (f *fakeRuntime) ResetStartupInfo()                                 {}
 func (f *fakeRuntime) Run(context.Context, *session.Session) ([]session.Message, error) {
 	return nil, nil
 }
@@ -100,11 +102,11 @@ func (f *fakeRuntime) ResumeElicitation(context.Context, tools.ElicitationAction
 	return nil
 }
 func (f *fakeRuntime) SessionStore() session.Store { return nil }
-func (f *fakeRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {
+func (f *fakeRuntime) Summarize(context.Context, *session.Session, string, contract.EventSink) {
 }
-func (f *fakeRuntime) PermissionsInfo() *runtime.PermissionsInfo      { return nil }
+func (f *fakeRuntime) PermissionsInfo() *contract.PermissionsInfo     { return nil }
 func (f *fakeRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet { return nil }
-func (f *fakeRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (f *fakeRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -120,24 +122,24 @@ func (f *fakeRuntime) UpdateSessionTitle(context.Context, *session.Session, stri
 	return nil
 }
 func (f *fakeRuntime) TitleGenerator(context.Context) *sessiontitle.Generator { return nil }
-func (f *fakeRuntime) Steer(context.Context, runtime.QueuedMessage) error     { return nil }
-func (f *fakeRuntime) FollowUp(context.Context, runtime.QueuedMessage) error  { return nil }
-func (f *fakeRuntime) QueueStatus() runtime.QueueStatus                       { return runtime.QueueStatus{} }
+func (f *fakeRuntime) Steer(context.Context, contract.QueuedMessage) error    { return nil }
+func (f *fakeRuntime) FollowUp(context.Context, contract.QueuedMessage) error { return nil }
+func (f *fakeRuntime) QueueStatus() contract.QueueStatus                      { return contract.QueueStatus{} }
 func (f *fakeRuntime) TogglePause(context.Context) (bool, error)              { return false, nil }
 func (f *fakeRuntime) SetAgentModel(context.Context, string, string) error    { return nil }
 func (f *fakeRuntime) CycleAgentThinkingLevel(context.Context, string) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
 func (f *fakeRuntime) SetAgentThinkingLevel(context.Context, string, effort.Level) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
-func (f *fakeRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
-func (f *fakeRuntime) SupportsModelSwitching() bool                          { return false }
-func (f *fakeRuntime) OnToolsChanged(func(runtime.Event))                    {}
-func (f *fakeRuntime) OnBackgroundEvent(func(runtime.Event))                 {}
-func (f *fakeRuntime) OnElicitationRequest(func(runtime.Event))              {}
-func (f *fakeRuntime) Close() error                                          { return nil }
+func (f *fakeRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice { return nil }
+func (f *fakeRuntime) SupportsModelSwitching() bool                               { return false }
+func (f *fakeRuntime) OnToolsChanged(func(contract.Event))                        {}
+func (f *fakeRuntime) OnBackgroundEvent(func(contract.Event))                     {}
+func (f *fakeRuntime) OnElicitationRequest(func(contract.Event))                  {}
+func (f *fakeRuntime) Close() error                                               { return nil }
 
 type blockingPromptRuntime struct {
 	fakeRuntime
@@ -150,7 +152,7 @@ type blockingPromptRuntime struct {
 	max           atomic.Int32
 }
 
-func (r *blockingPromptRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
+func (r *blockingPromptRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
 	call := int(r.calls.Add(1))
 	current := int(r.active.Add(1))
 	for {
@@ -160,7 +162,7 @@ func (r *blockingPromptRuntime) RunStream(ctx context.Context, _ *session.Sessio
 		}
 	}
 	r.started <- call
-	ch := make(chan runtime.Event)
+	ch := make(chan contract.Event)
 	go func() {
 		defer close(ch)
 		defer r.active.Add(-1)
@@ -173,7 +175,7 @@ func (r *blockingPromptRuntime) RunStream(ctx context.Context, _ *session.Sessio
 	return ch
 }
 
-func newPromptTestAgent(t *testing.T, rt runtime.Runtime) (*Agent, *Session, *peerResponder) {
+func newPromptTestAgent(t *testing.T, rt contract.Runtime) (*Agent, *Session, *peerResponder) {
 	t.Helper()
 	fixture := newRunAgentFixture(t, &fakeRuntime{}, &captureWriter{})
 	fixture.agent.sessions = make(map[string]*Session)
@@ -232,7 +234,7 @@ func TestPrompt_EscapingGeneratedMediaCompletesWithoutElicitation(t *testing.T) 
 		runtime.WithSessionCompaction(false), runtime.WithSessionStore(store))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rt.Close()) })
-	rt.OnElicitationRequest(func(runtime.Event) { t.Error("generated media escape must not elicit") })
+	rt.OnElicitationRequest(func(contract.Event) { t.Error("generated media escape must not elicit") })
 	agent, sess, peer := newPromptTestAgent(t, rt)
 	sess.sess.ID = testSessionID
 	sess.sess.WorkingDir = workspace
@@ -670,12 +672,12 @@ func TestRunAgent_StreamsAssistantAndDiagnosticEvents(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.AgentChoice("root", testSessionID, "Hello"),
-			runtime.AgentChoiceReasoning("root", testSessionID, "pondering"),
-			runtime.Error("boom"),
-			runtime.Warning("careful", "root"),
-			runtime.ModelFallback("root", "gpt-5", "gpt-4o", "rate limited", 1, 3),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.AgentChoice("root", testSessionID, "Hello"),
+			contract.AgentChoiceReasoning("root", testSessionID, "pondering"),
+			contract.Error("boom"),
+			contract.Warning("careful", "root"),
+			contract.ModelFallback("root", "gpt-5", "gpt-4o", "rate limited", 1, 3),
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
@@ -703,8 +705,8 @@ func TestRunAgent_SessionTitleUpdate(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.SessionTitle(testSessionID, "Refactor plan"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.SessionTitle(testSessionID, "Refactor plan"),
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 
@@ -725,8 +727,8 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		t.Parallel()
 
 		synctest.Test(t, func(t *testing.T) {
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.NewTokenUsageEvent(testSessionID, "root", &contract.Usage{
 					ContextLength: 1234,
 					ContextLimit:  200000,
 					Cost:          0.75,
@@ -750,8 +752,8 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		t.Parallel()
 
 		synctest.Test(t, func(t *testing.T) {
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.NewTokenUsageEvent(testSessionID, "root", &runtime.Usage{
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.NewTokenUsageEvent(testSessionID, "root", &contract.Usage{
 					ContextLength: 42,
 					ContextLimit:  1000,
 				}),
@@ -773,8 +775,8 @@ func TestRunAgent_TokenUsageUpdates(t *testing.T) {
 		t.Parallel()
 
 		synctest.Test(t, func(t *testing.T) {
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.NewTokenUsageEvent(testSessionID, "root", nil),
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.NewTokenUsageEvent(testSessionID, "root", nil),
 			}}
 			f := newRunAgentFixture(t, rt, &captureWriter{})
 
@@ -798,22 +800,22 @@ func TestRunAgent_ToolCallLifecycle(t *testing.T) {
 		editResult := &tools.ToolCallResult{Output: "ok", Meta: &fileChange{path: editPath, oldText: new("a"), newText: "b"}}
 		editArgs := `{"path":"/tmp/f.go","edits":[{"oldText":"a","newText":"b"}]}`
 
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCall(tools.ToolCall{
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.ToolCall(tools.ToolCall{
 				ID:       "call-1",
 				Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls","path":"."}`},
 			}, shellTool, "root"),
-			runtime.ToolCallResponse("call-1", shellTool, tools.ResultSuccess("file.txt"), "file.txt", "root"),
-			runtime.ToolCall(tools.ToolCall{
+			contract.ToolCallResponse("call-1", shellTool, tools.ResultSuccess("file.txt"), "file.txt", "root"),
+			contract.ToolCall(tools.ToolCall{
 				ID:       "call-2",
 				Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm"}`},
 			}, shellTool, "root"),
-			runtime.ToolCallResponse("call-2", shellTool, tools.ResultError("denied"), "denied", "root"),
-			runtime.ToolCall(tools.ToolCall{
+			contract.ToolCallResponse("call-2", shellTool, tools.ResultError("denied"), "denied", "root"),
+			contract.ToolCall(tools.ToolCall{
 				ID:       "call-3",
 				Function: tools.FunctionCall{Name: "edit_file", Arguments: editArgs},
 			}, editTool, "root"),
-			runtime.ToolCallResponse("call-3", editTool, editResult, "ok", "root"),
+			contract.ToolCallResponse("call-3", editTool, editResult, "ok", "root"),
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 		f.sess.workingDir = wd
@@ -882,9 +884,9 @@ func TestRunAgent_ToolCallResponseWithoutStartCreatesTerminalCall(t *testing.T) 
 				result = tools.ResultError("rejected")
 				status = acpsdk.ToolCallStatusFailed
 			}
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, result, result.Output, "root"),
-				runtime.AgentChoice("root", testSessionID, "continued"),
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.ToolCallResponse("orphan", tools.Tool{Name: "shell"}, result, result.Output, "root"),
+				contract.AgentChoice("root", testSessionID, "continued"),
 			}}
 			f := newRunAgentFixture(t, rt, &captureWriter{})
 			require.NoError(t, f.runAgent(t.Context(), f.sess))
@@ -908,9 +910,9 @@ func TestRunAgent_ToolCallConfirmationRequestFields(t *testing.T) {
 			ID:       "confirm-1",
 			Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"rm -rf /tmp/scratch"}`},
 		}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCallConfirmation(call, tool, "root", nil),
-			runtime.AgentChoice("root", testSessionID, "approved"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.ToolCallConfirmation(call, tool, "root", nil),
+			contract.AgentChoice("root", testSessionID, "approved"),
 		}}
 		f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
 			return permissionSelected("allow")
@@ -987,8 +989,8 @@ func TestRunAgent_ToolCallConfirmationOutcomes(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				rt := &fakeRuntime{events: []runtime.Event{
-					runtime.ToolCallConfirmation(
+				rt := &fakeRuntime{events: []contract.Event{
+					contract.ToolCallConfirmation(
 						tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
 						tools.Tool{Name: "shell"},
 						"root",
@@ -1115,14 +1117,14 @@ func TestRunAgent_ToolCallConfirmationBadOutcomeFailsRun(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				rt := &fakeRuntime{events: []runtime.Event{
-					runtime.ToolCallConfirmation(
+				rt := &fakeRuntime{events: []contract.Event{
+					contract.ToolCallConfirmation(
 						tools.ToolCall{ID: "confirm-1", Function: tools.FunctionCall{Name: "shell", Arguments: `{"command":"ls"}`}},
 						tools.Tool{Name: "shell"},
 						"root",
 						nil,
 					),
-					runtime.AgentChoice("root", testSessionID, "never emitted"),
+					contract.AgentChoice("root", testSessionID, "never emitted"),
 				}}
 				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
 					return tt.result
@@ -1149,8 +1151,8 @@ func TestRunAgent_MaxIterationsReachedRequestFields(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.MaxIterationsReached(25),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.MaxIterationsReached(25),
 		}}
 		f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
 			return permissionSelected("continue")
@@ -1236,7 +1238,7 @@ func TestRunAgent_MaxIterationsReachedOutcomes(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				rt := &fakeRuntime{events: []runtime.Event{runtime.MaxIterationsReached(3)}}
+				rt := &fakeRuntime{events: []contract.Event{contract.MaxIterationsReached(3)}}
 				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
 					return tt.result
 				})
@@ -1270,9 +1272,9 @@ func TestRunAgent_TodoToolEmitsPlanUpdate(t *testing.T) {
 					{ID: "2", Description: "review", Status: "pending"},
 				},
 			}
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCall(todoCall, todoTool, "root"),
-				runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.ToolCall(todoCall, todoTool, "root"),
+				contract.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
 			}}
 			f := newRunAgentFixture(t, rt, &captureWriter{})
 
@@ -1297,9 +1299,9 @@ func TestRunAgent_TodoToolEmitsPlanUpdate(t *testing.T) {
 
 		synctest.Test(t, func(t *testing.T) {
 			result := &tools.ToolCallResult{Output: "ok", Meta: "not-todos"}
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCall(todoCall, todoTool, "root"),
-				runtime.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.ToolCall(todoCall, todoTool, "root"),
+				contract.ToolCallResponse("call-1", todoTool, result, "ok", "root"),
 			}}
 			f := newRunAgentFixture(t, rt, &captureWriter{})
 
@@ -1322,9 +1324,9 @@ func TestRunAgent_SendUpdateFailureStopsRun(t *testing.T) {
 			}
 			return nil
 		}}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.AgentChoice("root", testSessionID, "one"),
-			runtime.AgentChoice("root", testSessionID, "two"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.AgentChoice("root", testSessionID, "one"),
+			contract.AgentChoice("root", testSessionID, "two"),
 		}}
 		f := newRunAgentFixture(t, rt, out)
 
@@ -1347,8 +1349,8 @@ func TestRunAgent_AvailableCommandsFailureIsNonFatal(t *testing.T) {
 			}
 			return nil
 		}}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.AgentChoice("root", testSessionID, "hello"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.AgentChoice("root", testSessionID, "hello"),
 		}}
 		f := newRunAgentFixture(t, rt, out)
 
@@ -1365,8 +1367,8 @@ func TestRunAgent_ContextCancellationStopsEventLoop(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.AgentChoice("root", testSessionID, "never emitted"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.AgentChoice("root", testSessionID, "never emitted"),
 		}}
 		// Cancel the turn after available commands were emitted but before the
 		// first event is consumed.

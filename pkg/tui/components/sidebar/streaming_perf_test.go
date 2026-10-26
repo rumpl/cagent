@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	todo "github.com/docker/docker-agent/pkg/tools/builtin/todo/types"
@@ -54,15 +54,15 @@ func buildStreamingSidebar(tb testing.TB, nTodos int) *model {
 	sched := &immediateScheduler{now: time.Unix(1, 0)}
 	m := New(animation.NewRuntimeWithScheduler(sched), testContext(tb), ss).(*model)
 	m.SetSize(40, 30)
-	m.SetTeamInfo([]runtime.AgentDetails{
+	m.SetTeamInfo([]contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4o", Description: "Expert developer that plans and executes migrations"},
 		{Name: "helper", Provider: "anthropic", Model: "claude-sonnet-4-0", Description: "Helper sub-agent"},
 	})
 	m.SetToolsetInfo(12, false)
-	ev := runtime.NewTokenUsageEvent(sess.ID, "root", &runtime.Usage{
+	ev := contract.NewTokenUsageEvent(sess.ID, "root", &contract.Usage{
 		InputTokens: 12000, OutputTokens: 8000, ContextLength: 20000, ContextLimit: 128000, Cost: 0.42,
 	})
-	m.SetTokenUsage(ev.(*runtime.TokenUsageEvent))
+	m.SetTokenUsage(ev.(*contract.TokenUsageEvent))
 	if nTodos > 0 {
 		require.NoError(tb, m.SetTodos(&tools.ToolCallResult{Meta: makeStreamingTodos(nTodos)}))
 	}

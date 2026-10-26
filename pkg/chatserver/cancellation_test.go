@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/harness"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -45,11 +46,11 @@ func (h cancelingHarness) Resume(ctx context.Context, _, prompt string, emit fun
 type recordingRunner struct {
 	runtimeRunner
 
-	events []runtime.Event
+	events []contract.Event
 }
 
-func (r *recordingRunner) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *recordingRunner) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	r.events = nil
 	go func() {
 		defer close(events)
@@ -110,11 +111,11 @@ func TestChatCompletionCancellationDoesNotCommit(t *testing.T) {
 				assert.Same(t, seed, s.conversations.Get("conversation"), "cancellation must not advance the cached turn")
 				assert.Equal(t, "seed", seed.GetLastUserMessageContent())
 				assert.Equal(t, 1, seed.MessageCount())
-				var stopped *runtime.StreamStoppedEvent
+				var stopped *contract.StreamStoppedEvent
 				for _, event := range runner.events {
-					_, isError := event.(*runtime.ErrorEvent)
+					_, isError := event.(*contract.ErrorEvent)
 					assert.False(t, isError, "the real runtime reports cancellation without an ErrorEvent")
-					if event, ok := event.(*runtime.StreamStoppedEvent); ok {
+					if event, ok := event.(*contract.StreamStoppedEvent); ok {
 						stopped = event
 					}
 				}
@@ -154,11 +155,11 @@ func TestChatCompletionCancellationDoesNotCommit(t *testing.T) {
 type asyncCancellationRunner struct {
 	stubRunner
 
-	run func(*session.Session, chan<- runtime.Event)
+	run func(*session.Session, chan<- contract.Event)
 }
 
-func (r *asyncCancellationRunner) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *asyncCancellationRunner) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	go func() {
 		defer close(events)
 		r.run(sess, events)
@@ -176,12 +177,12 @@ func TestChatCompletionCancellationDuringCleanupKeepsCompletedTurn(t *testing.T)
 			cleanupStarted, releaseCleanup := make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(releaseCleanup) })
 			t.Cleanup(release)
-			runner := &asyncCancellationRunner{run: func(sess *session.Session, events chan<- runtime.Event) {
+			runner := &asyncCancellationRunner{run: func(sess *session.Session, events chan<- contract.Event) {
 				sess.AddMessage(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, Content: "answer"}})
-				events <- runtime.AgentChoice("root", sess.ID, "answer")
-				events <- runtime.StreamStopped(sess.ID, "root", "normal")
+				events <- contract.AgentChoice("root", sess.ID, "answer")
+				events <- contract.StreamStopped(sess.ID, "root", "normal")
 				// The second unbuffered send acknowledges that the stop was processed.
-				events <- &runtime.AgentInfoEvent{}
+				events <- &contract.AgentInfoEvent{}
 				cancel()
 				close(cleanupStarted)
 				<-releaseCleanup
@@ -247,7 +248,7 @@ func TestRunAgentLoopCancellationWithoutErrorEvent(t *testing.T) {
 			sess.ID = "root-session"
 			runner := &stubRunner{}
 			for _, stop := range tc.stops {
-				runner.events = append(runner.events, runtime.StreamStopped(stop.sessionID, "root", stop.reason))
+				runner.events = append(runner.events, contract.StreamStopped(stop.sessionID, "root", stop.reason))
 			}
 			err := runAgentLoop(ctx, runner, sess, agentEmit{})
 			if tc.wantErr {

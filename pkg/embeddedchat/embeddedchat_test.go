@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	dagentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -145,7 +146,7 @@ type elicitationAnswer struct {
 }
 
 type fakeRuntime struct {
-	events chan dagentruntime.Event
+	events chan contract.Event
 
 	runCtxs        []context.Context
 	resumes        []dagentruntime.ResumeRequest
@@ -155,10 +156,10 @@ type fakeRuntime struct {
 }
 
 func newFakeRuntime() *fakeRuntime {
-	return &fakeRuntime{events: make(chan dagentruntime.Event, 8)}
+	return &fakeRuntime{events: make(chan contract.Event, 8)}
 }
 
-func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan dagentruntime.Event {
+func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
 	f.runCtxs = append(f.runCtxs, ctx)
 	return f.events
 }
@@ -185,8 +186,8 @@ func newTestSession(rt *fakeRuntime) *Session {
 	return &Session{rt: rt, session: session.New()}
 }
 
-func newElicitation(id string) dagentruntime.Event {
-	return dagentruntime.ElicitationRequest("authorize", "url", nil, "https://example.com", id, "", "sess", nil, "agent")
+func newElicitation(id string) contract.Event {
+	return contract.ElicitationRequest("authorize", "url", nil, "https://example.com", id, "", "sess", nil, "agent")
 }
 
 func TestTranslateRuntimeEvent(t *testing.T) {
@@ -194,23 +195,23 @@ func TestTranslateRuntimeEvent(t *testing.T) {
 	call := tools.ToolCall{ID: "call-1", Function: tools.FunctionCall{Name: "tool"}}
 	def := tools.Tool{Name: "tool"}
 
-	event, ok := TranslateRuntimeEvent(dagentruntime.AgentChoice("agent", "session", "hello"))
+	event, ok := TranslateRuntimeEvent(contract.AgentChoice("agent", "session", "hello"))
 	require.True(t, ok)
 	require.Equal(t, "hello", event.Text)
 
-	event, ok = TranslateRuntimeEvent(dagentruntime.ToolCall(call, def, "agent"))
+	event, ok = TranslateRuntimeEvent(contract.ToolCall(call, def, "agent"))
 	require.True(t, ok)
 	require.Equal(t, call, event.Tool.Call)
 	require.Equal(t, def, event.Tool.Def)
 	require.False(t, event.Tool.Finished)
 
-	event, ok = TranslateRuntimeEvent(dagentruntime.ToolCallResponse("call-1", def, tools.ResultError("boom"), "boom", "agent"))
+	event, ok = TranslateRuntimeEvent(contract.ToolCallResponse("call-1", def, tools.ResultError("boom"), "boom", "agent"))
 	require.True(t, ok)
 	require.Equal(t, "call-1", event.Tool.Call.ID)
 	require.True(t, event.Tool.Finished)
 	require.True(t, event.Tool.IsError)
 
-	_, ok = TranslateRuntimeEvent(dagentruntime.AgentChoice("agent", "session", ""))
+	_, ok = TranslateRuntimeEvent(contract.AgentChoice("agent", "session", ""))
 	require.False(t, ok)
 }
 
@@ -225,7 +226,7 @@ func TestSessionSendStreamsEventsAndDone(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, s.session.Messages, 1)
 
-		rt.events <- dagentruntime.AgentChoice("agent", s.session.ID, "hello")
+		rt.events <- contract.AgentChoice("agent", s.session.ID, "hello")
 		require.Equal(t, "hello", receiveEvent(t, out).Text)
 
 		close(rt.events)
@@ -248,7 +249,7 @@ func TestSessionSendSurfacesConfirmationAndConfirmResumesRuntime(t *testing.T) {
 
 		call := tools.ToolCall{ID: "call-1", Function: tools.FunctionCall{Name: "write_file"}}
 		def := tools.Tool{Name: "write_file"}
-		rt.events <- dagentruntime.ToolCallConfirmation(call, def, "agent", nil)
+		rt.events <- contract.ToolCallConfirmation(call, def, "agent", nil)
 
 		event := receiveEvent(t, out)
 		require.NotNil(t, event.Tool)
@@ -271,12 +272,12 @@ func TestSessionSendHandlesRuntimeErrorWithoutDone(t *testing.T) {
 
 		out, err := s.Send(t.Context(), "hi")
 		require.NoError(t, err)
-		rt.events <- dagentruntime.Error("boom")
+		rt.events <- contract.Error("boom")
 
 		event := receiveEvent(t, out)
 		require.EqualError(t, event.Err, "boom")
 
-		rt.events <- dagentruntime.AgentChoice("agent", s.session.ID, "ignored")
+		rt.events <- contract.AgentChoice("agent", s.session.ID, "ignored")
 		close(rt.events)
 		assertClosed(t, out)
 	})
@@ -292,7 +293,7 @@ func TestSessionSendDeclinesElicitationAndRejectsMaxIterations(t *testing.T) {
 		out, err := s.Send(t.Context(), "hi")
 		require.NoError(t, err)
 		rt.events <- newElicitation("id")
-		rt.events <- dagentruntime.MaxIterationsReached(3)
+		rt.events <- contract.MaxIterationsReached(3)
 		close(rt.events)
 
 		require.True(t, receiveEvent(t, out).Done)
@@ -354,7 +355,7 @@ func TestSessionDeclinesForwardedElicitationAfterError(t *testing.T) {
 
 		out, err := s.Send(t.Context(), "hi")
 		require.NoError(t, err)
-		rt.events <- dagentruntime.Error("boom")
+		rt.events <- contract.Error("boom")
 		require.EqualError(t, receiveEvent(t, out).Err, "boom")
 
 		rt.events <- newElicitation("id-2")
@@ -396,9 +397,9 @@ func TestSessionForwardAllEventsDeliversUnprojectedEvents(t *testing.T) {
 		out, err := s.Send(t.Context(), "hi")
 		require.NoError(t, err)
 
-		reasoning := dagentruntime.AgentChoiceReasoning("agent", s.session.ID, "thinking")
+		reasoning := contract.AgentChoiceReasoning("agent", s.session.ID, "thinking")
 		rt.events <- reasoning
-		rt.events <- dagentruntime.AgentChoice("agent", s.session.ID, "hello")
+		rt.events <- contract.AgentChoice("agent", s.session.ID, "hello")
 		close(rt.events)
 
 		event := receiveEvent(t, out)
@@ -418,7 +419,7 @@ func TestSessionDropsUnprojectedEventsByDefault(t *testing.T) {
 
 		out, err := s.Send(t.Context(), "hi")
 		require.NoError(t, err)
-		rt.events <- dagentruntime.AgentChoiceReasoning("agent", s.session.ID, "thinking")
+		rt.events <- contract.AgentChoiceReasoning("agent", s.session.ID, "thinking")
 		close(rt.events)
 
 		require.True(t, receiveEvent(t, out).Done)

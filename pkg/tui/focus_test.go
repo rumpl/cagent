@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
@@ -40,7 +40,7 @@ func TestRootBlurKeepsRenderingAndAnimating(t *testing.T) {
 
 	_, _ = root.Update(tea.BlurMsg{})
 	page.text = "after"
-	_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "stream update"))
+	_, _ = root.Update(contract.AgentChoice("root", "profile", "stream update"))
 	after := root.View()
 	assert.Contains(t, after.Content, "after", "blurred windows must continue redrawing")
 

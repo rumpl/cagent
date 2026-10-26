@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // The tests in this file pin the transfer box's presentation windows: the
@@ -248,17 +248,17 @@ func TestTransferClearedWhenOutermostStreamStops(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40, transferRoster()...)
-	_, _ = m.Update(runtime.StreamStarted("root-session", "Scout"))
+	_, _ = m.Update(contract.StreamStarted("root-session", "Scout"))
 	m.SetAgentSwitching(true, "Scout", "Coder")
-	_, _ = m.Update(runtime.StreamStarted("sub-session", "Coder"))
+	_, _ = m.Update(contract.StreamStarted("sub-session", "Coder"))
 	require.GreaterOrEqual(t, transferRelationIndex(m), 0)
 
-	_, _ = m.Update(runtime.StreamStopped("sub-session", "Coder", ""))
+	_, _ = m.Update(contract.StreamStopped("sub-session", "Coder", ""))
 	assert.GreaterOrEqual(t, transferRelationIndex(m), 0, "a nested stop leaves the presentation alone")
 	assert.True(t, m.transferAnimation.IsActive())
 
 	m.SetAgentSwitching(false, "Coder", "Scout") // Return would normally expire on its timer
-	_, _ = m.Update(runtime.StreamStopped("root-session", "Scout", ""))
+	_, _ = m.Update(contract.StreamStopped("root-session", "Scout", ""))
 	assert.Equal(t, -1, transferRelationIndex(m), "the outermost stop clears any lingering presentation")
 	assert.Empty(t, m.agentTransfers)
 	assert.Nil(t, m.agentReturn)

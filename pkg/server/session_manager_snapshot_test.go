@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -37,7 +37,7 @@ func TestGetSessionSnapshotHoldsIdleBoundaryThroughMessagesAndCursor(t *testing.
 	sess.AddMessage(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, MessageID: "before", Content: "before"}})
 	rt := &snapshotBarrierRuntime{reading: make(chan struct{}), release: make(chan struct{})}
 	sm := newTestSessionManager(t, sess, rt)
-	sm.appendSessionEvent(sess.ID, runtime.StreamStopped(sess.ID, "root", ""))
+	sm.appendSessionEvent(sess.ID, contract.StreamStopped(sess.ID, "root", ""))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -85,14 +85,14 @@ type snapshotRecallRuntime struct {
 	steers atomic.Int32
 }
 
-func (r *snapshotRecallRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
+func (r *snapshotRecallRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
 	r.runs <- struct{}{}
-	events := make(chan runtime.Event)
+	events := make(chan contract.Event)
 	close(events)
 	return events
 }
 
-func (r *snapshotRecallRuntime) Steer(context.Context, runtime.QueuedMessage) error {
+func (r *snapshotRecallRuntime) Steer(context.Context, contract.QueuedMessage) error {
 	r.steers.Add(1)
 	return nil
 }
@@ -110,7 +110,7 @@ func TestRecallWaitsForIdleSnapshotInsteadOfSteeringAbsentRun(t *testing.T) {
 	}()
 	<-rt.reading
 	recalled := make(chan error, 1)
-	go func() { recalled <- sm.recallSession(t.Context(), sess.ID, runtime.QueuedMessage{Content: "wake up"}) }()
+	go func() { recalled <- sm.recallSession(t.Context(), sess.ID, contract.QueuedMessage{Content: "wake up"}) }()
 	close(rt.release)
 	<-snapshotDone
 	require.NoError(t, <-recalled)

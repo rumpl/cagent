@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -70,7 +71,7 @@ func globalCommandFactory() CommandEvaluatorFactory {
 var argsPlaceholderRegex = regexp.MustCompile(`\$\{args[^}]*\}`)
 
 type commandLookup interface {
-	CurrentAgentInfo(ctx context.Context) CurrentAgentInfo
+	CurrentAgentInfo(ctx context.Context) contract.CurrentAgentInfo
 }
 
 type commandTools interface {

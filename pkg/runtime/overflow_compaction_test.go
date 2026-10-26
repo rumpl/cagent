@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/modelerrors"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -19,10 +20,10 @@ func runOverflowSession(t *testing.T, rt *LocalRuntime) (compactions int, sawErr
 	t.Helper()
 	sess := session.New(session.WithUserMessage("Hello"))
 	for ev := range rt.RunStream(t.Context(), sess) {
-		if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "started" {
+		if e, ok := ev.(*contract.SessionCompactionEvent); ok && e.Status == "started" {
 			compactions++
 		}
-		if _, ok := ev.(*ErrorEvent); ok {
+		if _, ok := ev.(*contract.ErrorEvent); ok {
 			sawError = true
 		}
 	}

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -25,7 +25,7 @@ func TestStopAnimationsReleasesEverySubscription(t *testing.T) {
 	_ = m.AddOrUpdateToolCall("agent", call, tools.Tool{Name: "list"}, types.ToolStatusRunning)
 	_ = m.View() // running view renders and registers its spinner
 	require.True(t, ar.HasActive())
-	_ = m.AddToolResult(&runtime.ToolCallResponseEvent{ToolCallID: "call-1", Response: "done"}, types.ToolStatusCompleted)
+	_ = m.AddToolResult(&contract.ToolCallResponseEvent{ToolCallID: "call-1", Response: "done"}, types.ToolStatusCompleted)
 
 	// A waiting spinner still animating when the list is discarded.
 	_ = m.AddAssistantMessage("agent", "")

@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
@@ -27,8 +27,8 @@ func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
 	root.application.Session().Messages = sess.Messages
 	_ = root.activeTab.chatPage.Init()
 	root.handleWindowResize(120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", "start\n\n")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", "start\n\n")})
 	_ = root.View()
 	root.activeTab.chatPage.ScrollToBottom()
 	_, _ = root.Update(messages.WheelCoalescedMsg{Delta: -3, X: 30, Y: 15})
@@ -43,7 +43,7 @@ func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
 
 	chunk := "offscreen **markdown** [link](https://example.com)\n\n"
 	for i := range 200 {
-		program.Send(agentruntime.AgentChoice("root", "profile", chunk))
+		program.Send(contract.AgentChoice("root", "profile", chunk))
 		program.Send(tea.MouseMotionMsg{X: 30 + i%2, Y: 10})
 	}
 	ack := make(chan struct{})
@@ -65,7 +65,7 @@ func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
 	// by the component in this state, so this proves finalization itself
 	// reconciles the buffered tail. A later End only exposes already-finalized
 	// content; it must not be the operation that makes it exact.
-	program.Send(agentruntime.StreamStopped("profile", "root", "normal"))
+	program.Send(contract.StreamStopped("profile", "root", "normal"))
 	ack = make(chan struct{})
 	program.Send(streamingMotionAck{done: ack})
 	<-ack

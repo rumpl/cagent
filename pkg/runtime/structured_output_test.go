@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
@@ -90,9 +91,9 @@ func structuredOutputRuntime(t *testing.T, so *latest.StructuredOutput, agentOpt
 	return rt, prov
 }
 
-func runAndCollect(t *testing.T, rt *LocalRuntime, sess *session.Session) []Event {
+func runAndCollect(t *testing.T, rt *LocalRuntime, sess *session.Session) []contract.Event {
 	t.Helper()
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
@@ -109,20 +110,20 @@ func outputCallStream(callID, args string) *mockStream {
 		Build()
 }
 
-func toolResponsesByCallID(events []Event) map[string]*ToolCallResponseEvent {
-	responses := make(map[string]*ToolCallResponseEvent)
+func toolResponsesByCallID(events []contract.Event) map[string]*contract.ToolCallResponseEvent {
+	responses := make(map[string]*contract.ToolCallResponseEvent)
 	for _, ev := range events {
-		if resp, ok := ev.(*ToolCallResponseEvent); ok {
+		if resp, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			responses[resp.ToolCallID] = resp
 		}
 	}
 	return responses
 }
 
-func errorEvents(events []Event) []*ErrorEvent {
-	var errs []*ErrorEvent
+func errorEvents(events []contract.Event) []*contract.ErrorEvent {
+	var errs []*contract.ErrorEvent
 	for _, ev := range events {
-		if errEv, ok := ev.(*ErrorEvent); ok {
+		if errEv, ok := ev.(*contract.ErrorEvent); ok {
 			errs = append(errs, errEv)
 		}
 	}
@@ -160,7 +161,7 @@ func TestStructuredOutputPlainTextRejectionDoesNotEmitImageWarning(t *testing.T)
 	events := runAndCollect(t, rt, session.New(session.WithUserMessage("generate an image")))
 
 	for _, event := range events {
-		if warning, ok := event.(*WarningEvent); ok {
+		if warning, ok := event.(*contract.WarningEvent); ok {
 			assert.NotEqual(t, missingGeneratedImageWarning, warning.Message)
 		}
 	}
@@ -473,7 +474,7 @@ func TestStructuredOutputToolMode_TextStopTriggersRemindersThenError(t *testing.
 
 	errs := errorEvents(events)
 	require.Len(t, errs, 1, "exhausted reminders must produce exactly one coded error")
-	assert.Equal(t, ErrorCodeStructuredOutputFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeStructuredOutputFailed, errs[0].Code)
 	assert.Contains(t, errs[0].Error, structuredoutput.ToolName)
 
 	// The explicit termination message is the final assistant message, so
@@ -670,7 +671,7 @@ func TestStructuredOutputToolMode_ReservedNameCollisionFails(t *testing.T) {
 
 	errs := errorEvents(events)
 	require.NotEmpty(t, errs)
-	assert.Equal(t, ErrorCodeToolFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeToolFailed, errs[0].Code)
 	assert.Contains(t, errs[0].Error, structuredoutput.ToolName)
 	assert.Contains(t, errs[0].Error, "reserved")
 }
@@ -697,7 +698,7 @@ func TestStructuredOutputToolMode_ForkSkillChildIsExempt(t *testing.T) {
 	)
 
 	sess := session.New(session.WithUserMessage("Run the greet skill"))
-	evts := make(chan Event, 256)
+	evts := make(chan contract.Event, 256)
 	result, err := rt.RunSkillFork(t.Context(), sess,
 		skillstool.RunSkillArgs{Name: "greet", Task: "greet the user"}, NewChannelSink(evts))
 	require.NoError(t, err)
@@ -707,7 +708,7 @@ func TestStructuredOutputToolMode_ForkSkillChildIsExempt(t *testing.T) {
 
 	close(evts)
 	for ev := range evts {
-		if errEv, ok := ev.(*ErrorEvent); ok {
+		if errEv, ok := ev.(*contract.ErrorEvent); ok {
 			t.Errorf("unexpected error event: %s", errEv.Error)
 		}
 	}
@@ -743,7 +744,7 @@ func TestStructuredOutputToolMode_ProgrammaticBrokenSchemaFailsRun(t *testing.T)
 
 	errs := errorEvents(events)
 	require.NotEmpty(t, errs)
-	assert.Equal(t, ErrorCodeToolFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeToolFailed, errs[0].Code)
 	assert.Contains(t, errs[0].Error, "structured_output")
 
 	allMsgs, _ := prov.calls()
@@ -765,7 +766,7 @@ func TestStructuredOutputToolMode_Claude5FailsWithoutReminder(t *testing.T) {
 	sess := session.New(session.WithUserMessage("Answer me"))
 	errs := errorEvents(runAndCollect(t, rt, sess))
 	require.Len(t, errs, 1)
-	assert.Equal(t, ErrorCodeStructuredOutputFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeStructuredOutputFailed, errs[0].Code)
 
 	calls, _ := prov.calls()
 	assert.Len(t, calls, 1, "no reminder retry for a model that rejects a final assistant message")

@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/tui"
@@ -40,12 +41,12 @@ func (b *workdirRecordingBackend) CreateSessionRequest(workingDir string) runtim
 	return runtime.CreateSessionRequest{WorkingDir: workingDir}
 }
 
-func (b *workdirRecordingBackend) CreateSession(context.Context, *teamloader.LoadResult, runtime.CreateSessionRequest) (runtime.Runtime, *session.Session, func(), error) {
+func (b *workdirRecordingBackend) CreateSession(context.Context, *teamloader.LoadResult, runtime.CreateSessionRequest) (contract.Runtime, *session.Session, func(), error) {
 	return nil, nil, func() {}, nil
 }
 
-func (b *workdirRecordingBackend) Spawner(runtime.Runtime) tui.SessionSpawner { return nil }
-func (b *workdirRecordingBackend) Close() error                               { return nil }
+func (b *workdirRecordingBackend) Spawner(contract.Runtime) tui.SessionSpawner { return nil }
+func (b *workdirRecordingBackend) Close() error                                { return nil }
 
 func (b *workdirRecordingBackend) ResumeWorkingDir(context.Context) (string, bool) {
 	return "", false

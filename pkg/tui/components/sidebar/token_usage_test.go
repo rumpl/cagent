@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -76,7 +76,7 @@ func TestActiveSessionTokens_FallbackToSingleSession(t *testing.T) {
 	sessionState := service.NewSessionState(sess)
 	m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
-	m.sessionUsage["session-1"] = &runtime.Usage{
+	m.sessionUsage["session-1"] = &contract.Usage{
 		InputTokens:  5000,
 		OutputTokens: 5000,
 	}
@@ -153,10 +153,10 @@ func TestTokenUsageSummary_SingleSession(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("session-1", "root")
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    "session-1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Usage: &contract.Usage{
 			InputTokens:   5000,
 			OutputTokens:  3000,
 			ContextLength: 8000,
@@ -181,10 +181,10 @@ func TestTokenUsageSummary_MultipleSessions_ShowsActiveSessionTokens(t *testing.
 
 	// Root agent session: 30K tokens, $0.10
 	m.startStream("session-root", "root")
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    "session-root",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Usage: &contract.Usage{
 			InputTokens:   20000,
 			OutputTokens:  10000,
 			ContextLength: 30000,
@@ -195,10 +195,10 @@ func TestTokenUsageSummary_MultipleSessions_ShowsActiveSessionTokens(t *testing.
 
 	// Child agent session: 10K tokens, $0.05
 	m.startStream("session-child", "developer")
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    "session-child",
-		AgentContext: runtime.AgentContext{AgentName: "developer"},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: "developer"},
+		Usage: &contract.Usage{
 			InputTokens:   8000,
 			OutputTokens:  2000,
 			ContextLength: 10000,
@@ -285,10 +285,10 @@ func TestComputeUsageStats_RestoredCostDoesNotDecreaseAfterCompaction(t *testing
 	// Compaction appends a $0.01 summary and immediately emits the session's
 	// usage (see compactWithReason).
 	sess.ApplyCompaction(100, 0, session.Item{Summary: "summary", Cost: 0.01})
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sess.ID,
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Usage:        runtime.SessionUsage(sess, 100_000),
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Usage:        contract.SessionUsage(sess, 100_000),
 	})
 	assert.InDelta(t, 0.16, m.computeUsageStats().totalCost, 1e-9,
 		"the total must keep the embedded sub-session cost and gain the summary cost")
@@ -301,11 +301,11 @@ func TestComputeUsageStats_RestoredCostDoesNotDecreaseAfterCompaction(t *testing
 func TestComputeUsageStats_LiveSubSessionNotDoubleCounted(t *testing.T) {
 	t.Parallel()
 
-	usageEvent := func(sessionID, agentName string, sess *session.Session) *runtime.TokenUsageEvent {
-		return &runtime.TokenUsageEvent{
+	usageEvent := func(sessionID, agentName string, sess *session.Session) *contract.TokenUsageEvent {
+		return &contract.TokenUsageEvent{
 			SessionID:    sessionID,
-			AgentContext: runtime.AgentContext{AgentName: agentName},
-			Usage:        runtime.SessionUsage(sess, 100_000),
+			AgentContext: contract.AgentContext{AgentName: agentName},
+			Usage:        contract.SessionUsage(sess, 100_000),
 		}
 	}
 

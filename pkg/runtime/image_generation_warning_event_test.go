@@ -6,12 +6,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 func TestImageGenerationWarningRemoteEventPayload(t *testing.T) {
 	t.Parallel()
 
-	payload, err := json.Marshal(Warning(missingGeneratedImageWarning, "root"))
+	payload, err := json.Marshal(contract.Warning(missingGeneratedImageWarning, "root"))
 	require.NoError(t, err)
 
 	var event map[string]any

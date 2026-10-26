@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/promptfiles"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/userconfig"
@@ -281,7 +282,7 @@ func TestPromptFileGuardNativeCompaction(t *testing.T) {
 			}))
 			rt := newNativeRuntime(t, root, WithHooksRegistry(reg))
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
-			result, err := rt.compactNatively(t.Context(), sess, root, comp, "", NewChannelSink(make(chan Event, 128)))
+			result, err := rt.compactNatively(t.Context(), sess, root, comp, "", NewChannelSink(make(chan contract.Event, 128)))
 			if !allow {
 				require.ErrorIs(t, err, errPromptFileRejected)
 				assert.Nil(t, result)
@@ -311,7 +312,7 @@ func TestPromptFileGuardLoaderTimeout(t *testing.T) {
 		sess := session.New(session.WithUserMessage("hello"))
 		var stopped bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if e, ok := ev.(*ErrorEvent); ok && strings.Contains(e.Error, "prompt_file_guard stopped") {
+			if e, ok := ev.(*contract.ErrorEvent); ok && strings.Contains(e.Error, "prompt_file_guard stopped") {
 				stopped = true
 			}
 		}
@@ -337,8 +338,8 @@ func TestPromptFileGuardParentCancellation(t *testing.T) {
 	<-entered
 	cancel()
 	for ev := range stream {
-		assert.IsNotType(t, &ErrorEvent{}, ev)
-		if stop, ok := ev.(*StreamStoppedEvent); ok {
+		assert.IsNotType(t, &contract.ErrorEvent{}, ev)
+		if stop, ok := ev.(*contract.StreamStoppedEvent); ok {
 			assert.Equal(t, turnEndReasonCanceled, stop.Reason)
 		}
 	}

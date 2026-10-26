@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -52,8 +53,8 @@ func recordingTool(name string, executed *bool) []tools.Tool {
 // further events are produced); used after processToolCalls returns.
 // Distinct from drainEvents in loop_steps_test.go, which is
 // non-blocking and intended for still-open channels.
-func collectClosedEvents(ch <-chan Event) []Event {
-	var out []Event
+func collectClosedEvents(ch <-chan contract.Event) []contract.Event {
+	var out []contract.Event
 	for ev := range ch {
 		out = append(out, ev)
 	}
@@ -63,7 +64,7 @@ func collectClosedEvents(ch <-chan Event) []Event {
 // hasEventOfType reports whether evs contains an event of the given
 // concrete type. Used to assert that a ToolCallConfirmationEvent was
 // (or was not) emitted without caring about its other fields.
-func hasEventOfType[E Event](evs []Event) bool {
+func hasEventOfType[E contract.Event](evs []contract.Event) bool {
 	for _, ev := range evs {
 		if _, ok := ev.(E); ok {
 			return true
@@ -132,14 +133,14 @@ func makeJudgedRuntime(
 // processToolCalls used by the per-decision tests. It returns whether
 // the tool ran and the captured events so callers can also check that
 // the user prompt did or did not fire.
-func runJudgedToolCall(t *testing.T, rt *LocalRuntime, sess *session.Session, agentTools []tools.Tool) []Event {
+func runJudgedToolCall(t *testing.T, rt *LocalRuntime, sess *session.Session, agentTools []tools.Tool) []contract.Event {
 	t.Helper()
 	calls := []tools.ToolCall{{
 		ID:       "call_1",
 		Type:     "function",
 		Function: tools.FunctionCall{Name: "the_tool", Arguments: "{}"},
 	}}
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
 	close(events)
 	return collectClosedEvents(events)
@@ -156,7 +157,7 @@ func TestPreToolUseHook_AllowAutoApproves(t *testing.T) {
 	evs := runJudgedToolCall(t, rt, sess, agentTools)
 
 	assert.True(t, *executed, "Allow verdict must auto-approve and run the tool")
-	assert.False(t, hasEventOfType[*ToolCallConfirmationEvent](evs),
+	assert.False(t, hasEventOfType[*contract.ToolCallConfirmationEvent](evs),
 		"Allow must skip the user prompt: no ToolCallConfirmationEvent expected")
 }
 
@@ -171,9 +172,9 @@ func TestPreToolUseHook_DenyBlocksWithoutPrompting(t *testing.T) {
 	evs := runJudgedToolCall(t, rt, sess, agentTools)
 
 	assert.False(t, *executed, "Deny verdict must block the tool")
-	assert.False(t, hasEventOfType[*ToolCallConfirmationEvent](evs),
+	assert.False(t, hasEventOfType[*contract.ToolCallConfirmationEvent](evs),
 		"Deny must NOT prompt the user before blocking")
-	assert.True(t, hasEventOfType[*HookBlockedEvent](evs),
+	assert.True(t, hasEventOfType[*contract.HookBlockedEvent](evs),
 		"Deny must emit a HookBlockedEvent so the UI can surface the reason")
 }
 
@@ -197,7 +198,7 @@ func TestPreToolUseHook_AskEscalatesToUser(t *testing.T) {
 		Type:     "function",
 		Function: tools.FunctionCall{Name: "the_tool", Arguments: "{}"},
 	}}
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	done := make(chan struct{})
 	go func() {
 		rt.processToolCalls(ctx, sess, rt.resolveSessionAgent(sess), calls, agentTools, NewChannelSink(events))
@@ -210,7 +211,7 @@ DRAIN:
 	for {
 		select {
 		case ev := <-events:
-			if _, ok := ev.(*ToolCallConfirmationEvent); ok {
+			if _, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 				gotPrompt = true
 				cancel()
 				break DRAIN
@@ -331,9 +332,9 @@ func TestPreToolUseHookPipelinePreservesUnchangedArguments(t *testing.T) {
 	calls := []tools.ToolCall{{ID: "call", Type: "function", Function: tools.FunctionCall{
 		Name: "the_tool", Arguments: `{"cmd":"original","cwd":"work"}`,
 	}}}
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.processToolCalls(t.Context(), session.New(session.WithUserMessage("test")), rt.CurrentAgent(), calls, agentTools, NewChannelSink(events))
 	close(events)
 	assert.Equal(t, map[string]any{"cmd": "rewritten and approved", "cwd": "work"}, received)
-	assert.False(t, hasEventOfType[*ToolCallConfirmationEvent](collectClosedEvents(events)))
+	assert.False(t, hasEventOfType[*contract.ToolCallConfirmationEvent](collectClosedEvents(events)))
 }

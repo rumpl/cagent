@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime/compactor"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -68,7 +69,7 @@ func (r *LocalRuntime) sessionCompactionEnabled(a *agent.Agent) bool {
 // into every model call (see [LocalRuntime.executeSessionStartHooks]), so
 // env / cwd / OS info is automatically present after a compaction without
 // any extra dispatch.
-func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *agent.Agent, additionalPrompt, reason string, events EventSink) {
+func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *agent.Agent, additionalPrompt, reason string, events contract.EventSink) {
 	contextLimit, limitErr := r.compactionContextLimitChecked(ctx, a)
 
 	// before_compaction: hooks can veto or supply a custom summary.
@@ -82,15 +83,15 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	}
 
 	slog.DebugContext(ctx, "Generating summary for session", "session_id", sess.ID, "reason", reason)
-	events.Emit(SessionCompaction(sess.ID, "started", a.Name()))
+	events.Emit(contract.SessionCompaction(sess.ID, "started", a.Name()))
 	// outcome qualifies the terminal "completed" event: "applied" when a
 	// summary was written to the session, "skipped" for no-ops (nothing
 	// to compact, empty model output), "failed" when an error was
 	// emitted. UIs use it to avoid announcing success for a compaction
 	// that did nothing.
-	outcome := CompactionOutcomeApplied
+	outcome := contract.CompactionOutcomeApplied
 	defer func() {
-		events.Emit(SessionCompactionCompleted(sess.ID, outcome, a.Name()))
+		events.Emit(contract.SessionCompactionCompleted(sess.ID, outcome, a.Name()))
 	}()
 
 	// Choose the strategy: a hook-supplied summary if before_compaction
@@ -101,23 +102,23 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		native, err := nativeCompactor(ctx, a)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to generate session summary", "error", err)
-			events.Emit(ErrorForSession(sess.ID, err.Error()))
-			outcome = CompactionOutcomeFailed
+			events.Emit(contract.ErrorForSession(sess.ID, err.Error()))
+			outcome = contract.CompactionOutcomeFailed
 			return
 		}
 		if native != nil {
 			result, err = r.compactNatively(ctx, sess, a, native, additionalPrompt, events)
 		} else {
 			if limitErr != nil {
-				events.Emit(ErrorForSession(sess.ID, limitErr.Error()))
-				outcome = CompactionOutcomeFailed
+				events.Emit(contract.ErrorForSession(sess.ID, limitErr.Error()))
+				outcome = contract.CompactionOutcomeFailed
 				return
 			}
 			if contextLimit <= 0 {
 				slog.ErrorContext(ctx, "Failed to generate session summary",
 					"error", "model definition unavailable")
-				events.Emit(ErrorForSession(sess.ID, "Failed to get model definition"))
-				outcome = CompactionOutcomeFailed
+				events.Emit(contract.ErrorForSession(sess.ID, "Failed to get model definition"))
+				outcome = contract.CompactionOutcomeFailed
 				return
 			}
 			result, err = compactor.RunLLM(ctx, compactor.LLMArgs{
@@ -131,18 +132,18 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 			})
 		}
 		if errors.Is(err, errCompactionBudgetExceeded) {
-			outcome = CompactionOutcomeSkipped
+			outcome = contract.CompactionOutcomeSkipped
 			return
 		}
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to generate session summary", "error", err)
-			events.Emit(ErrorForSession(sess.ID, err.Error()))
-			outcome = CompactionOutcomeFailed
+			events.Emit(contract.ErrorForSession(sess.ID, err.Error()))
+			outcome = contract.CompactionOutcomeFailed
 			return
 		}
 		if result == nil {
 			// Empty summary — bail without applying anything.
-			outcome = CompactionOutcomeSkipped
+			outcome = contract.CompactionOutcomeSkipped
 			return
 		}
 	}
@@ -171,8 +172,8 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 	// is emitted and the in-memory continuation remains unchanged.
 	if err := r.sessionStore.PersistCompaction(ctx, sess, result.InputTokens, 0, item); err != nil {
 		slog.ErrorContext(ctx, "Failed to persist session compaction", "session_id", sess.ID, "error", err)
-		events.Emit(ErrorForSession(sess.ID, fmt.Sprintf("Failed to persist session compaction: %v", err)))
-		outcome = CompactionOutcomeFailed
+		events.Emit(contract.ErrorForSession(sess.ID, fmt.Sprintf("Failed to persist session compaction: %v", err)))
+		outcome = contract.CompactionOutcomeFailed
 		return
 	}
 
@@ -180,8 +181,8 @@ func (r *LocalRuntime) doCompact(ctx context.Context, sess *session.Session, a *
 		r.toolDeferrals.Reset(sess.ID)
 	}
 	slog.DebugContext(ctx, "Generated session summary", "session_id", sess.ID, "summary_length", len(result.Summary))
-	summaryEvent := SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry, result.Cost, result.Model, summaryUsage(result))
-	if e, ok := summaryEvent.(*SessionSummaryEvent); ok {
+	summaryEvent := contract.SessionSummary(sess.ID, result.Summary, a.Name(), result.FirstKeptEntry, result.Cost, result.Model, summaryUsage(result))
+	if e, ok := summaryEvent.(*contract.SessionSummaryEvent); ok {
 		e.MarkPersisted()
 	}
 	events.Emit(summaryEvent)
@@ -373,7 +374,7 @@ func providerContextLimit(p provider.Provider) int64 {
 // which avoids creating an import cycle on [pkg/runtime].
 //
 // The summary uses the parent's pricing and budgets, even when invoked manually.
-func (r *LocalRuntime) runCompactionAgent(ctx context.Context, a *agent.Agent, sess, parent *session.Session, events EventSink) error {
+func (r *LocalRuntime) runCompactionAgent(ctx context.Context, a *agent.Agent, sess, parent *session.Session, events contract.EventSink) error {
 	r.ensureBudget()
 	budget := r.currentBudget()
 	t := team.New(team.WithAgents(a))
@@ -387,11 +388,11 @@ func (r *LocalRuntime) runCompactionAgent(ctx context.Context, a *agent.Agent, s
 	var runErr error
 	for event := range rt.RunStream(ctx, sess) {
 		switch e := event.(type) {
-		case *BudgetExceededEvent:
+		case *contract.BudgetExceededEvent:
 			// Never let the child's synthetic stop message replace the conversation.
 			runErr = errCompactionBudgetExceeded
-			events.Emit(Warning(fmt.Sprintf("Compaction skipped: %s limit reached (used %s of %s).", e.ConfigPath, e.Used, e.Max), a.Name()))
-		case *ErrorEvent:
+			events.Emit(contract.Warning(fmt.Sprintf("Compaction skipped: %s limit reached (used %s of %s).", e.ConfigPath, e.Used, e.Max), a.Name()))
+		case *contract.ErrorEvent:
 			if runErr == nil {
 				runErr = errors.New(e.Error)
 			}
@@ -399,7 +400,7 @@ func (r *LocalRuntime) runCompactionAgent(ctx context.Context, a *agent.Agent, s
 	}
 	if budget != nil {
 		if warnUnpriced && budget.unpricedSpend() {
-			events.Emit(Warning(unpricedSpendWarning, a.Name()))
+			events.Emit(contract.Warning(unpricedSpendWarning, a.Name()))
 		}
 		events.Emit(BudgetUsage(parent.ID, a.Name(), budget.snapshot()))
 	}

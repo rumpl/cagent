@@ -20,52 +20,53 @@ import (
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-func stoppedEvent(sid, reason string, finish chat.FinishReason) runtime.Event {
-	return &runtime.StreamStoppedEvent{SessionID: sid, Reason: reason, FinishReason: finish}
+func stoppedEvent(sid, reason string, finish chat.FinishReason) contract.Event {
+	return &contract.StreamStoppedEvent{SessionID: sid, Reason: reason, FinishReason: finish}
 }
 
 func TestPromptOutcomeUsesOnlyRootSession(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
-		events func() []runtime.Event
+		events func() []contract.Event
 		stop   acpsdk.StopReason
 		code   string
 	}{
-		{name: "normal", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
-			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		{name: "normal", stop: acpsdk.StopReasonEndTurn, events: func() []contract.Event {
+			return []contract.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
 		}},
-		{name: "length", stop: acpsdk.StopReasonMaxTokens, events: func() []runtime.Event {
-			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonLength)}
+		{name: "length", stop: acpsdk.StopReasonMaxTokens, events: func() []contract.Event {
+			return []contract.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonLength)}
 		}},
-		{name: "refusal", stop: acpsdk.StopReasonRefusal, events: func() []runtime.Event {
-			return []runtime.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonRefusal)}
+		{name: "refusal", stop: acpsdk.StopReasonRefusal, events: func() []contract.Event {
+			return []contract.Event{stoppedEvent(testSessionID, "normal", chat.FinishReasonRefusal)}
 		}},
-		{name: "iteration limit", stop: acpsdk.StopReasonMaxTurnRequests, events: func() []runtime.Event {
-			return []runtime.Event{stoppedEvent(testSessionID, runtime.StreamStopReasonMaxIterations, "")}
+		{name: "iteration limit", stop: acpsdk.StopReasonMaxTurnRequests, events: func() []contract.Event {
+			return []contract.Event{stoppedEvent(testSessionID, contract.StreamStopReasonMaxIterations, "")}
 		}},
-		{name: "runtime cancellation", stop: acpsdk.StopReasonCancelled, events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "canceled", "")} }},
-		{name: "fatal before model", code: runtime.ErrorCodeModelError, events: func() []runtime.Event {
-			return []runtime.Event{runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeModelError, "provider failed")}
+		{name: "runtime cancellation", stop: acpsdk.StopReasonCancelled, events: func() []contract.Event { return []contract.Event{stoppedEvent(testSessionID, "canceled", "")} }},
+		{name: "fatal before model", code: contract.ErrorCodeModelError, events: func() []contract.Event {
+			return []contract.Event{contract.ErrorWithCodeForSession(testSessionID, contract.ErrorCodeModelError, "provider failed")}
 		}},
-		{name: "fatal after partial output", code: runtime.ErrorCodeRateLimited, events: func() []runtime.Event {
-			return []runtime.Event{runtime.AgentChoice("root", testSessionID, "partial"), runtime.ErrorWithCodeForSession(testSessionID, runtime.ErrorCodeRateLimited, "provider failed"), stoppedEvent(testSessionID, "error", "")}
+		{name: "fatal after partial output", code: contract.ErrorCodeRateLimited, events: func() []contract.Event {
+			return []contract.Event{contract.AgentChoice("root", testSessionID, "partial"), contract.ErrorWithCodeForSession(testSessionID, contract.ErrorCodeRateLimited, "provider failed"), stoppedEvent(testSessionID, "error", "")}
 		}},
-		{name: "terminal error without details", code: "error", events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "error", "")} }},
-		{name: "budget is not request limit", code: "budget_exceeded", events: func() []runtime.Event { return []runtime.Event{stoppedEvent(testSessionID, "budget_exceeded", "")} }},
-		{name: "recoverable diagnostics", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
-			return []runtime.Event{runtime.ErrorForSession(testSessionID, "compaction failed"), runtime.Error("RAG diagnostic"), runtime.ErrorWithCodeForSession(testSessionID, "future_diagnostic", "nonterminal"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		{name: "terminal error without details", code: "error", events: func() []contract.Event { return []contract.Event{stoppedEvent(testSessionID, "error", "")} }},
+		{name: "budget is not request limit", code: "budget_exceeded", events: func() []contract.Event { return []contract.Event{stoppedEvent(testSessionID, "budget_exceeded", "")} }},
+		{name: "recoverable diagnostics", stop: acpsdk.StopReasonEndTurn, events: func() []contract.Event {
+			return []contract.Event{contract.ErrorForSession(testSessionID, "compaction failed"), contract.Error("RAG diagnostic"), contract.ErrorWithCodeForSession(testSessionID, "future_diagnostic", "nonterminal"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
 		}},
-		{name: "child errors and limits", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
-			return []runtime.Event{runtime.ErrorWithCodeForSession("child", runtime.ErrorCodeModelError, "child failed"), stoppedEvent("child", "error", chat.FinishReasonRefusal), stoppedEvent("child", runtime.StreamStopReasonMaxIterations, chat.FinishReasonLength), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		{name: "child errors and limits", stop: acpsdk.StopReasonEndTurn, events: func() []contract.Event {
+			return []contract.Event{contract.ErrorWithCodeForSession("child", contract.ErrorCodeModelError, "child failed"), stoppedEvent("child", "error", chat.FinishReasonRefusal), stoppedEvent("child", contract.StreamStopReasonMaxIterations, chat.FinishReasonLength), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
 		}},
-		{name: "later successful result wins", stop: acpsdk.StopReasonEndTurn, events: func() []runtime.Event {
-			return []runtime.Event{runtime.MessageAdded(testSessionID, &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: chat.FinishReasonLength}}, "root"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
+		{name: "later successful result wins", stop: acpsdk.StopReasonEndTurn, events: func() []contract.Event {
+			return []contract.Event{contract.MessageAdded(testSessionID, &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: chat.FinishReasonLength}}, "root"), stoppedEvent(testSessionID, "normal", chat.FinishReasonStop)}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,12 +130,12 @@ type outcomeDrainRuntime struct {
 	fatal   bool
 }
 
-func (r *outcomeDrainRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (r *outcomeDrainRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	go func() {
 		defer close(ch)
 		if r.fatal {
-			ch <- runtime.ErrorWithCodeForSession(sess.ID, runtime.ErrorCodeModelError, "failed")
+			ch <- contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeModelError, "failed")
 		}
 		ch <- stoppedEvent(sess.ID, "normal", chat.FinishReasonLength)
 		close(r.sent)
@@ -185,7 +186,7 @@ func TestPromptStructuredErrorsOnWire(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		a, s := newResumeFixture(t, t.TempDir())
-		s.rt = &fakeRuntime{events: []runtime.Event{runtime.ErrorWithCodeForSession(s.sess.ID, runtime.ErrorCodeRateLimited, "provider rate limited")}}
+		s.rt = &fakeRuntime{events: []contract.Event{contract.ErrorWithCodeForSession(s.sess.ID, contract.ErrorCodeRateLimited, "provider rate limited")}}
 		reader, send := io.Pipe()
 		receive, writer := io.Pipe()
 		conn := acpsdk.NewAgentSideConnection(a, writer, reader)
@@ -202,7 +203,7 @@ func TestPromptStructuredErrorsOnWire(t *testing.T) {
 			{"session/resume", map[string]any{"sessionId": "missing", "cwd": s.workingDir}, -32002, ""},
 			{"session/new", map[string]any{"cwd": filepath.Join(t.TempDir(), "missing"), "mcpServers": []any{}}, -32602, ""},
 			{"session/new", map[string]any{"cwd": s.workingDir, "additionalDirectories": []string{"relative"}, "mcpServers": []any{}}, -32602, ""},
-			{"session/prompt", map[string]any{"sessionId": s.id, "prompt": []any{map[string]any{"type": "text", "text": "hello"}}}, -32603, runtime.ErrorCodeRateLimited},
+			{"session/prompt", map[string]any{"sessionId": s.id, "prompt": []any{map[string]any{"type": "text", "text": "hello"}}}, -32603, contract.ErrorCodeRateLimited},
 		} {
 			require.NoError(t, encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": i, "method": tc.method, "params": tc.params}))
 			for {
@@ -247,7 +248,7 @@ func TestPromptFatalModelError(t *testing.T) {
 	_, err = a.Prompt(t.Context(), promptRequest("test"))
 	var rpcErr *acpsdk.RequestError
 	require.ErrorAs(t, err, &rpcErr)
-	assert.Equal(t, runtime.ErrorCodeModelError, rpcErr.Data.(map[string]any)["runtimeCode"])
+	assert.Equal(t, contract.ErrorCodeModelError, rpcErr.Data.(map[string]any)["runtimeCode"])
 	assert.Contains(t, rpcErr.Data.(map[string]any)["error"], "provider unavailable")
 	out := peer.out.(*captureWriter)
 	assert.Contains(t, strings.Join(out.lines(), "\n"), "provider unavailable")
@@ -320,7 +321,7 @@ func TestPromptFinalFollowupOverridesEarlierFinishReason(t *testing.T) {
 			rt, err := runtime.New(t.Context(), team.New(team.WithAgents(agent.New("root", "test", agent.WithModel(prov)))), runtime.WithSessionCompaction(false))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
-			require.NoError(t, rt.FollowUp(t.Context(), runtime.QueuedMessage{Content: "follow up"}))
+			require.NoError(t, rt.FollowUp(t.Context(), contract.QueuedMessage{Content: "follow up"}))
 			a, s, _ := newPromptTestAgent(t, rt)
 			response, err := a.Prompt(t.Context(), promptRequest("test"))
 			require.NoError(t, err)
@@ -342,15 +343,15 @@ func TestPromptOutcomeFallbackAndFatalCodes(t *testing.T) {
 		{"future", acpsdk.StopReasonEndTurn},
 	} {
 		o := promptOutcome{sessionID: "root"}
-		o.observe(runtime.MessageAdded("root", &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: tc.finish}}, "root"))
+		o.observe(contract.MessageAdded("root", &session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, FinishReason: tc.finish}}, "root"))
 		stop, err := o.result()
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, stop)
 	}
-	for _, code := range []string{runtime.ErrorCodeModelError, runtime.ErrorCodeRateLimited, runtime.ErrorCodeContextExceeded, runtime.ErrorCodeRequestTooLarge, runtime.ErrorCodeMediaTooLarge, runtime.ErrorCodeToolFailed, runtime.ErrorCodeHookBlocked, runtime.ErrorCodeLoopDetected, runtime.ErrorCodeStructuredOutputFailed} {
+	for _, code := range []string{contract.ErrorCodeModelError, contract.ErrorCodeRateLimited, contract.ErrorCodeContextExceeded, contract.ErrorCodeRequestTooLarge, contract.ErrorCodeMediaTooLarge, contract.ErrorCodeToolFailed, contract.ErrorCodeHookBlocked, contract.ErrorCodeLoopDetected, contract.ErrorCodeStructuredOutputFailed} {
 		o := promptOutcome{sessionID: "root"}
-		o.observe(runtime.ErrorWithCodeForSession("root", code, "fatal"))
-		o.observe(runtime.ErrorForSession("root", "later recoverable diagnostic"))
+		o.observe(contract.ErrorWithCodeForSession("root", code, "fatal"))
+		o.observe(contract.ErrorForSession("root", "later recoverable diagnostic"))
 		_, err := o.result()
 		var rpcErr *acpsdk.RequestError
 		require.ErrorAs(t, err, &rpcErr)
@@ -359,7 +360,7 @@ func TestPromptOutcomeFallbackAndFatalCodes(t *testing.T) {
 	}
 	for _, sid := range []string{"root", "child"} {
 		o := promptOutcome{sessionID: "root"}
-		o.observe(&runtime.BudgetExceededEvent{SessionID: sid, Message: "cost ceiling reached"})
+		o.observe(&contract.BudgetExceededEvent{SessionID: sid, Message: "cost ceiling reached"})
 		_, err := o.result()
 		if sid == "root" {
 			require.ErrorContains(t, err, "cost ceiling reached")

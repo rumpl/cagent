@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -52,26 +53,26 @@ func TestCodeModeToolCallEvents(t *testing.T) {
 				Script: `return JSON.stringify(await Promise.allSettled([Echo({value: "a", omitted: null}), echo({value: "b"})]));`,
 			})
 			require.NoError(t, err)
-			events := make(chan Event, 32)
+			events := make(chan contract.Event, 32)
 			rt.processToolCalls(t.Context(), sess, root, []tools.ToolCall{{
 				ID: "outer", Type: "function",
 				Function: tools.FunctionCall{Name: "run_tools_with_javascript", Arguments: string(args)},
 			}}, available, NewChannelSink(events))
 			close(events)
 
-			calls := make(map[string]*ToolCallEvent)
-			outputs := make(map[string]*ToolCallOutputEvent)
-			responses := make(map[string]*ToolCallResponseEvent)
+			calls := make(map[string]*contract.ToolCallEvent)
+			outputs := make(map[string]*contract.ToolCallOutputEvent)
+			responses := make(map[string]*contract.ToolCallResponseEvent)
 			for event := range events {
 				switch ev := event.(type) {
-				case *ToolCallEvent:
+				case *contract.ToolCallEvent:
 					assert.NotEmpty(t, ev.ToolCall.ID)
 					assert.NotContains(t, calls, ev.ToolCall.ID)
 					calls[ev.ToolCall.ID] = ev
-				case *ToolCallOutputEvent:
+				case *contract.ToolCallOutputEvent:
 					assert.Contains(t, calls, ev.ToolCallID)
 					outputs[ev.ToolCallID] = ev
-				case *ToolCallResponseEvent:
+				case *contract.ToolCallResponseEvent:
 					assert.Contains(t, calls, ev.ToolCallID)
 					responses[ev.ToolCallID] = ev
 				}

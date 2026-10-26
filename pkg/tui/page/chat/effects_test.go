@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -24,9 +24,9 @@ type cancellablePageRuntime struct {
 	started chan context.Context
 }
 
-func (r *cancellablePageRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
+func (r *cancellablePageRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
 	r.started <- ctx
-	ch := make(chan runtime.Event)
+	ch := make(chan contract.Event)
 	go func() {
 		<-ctx.Done()
 		close(ch)
@@ -43,11 +43,11 @@ func TestHiddenEffectsPreserveQueueProgressionAndCancellation(t *testing.T) {
 		p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
 		t.Cleanup(func() { Cleanup(p) })
 		p.SetInterruptMode(msgtypes.InterruptModeNone)
-		_, _ = p.UpdateEffects(runtime.StreamStarted(sess.ID, "root"))
+		_, _ = p.UpdateEffects(contract.StreamStarted(sess.ID, "root"))
 		_, _ = p.UpdateEffects(msgtypes.SendMsg{Content: "next turn", Queue: true})
 		require.Equal(t, 1, p.QueueLength())
 
-		_, effects := p.UpdateEffects(runtime.StreamStopped(sess.ID, "root", "normal"))
+		_, effects := p.UpdateEffects(contract.StreamStopped(sess.ID, "root", "normal"))
 		assert.Nil(t, effects.Cmd(false), "queue execution does not depend on visible commands")
 		assert.Zero(t, p.QueueLength())
 		var runCtx context.Context
@@ -58,9 +58,9 @@ func TestHiddenEffectsPreserveQueueProgressionAndCancellation(t *testing.T) {
 		}
 		assert.True(t, p.IsWorking())
 
-		_, _ = p.UpdateEffects(runtime.StreamStarted(sess.ID, "root"))
-		_, _ = p.UpdateEffects(runtime.StreamStarted("child-session", "child"))
-		_, nested := p.UpdateEffects(runtime.StreamStopped("child-session", "child", "normal"))
+		_, _ = p.UpdateEffects(contract.StreamStarted(sess.ID, "root"))
+		_, _ = p.UpdateEffects(contract.StreamStarted("child-session", "child"))
+		_, nested := p.UpdateEffects(contract.StreamStopped("child-session", "child", "normal"))
 		assert.Nil(t, nested.Cmd(false))
 		require.NotNil(t, p.msgCancel, "a child stop must leave the parent cancellable")
 		require.NoError(t, runCtx.Err())

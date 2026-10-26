@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
@@ -26,7 +26,7 @@ func newInputScope(ctx context.Context, a *app.App) *inputScope {
 	return &inputScope{ctx: ctx, cancel: cancel, app: a, awaiting: make(map[string]bool)}
 }
 
-func (s *inputScope) track(msg runtime.QueuedMessage, followUp bool) bool {
+func (s *inputScope) track(msg contract.QueuedMessage, followUp bool) bool {
 	s.mu.Lock()
 	if !s.closed {
 		s.awaiting[msg.ID] = followUp
@@ -56,7 +56,7 @@ func (s *inputScope) close() {
 	s.awaiting = nil
 	s.mu.Unlock()
 	for id, followUp := range pending {
-		s.app.CancelPendingMessage(context.WithoutCancel(s.ctx), runtime.QueuedMessage{ID: id}, followUp)
+		s.app.CancelPendingMessage(context.WithoutCancel(s.ctx), contract.QueuedMessage{ID: id}, followUp)
 	}
 }
 

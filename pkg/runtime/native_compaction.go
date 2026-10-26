@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/providerutil"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime/compactor"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/pricing"
 	"github.com/docker/docker-agent/pkg/session"
 )
@@ -76,7 +77,7 @@ func unwrapProvider(p provider.Provider) provider.Provider {
 //
 // Returns (nil, nil) when there is nothing to compact or the provider
 // produced an empty summary; the session is left untouched either way.
-func (r *LocalRuntime) compactNatively(ctx context.Context, sess *session.Session, a *agent.Agent, native contracts.ConversationCompactor, additionalPrompt string, events EventSink) (*compactor.Result, error) {
+func (r *LocalRuntime) compactNatively(ctx context.Context, sess *session.Session, a *agent.Agent, native contracts.ConversationCompactor, additionalPrompt string, events contract.EventSink) (*compactor.Result, error) {
 	if hasPendingCompactionTools(sess) {
 		return nil, errors.New("native compaction must wait for pending tool results")
 	}
@@ -108,7 +109,7 @@ func (r *LocalRuntime) compactNatively(ctx context.Context, sess *session.Sessio
 	agentTools = toolsForProvider(ctx, native, agentTools)
 	r.ensureBudget()
 	if breach := r.currentBudget().exceededFor(a.Name()); breach != nil {
-		events.Emit(Warning(fmt.Sprintf("Compaction skipped: %s limit reached (used %s of %s).", breach.configPath(), breach.Used, breach.Max), a.Name()))
+		events.Emit(contract.Warning(fmt.Sprintf("Compaction skipped: %s limit reached (used %s of %s).", breach.configPath(), breach.Used, breach.Max), a.Name()))
 		return nil, errCompactionBudgetExceeded
 	}
 	started := r.now()

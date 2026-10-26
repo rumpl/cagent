@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -156,29 +157,29 @@ func newRoutingFixtureFor(t *testing.T, event string, opts []Opt, answers ...scr
 	return f
 }
 
-func runRouted(t *testing.T, rt *LocalRuntime, sess *session.Session) []Event {
+func runRouted(t *testing.T, rt *LocalRuntime, sess *session.Session) []contract.Event {
 	t.Helper()
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
 	return events
 }
 
-func routeEvents(events []Event) []*AgentRouteEvent {
-	var out []*AgentRouteEvent
+func routeEvents(events []contract.Event) []*contract.AgentRouteEvent {
+	var out []*contract.AgentRouteEvent
 	for _, ev := range events {
-		if r, ok := ev.(*AgentRouteEvent); ok {
+		if r, ok := ev.(*contract.AgentRouteEvent); ok {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-func routedErrors(events []Event) []*ErrorEvent {
-	var out []*ErrorEvent
+func routedErrors(events []contract.Event) []*contract.ErrorEvent {
+	var out []*contract.ErrorEvent
 	for _, ev := range events {
-		if e, ok := ev.(*ErrorEvent); ok {
+		if e, ok := ev.(*contract.ErrorEvent); ok {
 			out = append(out, e)
 		}
 	}
@@ -214,7 +215,7 @@ func TestRouting_EvaluatorSelectsAgentWithoutRouterModelCall(t *testing.T) {
 	assert.Equal(t, "specialist", sess.RouteAgent())
 	var charges int
 	for _, ev := range events {
-		if _, ok := ev.(*EvaluationUsageEvent); ok {
+		if _, ok := ev.(*contract.EvaluationUsageEvent); ok {
 			charges++
 		}
 	}
@@ -295,7 +296,7 @@ func TestRouting_EvaluatorFallbacks(t *testing.T) {
 			require.Len(t, routes, 1)
 			assert.Equal(t, tt.reason, routes[0].FallbackReason)
 			for _, ev := range events {
-				if w, ok := ev.(*WarningEvent); ok {
+				if w, ok := ev.(*contract.WarningEvent); ok {
 					assert.NotContains(t, w.Message, "secret-token")
 				}
 			}
@@ -311,7 +312,7 @@ func TestRouting_TerminalEvaluatorErrorsNeverFallBack(t *testing.T) {
 	events := runRouted(t, f.rt, sess)
 
 	require.Len(t, routedErrors(events), 1)
-	assert.Equal(t, ErrorCodeHookBlocked, routedErrors(events)[0].Code)
+	assert.Equal(t, contract.ErrorCodeHookBlocked, routedErrors(events)[0].Code)
 	assert.Empty(t, routeEvents(events))
 	for _, p := range f.providers {
 		assert.Zero(t, p.calls.Load(), "no agent may run after a terminal evaluator error")
@@ -478,23 +479,23 @@ func TestRouting_ControlHooksFailClosed(t *testing.T) {
 		code     string
 		message  string
 	}{
-		{"disallowed target", routeTo("reviewer"), ErrorCodeRoutingFailed, "not allowed to route to"},
-		{"unknown target", routeTo("ghost"), ErrorCodeRoutingFailed, "not allowed to route to"},
+		{"disallowed target", routeTo("reviewer"), contract.ErrorCodeRoutingFailed, "not allowed to route to"},
+		{"unknown target", routeTo("ghost"), contract.ErrorCodeRoutingFailed, "not allowed to route to"},
 		{"unknown action", func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
 			return &hooks.Output{HookSpecificOutput: &hooks.HookSpecificOutput{Transition: &hooks.Transition{Action: "retry", Agent: "worker"}}}, nil
-		}, ErrorCodeHookBlocked, "invalid transition action"},
+		}, contract.ErrorCodeHookBlocked, "invalid transition action"},
 		{"missing target", func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
 			return &hooks.Output{HookSpecificOutput: &hooks.HookSpecificOutput{Transition: &hooks.Transition{Action: "route"}}}, nil
-		}, ErrorCodeHookBlocked, "requires an agent"},
+		}, contract.ErrorCodeHookBlocked, "requires an agent"},
 		{"hook crash", func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
 			return nil, errors.New("selector crashed")
-		}, ErrorCodeHookBlocked, "selector crashed"},
+		}, contract.ErrorCodeHookBlocked, "selector crashed"},
 		{"block beats route", func(context.Context, *hooks.Input, []string) (*hooks.Output, error) {
 			return &hooks.Output{
 				Decision: hooks.DecisionBlockValue, Reason: "policy says no",
 				HookSpecificOutput: &hooks.HookSpecificOutput{Transition: &hooks.Transition{Action: "route", Agent: "worker"}},
 			}, nil
-		}, ErrorCodeHookBlocked, "policy says no"},
+		}, contract.ErrorCodeHookBlocked, "policy says no"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -562,7 +563,7 @@ func TestRouting_TransitionLimitStopsRunawayRoutes(t *testing.T) {
 
 	errs := routedErrors(events)
 	require.Len(t, errs, 1)
-	assert.Equal(t, ErrorCodeRoutingFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeRoutingFailed, errs[0].Code)
 	assert.Contains(t, errs[0].Error, "limit of 100 transitions")
 	total := st.providers["root"].calls.Load() + st.providers["worker"].calls.Load()
 	assert.EqualValues(t, maxRouteTransitions+1, total)
@@ -583,7 +584,7 @@ func TestRouting_PinnedSessionRejectsControlHooks(t *testing.T) {
 
 	errs := routedErrors(events)
 	require.Len(t, errs, 1)
-	assert.Equal(t, ErrorCodeRoutingFailed, errs[0].Code)
+	assert.Equal(t, contract.ErrorCodeRoutingFailed, errs[0].Code)
 	assert.Contains(t, errs[0].Error, "pinned sub-sessions")
 	assert.Zero(t, st.providers["root"].calls.Load())
 	assert.Zero(t, st.providers["worker"].calls.Load())
@@ -635,7 +636,7 @@ func TestRouting_InputQueuedWhileBusyStartsNewInvocationAtBoundary(t *testing.T)
 				*opts = append(*opts, agent.WithRouting(agent.Routing{AllowedAgents: []string{"worker", "reviewer"}}))
 			}
 		})
-	require.NoError(t, st.rt.Steer(t.Context(), QueuedMessage{Content: "queued"}))
+	require.NoError(t, st.rt.Steer(t.Context(), contract.QueuedMessage{Content: "queued"}))
 
 	sess := session.New(session.WithUserMessage("first"), session.WithNonInteractive(true))
 	events := runRouted(t, st.rt, sess)
@@ -715,7 +716,7 @@ func TestRouting_UserMessageEventKeepsTheUserPosition(t *testing.T) {
 	require.NotEmpty(t, routeEvents(events), "the conversation must have been routed")
 	var positions []int
 	for _, ev := range events {
-		if ue, ok := ev.(*UserMessageEvent); ok {
+		if ue, ok := ev.(*contract.UserMessageEvent); ok {
 			positions = append(positions, ue.SessionPosition)
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/safety"
 	"github.com/docker/docker-agent/pkg/session"
@@ -550,7 +551,7 @@ func TestRunForwarding_DoesNotBackPropagateApprovals(t *testing.T) {
 	)
 	require.False(t, parent.IsToolsApproved())
 
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 	// Child scope broader than the parent's, as if the user had clicked
 	// "approve all" / "always allow" inside the sub-session.
 	_, err = rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), NewChannelSink(evts), delegationRequest{
@@ -722,7 +723,7 @@ func TestTransferTask_RetriesIdleStreamOnce(t *testing.T) {
 
 		sess := session.New(session.WithUserMessage("Test"))
 		require.NoError(t, store.UpdateSession(t.Context(), sess))
-		eventCh := make(chan Event, 128)
+		eventCh := make(chan contract.Event, 128)
 		resultCh := make(chan struct {
 			result *tools.ToolCallResult
 			err    error
@@ -755,9 +756,9 @@ func TestTransferTask_RetriesIdleStreamOnce(t *testing.T) {
 		var completedChild *session.Session
 		for _, event := range drainEvents(eventCh) {
 			switch typed := event.(type) {
-			case *WarningEvent:
+			case *contract.WarningEvent:
 				warningCount++
-			case *SubSessionCompletedEvent:
+			case *contract.SubSessionCompletedEvent:
 				completionCount++
 				completedChild, _ = typed.SubSession.(*session.Session)
 			}
@@ -806,7 +807,7 @@ func TestRunTurn_BudgetAdmissionErrorStopsLoop(t *testing.T) {
 	assert.Equal(t, 1, primary.callCount())
 	assert.True(t, ls.idleRetry.remaining)
 	assert.NotEmpty(t, sink.events)
-	_, ok := sink.events[0].(*BudgetExceededEvent)
+	_, ok := sink.events[0].(*contract.BudgetExceededEvent)
 	assert.True(t, ok)
 }
 
@@ -841,8 +842,8 @@ func TestRunForwarding_DirectTransferOwnBudgetStopFailsAfterLifecycle(t *testing
 
 	parent := session.New(session.WithUserMessage("Test"))
 	require.NoError(t, store.UpdateSession(t.Context(), parent))
-	var events []Event
-	result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(event Event) {
+	var events []contract.Event
+	result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(event contract.Event) {
 		events = append(events, event)
 	}), delegationRequest{
 		AgentName:            "delegate",
@@ -860,9 +861,9 @@ func TestRunForwarding_DirectTransferOwnBudgetStopFailsAfterLifecycle(t *testing
 	var completedChild *session.Session
 	for _, event := range events {
 		switch typed := event.(type) {
-		case *BudgetExceededEvent:
+		case *contract.BudgetExceededEvent:
 			budgetCount++
-		case *SubSessionCompletedEvent:
+		case *contract.SubSessionCompletedEvent:
 			completionCount++
 			completedChild, _ = typed.SubSession.(*session.Session)
 		}
@@ -900,9 +901,9 @@ func TestRunForwarding_IgnoresMismatchedBudgetStop(t *testing.T) {
 	parent := session.New(session.WithUserMessage("Test"))
 	observer.mismatchedSessionID = parent.ID
 
-	var forwardedBudget *BudgetExceededEvent
-	result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(event Event) {
-		if budgetEvent, ok := event.(*BudgetExceededEvent); ok {
+	var forwardedBudget *contract.BudgetExceededEvent
+	result, err := rt.runForwarding(t.Context(), parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(event contract.Event) {
+		if budgetEvent, ok := event.(*contract.BudgetExceededEvent); ok {
 			forwardedBudget = budgetEvent
 		}
 	}), delegationRequest{
@@ -927,8 +928,8 @@ func (o *mismatchedBudgetObserver) OnRunStart(_ context.Context, sess *session.S
 	o.childSessionID = sess.ID
 }
 
-func (o *mismatchedBudgetObserver) OnEvent(_ context.Context, _ *session.Session, event Event) {
-	if budgetEvent, ok := event.(*BudgetExceededEvent); ok {
+func (o *mismatchedBudgetObserver) OnEvent(_ context.Context, _ *session.Session, event contract.Event) {
+	if budgetEvent, ok := event.(*contract.BudgetExceededEvent); ok {
 		budgetEvent.SessionID = o.mismatchedSessionID
 	}
 }
@@ -948,7 +949,7 @@ func TestRunForwarding_CancellationCannotReturnStaleSuccess(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	result, err := rt.runForwarding(ctx, parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(Event) {}), delegationRequest{
+	result, err := rt.runForwarding(ctx, parent, rt.resolveSessionAgent(parent), EventSinkFunc(func(contract.Event) {}), delegationRequest{
 		AgentName: "delegate",
 	})
 	require.ErrorIs(t, err, context.Canceled)
@@ -1009,7 +1010,7 @@ func TestTransferTask_SpendsIdleRetryBeforeFallback(t *testing.T) {
 			rt.ensureBudget()
 
 			sess := session.New(session.WithUserMessage("Test"))
-			eventCh := make(chan Event, 128)
+			eventCh := make(chan contract.Event, 128)
 			result, err := rt.handleTaskTransfer(
 				t.Context(), sess, transferToolCall("delegate"), NewChannelSink(eventCh), rt.resolveSessionAgent(sess),
 			)
@@ -1022,7 +1023,7 @@ func TestTransferTask_SpendsIdleRetryBeforeFallback(t *testing.T) {
 
 			warningCount := 0
 			for _, event := range drainEvents(eventCh) {
-				if _, ok := event.(*WarningEvent); ok {
+				if _, ok := event.(*contract.WarningEvent); ok {
 					warningCount++
 				}
 			}
@@ -1065,7 +1066,7 @@ func TestTransferTask_PropagatesPermissions(t *testing.T) {
 		session.WithToolsApproved(true),
 		session.WithPermissions(parentPerms),
 	)
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	toolCall := tools.ToolCall{
 		ID:   "call_1",
@@ -1257,7 +1258,7 @@ func TestTransferTask_RejectsDirectCycle(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"))
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	result, err := rt.handleTaskTransfer(t.Context(), sess, transferToolCall("root"), NewChannelSink(evts), rt.resolveSessionAgent(sess))
 	require.NoError(t, err)
@@ -1291,7 +1292,7 @@ func TestTransferTask_NestedTransferGetsFreshIdleRetryAllowance(t *testing.T) {
 
 	parent := session.New(session.WithUserMessage("Test"))
 	result, err := rt.handleTaskTransfer(
-		t.Context(), parent, transferToolCall("worker"), EventSinkFunc(func(Event) {}), rt.resolveSessionAgent(parent),
+		t.Context(), parent, transferToolCall("worker"), EventSinkFunc(func(contract.Event) {}), rt.resolveSessionAgent(parent),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1302,7 +1303,7 @@ func TestTransferTask_NestedTransferGetsFreshIdleRetryAllowance(t *testing.T) {
 	require.NotNil(t, child)
 	child.AgentName = "worker"
 	result, err = rt.handleTaskTransfer(
-		t.Context(), child, transferToolCall("helper"), EventSinkFunc(func(Event) {}), rt.resolveSessionAgent(child),
+		t.Context(), child, transferToolCall("helper"), EventSinkFunc(func(contract.Event) {}), rt.resolveSessionAgent(child),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1349,7 +1350,7 @@ func TestTransferTask_NestedFromPinnedBackgroundSession(t *testing.T) {
 	assert.Equal(t, "worker", child.AgentName)
 	assert.Equal(t, []string{"root"}, child.DelegationLineage)
 
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	// Delegating back to an ancestor from the pinned child is an indirect cycle.
 	result, err := rt.handleTaskTransfer(t.Context(), child, transferToolCall("root"), NewChannelSink(evts), rt.resolveSessionAgent(child))
@@ -1405,13 +1406,13 @@ func probeAgent(name, content string, record func()) *agent.Agent {
 
 // collectTransferEvents closes evts and returns the AgentSwitching events and
 // the SubSessionCompleted event it carried.
-func collectTransferEvents(evts chan Event) (switches []*AgentSwitchingEvent, completed *SubSessionCompletedEvent) {
+func collectTransferEvents(evts chan contract.Event) (switches []*contract.AgentSwitchingEvent, completed *contract.SubSessionCompletedEvent) {
 	close(evts)
 	for ev := range evts {
 		switch e := ev.(type) {
-		case *AgentSwitchingEvent:
+		case *contract.AgentSwitchingEvent:
 			switches = append(switches, e)
-		case *SubSessionCompletedEvent:
+		case *contract.SubSessionCompletedEvent:
 			completed = e
 		}
 	}
@@ -1476,7 +1477,7 @@ func TestTransferTask_PinnedParentDoesNotMutateSharedCurrentAgent(t *testing.T) 
 	require.NotNil(t, child)
 	require.Equal(t, "worker", child.AgentName, "background child session must be pinned")
 
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 	result, err := rt.handleTaskTransfer(t.Context(), child, transferToolCall("helper"), NewChannelSink(evts), rt.resolveSessionAgent(child))
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1537,7 +1538,7 @@ func TestTransferTask_ForegroundSwitchesAndRestoresCurrentAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New(session.WithUserMessage("Test"), session.WithToolsApproved(true))
-	evts := make(chan Event, 128)
+	evts := make(chan contract.Event, 128)
 
 	result, err := rt.handleTaskTransfer(t.Context(), sess, transferToolCall("librarian"), NewChannelSink(evts), rt.resolveSessionAgent(sess))
 	require.NoError(t, err)
@@ -1624,12 +1625,12 @@ func TestTransferTask_ConcurrentPinnedNestedTransfersStayIsolated(t *testing.T) 
 	type transferOutcome struct {
 		result *tools.ToolCallResult
 		err    error
-		evts   chan Event
+		evts   chan contract.Event
 	}
 	run := func(child *session.Session, target string) chan transferOutcome {
 		out := make(chan transferOutcome, 1)
 		go func() {
-			evts := make(chan Event, 128)
+			evts := make(chan contract.Event, 128)
 			result, err := rt.handleTaskTransfer(t.Context(), child, transferToolCall(target), NewChannelSink(evts), rt.resolveSessionAgent(child))
 			out <- transferOutcome{result: result, err: err, evts: evts}
 		}()
@@ -1692,7 +1693,7 @@ func TestTransferTask_DepthBoundary(t *testing.T) {
 			session.WithUserMessage("Test"),
 			session.WithDelegationLineage(ancestorNames(maxDelegationDepth-1)),
 		)
-		evts := make(chan Event, 128)
+		evts := make(chan contract.Event, 128)
 
 		result, err := rt.handleTaskTransfer(t.Context(), sess, transferToolCall("librarian"), NewChannelSink(evts), rt.resolveSessionAgent(sess))
 		require.NoError(t, err)
@@ -1709,7 +1710,7 @@ func TestTransferTask_DepthBoundary(t *testing.T) {
 			session.WithUserMessage("Test"),
 			session.WithDelegationLineage(ancestorNames(maxDelegationDepth)),
 		)
-		evts := make(chan Event, 128)
+		evts := make(chan contract.Event, 128)
 
 		result, err := rt.handleTaskTransfer(t.Context(), sess, transferToolCall("librarian"), NewChannelSink(evts), rt.resolveSessionAgent(sess))
 		require.NoError(t, err)
@@ -2116,7 +2117,7 @@ func TestRunStream_NestedBackgroundAgents_EndToEnd(t *testing.T) {
 			Function: tools.FunctionCall{Name: agenttool.ToolNameListBackgroundAgents},
 		}
 		synctest.Wait()
-		res, err := listHandler(t.Context(), sess, listCall, NewChannelSink(make(chan Event, 4)), tools.NopRuntime{})
+		res, err := listHandler(t.Context(), sess, listCall, NewChannelSink(make(chan contract.Event, 4)), tools.NopRuntime{})
 		require.NoError(t, err)
 		listOut := res.Output
 		require.Equal(t, 2, strings.Count(listOut, "Status:  completed"),

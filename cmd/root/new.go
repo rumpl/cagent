@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/creator"
 	"github.com/docker/docker-agent/pkg/programstatus"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry"
 	"github.com/docker/docker-agent/pkg/tui"
@@ -107,13 +108,13 @@ func (f *newFlags) runNewCommand(cmd *cobra.Command, args []string) (commandErr 
 	return runTUI(ctx, rt, sess, nil, nil, nil, appOpts...)
 }
 
-func runTUI(ctx context.Context, rt runtime.Runtime, sess *session.Session, spawner tui.SessionSpawner, cleanup func(), tuiOpts []tui.Option, opts ...app.Opt) error {
+func runTUI(ctx context.Context, rt contract.Runtime, sess *session.Session, spawner tui.SessionSpawner, cleanup func(), tuiOpts []tui.Option, opts ...app.Opt) error {
 	return runTUIWrapped(ctx, rt, sess, spawner, cleanup, tuiOpts, nil, opts...)
 }
 
 // runTUIWrapped is runTUI with an optional model wrapper, used by --record to
 // interpose the input recorder between the terminal and the real model.
-func runTUIWrapped(ctx context.Context, rt runtime.Runtime, sess *session.Session, spawner tui.SessionSpawner, cleanup func(), tuiOpts []tui.Option, wrap func(tea.Model) tea.Model, opts ...app.Opt) error {
+func runTUIWrapped(ctx context.Context, rt contract.Runtime, sess *session.Session, spawner tui.SessionSpawner, cleanup func(), tuiOpts []tui.Option, wrap func(tea.Model) tea.Model, opts ...app.Opt) error {
 	if gen := rt.TitleGenerator(ctx); gen != nil {
 		opts = append(opts, app.WithTitleGenerator(gen))
 	}

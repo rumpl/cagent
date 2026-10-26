@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelinfo"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/paths"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -622,7 +623,7 @@ func TestRunStream_TransformErrorDoesNotBreakRun(t *testing.T) {
 	sess := session.New(session.WithUserMessage("hi"))
 	var sawStop bool
 	for ev := range r.RunStream(t.Context(), sess) {
-		if _, ok := ev.(*StreamStoppedEvent); ok {
+		if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 			sawStop = true
 		}
 	}

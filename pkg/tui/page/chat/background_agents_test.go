@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
@@ -34,7 +34,7 @@ func TestBackgroundAgentStatusPreservesForegroundState(t *testing.T) {
 			p.working = working
 			p.messageQueue = []queuedMessage{{content: "queued"}}
 			for _, running := range []bool{true, false} {
-				handled, _ := p.handleRuntimeEvent(runtime.BackgroundAgentStatus("child", "worker", running))
+				handled, _ := p.handleRuntimeEvent(contract.BackgroundAgentStatus("child", "worker", running))
 				require.True(t, handled)
 				assert.Equal(t, working, p.working)
 				assert.NotNil(t, p.msgCancel)
@@ -63,12 +63,12 @@ func TestBackgroundAgentCountRelayoutsSidebarBand(t *testing.T) {
 			})
 			p.SetSize(40, 40)
 			before := p.computeSidebarLayout()
-			p.Update(runtime.BackgroundAgentStatus("child", "worker", true))
+			p.Update(contract.BackgroundAgentStatus("child", "worker", true))
 			during := p.computeSidebarLayout()
 			assert.NotEqual(t, before, during, "the count needs more space in a narrow band")
 			assert.Equal(t, during, p.appliedLayout)
 			assert.Contains(t, ansi.Strip(p.sidebar.View()), "Background: 1 running")
-			p.Update(runtime.BackgroundAgentStatus("child", "worker", false))
+			p.Update(contract.BackgroundAgentStatus("child", "worker", false))
 			assert.Equal(t, before, p.computeSidebarLayout())
 			assert.Equal(t, before, p.appliedLayout)
 		})
@@ -84,13 +84,13 @@ func TestBackgroundAgentCountBandHeightMatchesRendering(t *testing.T) {
 			p := newLayoutTestPage(t, position)
 			p.sessionState.SetCurrentAgentName("root")
 			p.sidebar.SetAgentInfo("root", "anthropic/claude-sonnet-4-5", "", 0, "", 0)
-			p.sidebar.SetTeamInfo([]runtime.AgentDetails{{Name: "root"}, {Name: "worker"}})
+			p.sidebar.SetTeamInfo([]contract.AgentDetails{{Name: "root"}, {Name: "worker"}})
 			p.SetLayoutSettings(msgtypes.LayoutSettings{
 				SidebarPosition: position, HideSessionPath: true, HideUsage: true, HideTools: true, HideTodos: true,
 			})
 			p.SetSize(37, 40)
 			for _, running := range []bool{false, true, false} {
-				p.Update(runtime.BackgroundAgentStatus("child", "worker", running))
+				p.Update(contract.BackgroundAgentStatus("child", "worker", running))
 				sl := p.computeSidebarLayout()
 				assert.Equal(t, sl.sidebarHeight, lipgloss.Height(p.renderCollapsedSidebar(sl)), "running=%v", running)
 				assert.Equal(t, p.height, lipgloss.Height(p.View()), "running=%v", running)

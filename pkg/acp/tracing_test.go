@@ -26,7 +26,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -299,9 +299,9 @@ func TestACPTracePermissionsAndHostileReplies(t *testing.T) {
 		return response
 	})
 	call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "test", Arguments: "{}"}}
-	_, err := f.agent.handleToolCallConfirmation(ctx, f.sess, runtime.ToolCallConfirmation(call, tools.Tool{Name: "test"}, "root", nil).(*runtime.ToolCallConfirmationEvent), "opaque")
+	_, err := f.agent.handleToolCallConfirmation(ctx, f.sess, contract.ToolCallConfirmation(call, tools.Tool{Name: "test"}, "root", nil).(*contract.ToolCallConfirmationEvent), "opaque")
 	require.NoError(t, err)
-	require.NoError(t, f.agent.handleMaxIterationsReached(ctx, f.sess, runtime.MaxIterationsReached(2).(*runtime.MaxIterationsReachedEvent)))
+	require.NoError(t, f.agent.handleMaxIterationsReached(ctx, f.sess, contract.MaxIterationsReached(2).(*contract.MaxIterationsReachedEvent)))
 	require.Len(t, f.peer.recordedRequests(), 2)
 	require.NoError(t, f.agent.sendUpdate(ctx, f.sess.id, acpsdk.UpdateAgentMessageText("after hostile reply")))
 	for _, line := range f.out.lines() {

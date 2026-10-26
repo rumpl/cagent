@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -92,7 +93,7 @@ func getToolsFor(t *testing.T, sess *session.Session, toolsets []tools.ToolSet, 
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root)), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 
-	got, err := rt.getTools(t.Context(), sess, root, trace.SpanFromContext(t.Context()), NewChannelSink(make(chan Event, 10)), false)
+	got, err := rt.getTools(t.Context(), sess, root, trace.SpanFromContext(t.Context()), NewChannelSink(make(chan contract.Event, 10)), false)
 	require.NoError(t, err)
 	return got
 }
@@ -279,7 +280,7 @@ func TestNativeCompactionDropsSearchOnlyCatalogTools(t *testing.T) {
 	)
 	rt := newNativeRuntime(t, root)
 	got := runCompaction(t, rt, nativeTestSession(), "")
-	require.Equal(t, CompactionOutcomeApplied, got.outcome)
+	require.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	require.Equal(t, 1, comp.callCount())
 	assert.ElementsMatch(t, []string{"regular", deferred.ToolNameSearchTool, deferred.ToolNameAddTool}, toolNames(comp.tools))
 }

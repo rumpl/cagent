@@ -12,7 +12,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -97,7 +97,7 @@ func TestToolRendererOptionsAreAppScoped(t *testing.T) {
 		page := chatpage.New(ar, t.Context(), app.New(t.Context(), stubRuntime{}, sess), &service.SessionState{}, m.chatPageOpts()...)
 		t.Cleanup(func() { chatpage.Cleanup(page) })
 		page.SetSize(120, 40)
-		page.Update(&runtime.ToolCallConfirmationEvent{ToolCall: call, ToolDefinition: def})
+		page.Update(&contract.ToolCallConfirmationEvent{ToolCall: call, ToolDefinition: def})
 		pages = append(pages, page)
 	}
 	assert.Contains(t, ansi.Strip(pages[0].View()), first.label)
@@ -161,7 +161,7 @@ func TestMessagesToolRendererOptions(t *testing.T) {
 					assert.Contains(t, ansi.Strip(models[0].View()), "London")
 					assert.Contains(t, ansi.Strip(models[1].View()), "Paris")
 					before := first.builds
-					models[0].AddToolResult(&runtime.ToolCallResponseEvent{
+					models[0].AddToolResult(&contract.ToolCallResponseEvent{
 						ToolCallID: call.ID, Response: "sunny-result", Result: &tools.ToolCallResult{Output: "sunny-result"},
 					}, types.ToolStatusCompleted)
 					assert.Greater(t, first.builds, before, "result updates must rebuild through the supplied registry")
@@ -265,7 +265,7 @@ func TestHostedConfirmationUsesAppToolRenderers(t *testing.T) {
 		m := newTabLifecycleModel(t)
 		m.toolRenderers = probe.registry
 		id := m.supervisor.ActiveID()
-		event := runtime.ToolCallConfirmation(call, def, "root", nil)
+		event := contract.ToolCallConfirmation(call, def, "root", nil)
 		m.Update(queuedRuntimeDelivery(m, id, event))
 		opened := takeAttention(m)
 		require.Len(t, opened, 1)
@@ -292,7 +292,7 @@ func TestConfirmationToolRendererOptions(t *testing.T) {
 			for _, probe := range []*rendererProbe{first, second} {
 				ar := animation.NewRuntime()
 				state := &service.SessionState{}
-				event := &runtime.ToolCallConfirmationEvent{ToolCall: call, ToolDefinition: def}
+				event := &contract.ToolCallConfirmationEvent{ToolCall: call, ToolDefinition: def}
 				var d dialog.Dialog
 				switch entryPoint {
 				case "component":

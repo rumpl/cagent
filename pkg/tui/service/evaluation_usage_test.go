@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -49,7 +49,7 @@ func TestSessionStateRestoredEvaluatorCosts(t *testing.T) {
 
 	// Restored child costs are already included in the root's snapshot baseline.
 	for range 2 {
-		state.SetAgentUsage(root.ID, "root", *runtime.SessionUsage(root, 10000))
+		state.SetAgentUsage(root.ID, "root", *contract.SessionUsage(root, 10000))
 	}
 	cost, ok := state.AgentCost("root")
 	require.True(t, ok)
@@ -60,8 +60,8 @@ func TestSessionStateRestoredEvaluatorCosts(t *testing.T) {
 	live.AddEvaluation(&session.Evaluation{ID: "new-child", AgentName: "worker", Cost: new(0.125)})
 	root.AddLiveSubSession(live)
 	for range 2 {
-		state.SetAgentUsage(root.ID, "root", *runtime.SessionUsage(root, 10000))
-		state.SetAgentUsage(live.ID, "worker", *runtime.SessionUsage(live, 10000))
+		state.SetAgentUsage(root.ID, "root", *contract.SessionUsage(root, 10000))
+		state.SetAgentUsage(live.ID, "worker", *contract.SessionUsage(live, 10000))
 	}
 	cost, ok = state.AgentCost("root")
 	require.True(t, ok)

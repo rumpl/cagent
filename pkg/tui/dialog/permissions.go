@@ -3,7 +3,7 @@ package dialog
 import (
 	"charm.land/lipgloss/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
 
@@ -11,12 +11,12 @@ import (
 type permissionsDialog struct {
 	readOnlyScrollDialog
 
-	permissions *runtime.PermissionsInfo
+	permissions *contract.PermissionsInfo
 	yoloEnabled bool
 }
 
 // NewPermissionsDialog creates a new dialog showing tool permission rules.
-func NewPermissionsDialog(perms *runtime.PermissionsInfo, yoloEnabled bool) Dialog {
+func NewPermissionsDialog(perms *contract.PermissionsInfo, yoloEnabled bool) Dialog {
 	d := &permissionsDialog{
 		permissions: perms,
 		yoloEnabled: yoloEnabled,

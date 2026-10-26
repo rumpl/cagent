@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -104,9 +104,9 @@ func TestChatCompletionFinalizesBeforeTerminalWrite(t *testing.T) {
 							<-nextRelease
 						} else {
 							sess.InputTokens, sess.OutputTokens = 10, 20
-							runner.events = []runtime.Event{runtime.AgentChoice("root", "session", "answer")}
+							runner.events = []contract.Event{contract.AgentChoice("root", "session", "answer")}
 							if failed {
-								runner.events = append(runner.events, &runtime.ErrorEvent{Error: "run failed"})
+								runner.events = append(runner.events, &contract.ErrorEvent{Error: "run failed"})
 							}
 						}
 						sess.AddMessage(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, Content: "answer"}})

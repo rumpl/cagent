@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -57,12 +58,12 @@ func TestCompactIfNeeded_IgnoresSubSessionTokens(t *testing.T) {
 		Content:    "subtask done",
 	}))
 
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	rt.compactIfNeeded(t.Context(), sess, root, 100_000, messageCountBefore, NewChannelSink(events))
 	close(events)
 
 	for ev := range events {
-		_, isCompaction := ev.(*SessionCompactionEvent)
+		_, isCompaction := ev.(*contract.SessionCompactionEvent)
 		assert.False(t, isCompaction,
 			"sub-session tokens must not trigger compaction of the parent session")
 	}
@@ -96,13 +97,13 @@ func TestCompactIfNeeded_TriggersOnOwnMessages(t *testing.T) {
 		Content:    strings.Repeat("z", 600_000), // ~150k estimated tokens
 	}))
 
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	rt.compactIfNeeded(t.Context(), sess, root, 100_000, messageCountBefore, NewChannelSink(events))
 	close(events)
 
 	sawCompaction := false
 	for ev := range events {
-		if _, ok := ev.(*SessionCompactionEvent); ok {
+		if _, ok := ev.(*contract.SessionCompactionEvent); ok {
 			sawCompaction = true
 		}
 	}
@@ -145,12 +146,12 @@ func TestCompactIfNeeded_CustomThreshold(t *testing.T) {
 		require.NoError(t, err)
 
 		sess, before := buildSession()
-		events := make(chan Event, 16)
+		events := make(chan contract.Event, 16)
 		rt.compactIfNeeded(t.Context(), sess, root, 100_000, before, NewChannelSink(events))
 		close(events)
 
 		for ev := range events {
-			if _, ok := ev.(*SessionCompactionEvent); ok {
+			if _, ok := ev.(*contract.SessionCompactionEvent); ok {
 				return true
 			}
 		}
@@ -183,12 +184,12 @@ func TestCompactIfNeeded_CustomThreshold(t *testing.T) {
 		before := len(sess.OwnMessages())
 		sess.InputTokens = 95_000 // over the 0.9 default, under 1.0
 
-		events := make(chan Event, 16)
+		events := make(chan contract.Event, 16)
 		rt.compactIfNeeded(t.Context(), sess, root, 100_000, before, NewChannelSink(events))
 		close(events)
 
 		for ev := range events {
-			_, isCompaction := ev.(*SessionCompactionEvent)
+			_, isCompaction := ev.(*contract.SessionCompactionEvent)
 			assert.False(t, isCompaction, "95%% usage must not trigger compaction with compaction_threshold: 1")
 		}
 	})
@@ -223,12 +224,12 @@ func TestCompactIfNeeded_AgentSessionCompactionDisabled(t *testing.T) {
 		Content:    strings.Repeat("z", 600_000), // ~150k estimated tokens
 	}))
 
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	rt.compactIfNeeded(t.Context(), sess, root, 100_000, messageCountBefore, NewChannelSink(events))
 	close(events)
 
 	for ev := range events {
-		_, isCompaction := ev.(*SessionCompactionEvent)
+		_, isCompaction := ev.(*contract.SessionCompactionEvent)
 		assert.False(t, isCompaction,
 			"session_compaction: false must suppress the proactive compaction trigger")
 	}
@@ -307,12 +308,12 @@ func TestCompactIfNeeded_UsageCalibratedTrigger(t *testing.T) {
 		messageCountBefore := len(sess.OwnMessages())
 		sess.AddMessage(toolMsg(120_000))
 
-		events := make(chan Event, 16)
+		events := make(chan contract.Event, 16)
 		rt.compactIfNeeded(t.Context(), sess, root, contextLimit, messageCountBefore, NewChannelSink(events))
 		close(events)
 
 		for ev := range events {
-			if _, ok := ev.(*SessionCompactionEvent); ok {
+			if _, ok := ev.(*contract.SessionCompactionEvent); ok {
 				return true
 			}
 		}

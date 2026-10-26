@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // LoadTeamResponse summarises the result of a LoadTeam call. It carries
@@ -116,7 +117,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // becomes 500.
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	if errors.Is(err, runtime.ErrUnsupported) {
+	if errors.Is(err, contract.ErrUnsupported) {
 		status = http.StatusNotImplemented
 	}
 	http.Error(w, err.Error(), status)

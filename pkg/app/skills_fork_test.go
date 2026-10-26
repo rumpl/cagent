@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -33,7 +33,7 @@ type skillFakeRuntime struct {
 
 	mu       sync.Mutex
 	calls    []skillstool.RunSkillArgs
-	emitted  []runtime.Event
+	emitted  []contract.Event
 	stopCall atomic.Bool
 	// skipStop, when true, omits the unconditional StreamStoppedEvent this
 	// mock otherwise emits — used by the #4136 regression tests below to
@@ -45,7 +45,7 @@ func (f *skillFakeRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet {
 	return f.skillset
 }
 
-func (f *skillFakeRuntime) RunSkillFork(_ context.Context, sess *session.Session, args skillstool.RunSkillArgs, sink runtime.EventSink) (*tools.ToolCallResult, error) {
+func (f *skillFakeRuntime) RunSkillFork(_ context.Context, sess *session.Session, args skillstool.RunSkillArgs, sink contract.EventSink) (*tools.ToolCallResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, args)
 	emitted := f.emitted
@@ -58,7 +58,7 @@ func (f *skillFakeRuntime) RunSkillFork(_ context.Context, sess *session.Session
 	if !skipStop {
 		// Emit StreamStoppedEvent so the App's drain loop terminates without
 		// relying on its own #4136 fallback (see skipStop for the opposite).
-		sink.Emit(runtime.StreamStopped(sess.ID, "", ""))
+		sink.Emit(contract.StreamStopped(sess.ID, "", ""))
 	}
 	f.stopCall.Store(true)
 	return tools.ResultSuccess("done"), nil

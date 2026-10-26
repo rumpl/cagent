@@ -21,6 +21,8 @@ import (
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -69,7 +71,7 @@ var _ acp.Agent = (*Agent)(nil)
 type Session struct {
 	id              string
 	sess            *session.Session
-	rt              runtime.Runtime
+	rt              contract.Runtime
 	team            *team.Team
 	clientMCP       *clientMCPTools
 	terminals       *terminalManager
@@ -77,7 +79,7 @@ type Session struct {
 	additionalDirs  []string
 	usageAgent      string
 	contextLimit    int64
-	rootUsage       *runtime.Usage
+	rootUsage       *contract.Usage
 	usageCosts      map[string]float64
 	configModels    map[string]latest.ModelConfig
 	configProviders map[string]latest.ProviderConfig
@@ -420,7 +422,7 @@ func (a *Agent) newRuntime(ctx context.Context, sessionID, workingDir string, se
 	acpSess.configEnabled = true
 	acpSess.configModels = loadResult.Models
 	acpSess.configProviders = loadResult.Providers
-	switcher := &runtime.ModelSwitcherConfig{
+	switcher := &modelcatalog.Config{
 		Models: loadResult.Models, Providers: loadResult.Providers, ProviderRegistry: loadResult.ProviderRegistry,
 		AgentDefaultModels: loadResult.AgentDefaultModels, ModelsGateway: rc.ModelsGateway,
 		EncryptedConfig: loadResult.EncryptedConfig, EnvProvider: rc.EnvProvider(),
@@ -842,8 +844,8 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 	outcome := promptOutcome{sessionID: acpSess.sess.ID}
 
 	for event := range eventsChan {
-		var usage *runtime.Usage
-		if e, ok := event.(*runtime.TokenUsageEvent); ok {
+		var usage *contract.Usage
+		if e, ok := event.(*contract.TokenUsageEvent); ok {
 			usage = acpSess.recordUsage(e)
 		}
 		if ctx.Err() != nil {
@@ -853,20 +855,20 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 
 		outcome.observe(event)
 		switch e := event.(type) {
-		case *runtime.AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, withMessageID(acp.UpdateAgentMessageText(e.Content), messages.id(e.SessionID, e.AgentName, e.MessageID, "content"))); err != nil {
 				return "", err
 			}
 
-		case *runtime.AgentChoiceReasoningEvent:
+		case *contract.AgentChoiceReasoningEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, withMessageID(acp.UpdateAgentThoughtText(e.Content), messages.id(e.SessionID, e.AgentName, e.MessageID, "thought"))); err != nil {
 				return "", err
 			}
 
-		case *runtime.MessageAddedEvent:
+		case *contract.MessageAddedEvent:
 			messages.finish(e.SessionID, e.AgentName)
 
-		case *runtime.ToolCallConfirmationEvent:
+		case *contract.ToolCallConfirmationEvent:
 			state, err := toolCalls.report(ctx, a, acpSess, e.AgentName, e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending)
 			if err != nil {
 				return "", err
@@ -877,12 +879,12 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 				return "", err
 			}
 
-		case *runtime.ToolCallEvent:
+		case *contract.ToolCallEvent:
 			if _, err := toolCalls.report(ctx, a, acpSess, e.AgentName, e.ToolCall, e.ToolDefinition, acp.ToolCallStatusInProgress); err != nil {
 				return "", err
 			}
 
-		case *runtime.ToolCallResponseEvent:
+		case *contract.ToolCallResponseEvent:
 			if err := toolCalls.complete(ctx, a, acpSess, e); err != nil {
 				return "", err
 			}
@@ -895,17 +897,17 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 				}
 			}
 
-		case *runtime.ErrorEvent:
+		case *contract.ErrorEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(fmt.Sprintf("\n\nError: %s\n", e.Error))); err != nil {
 				return "", err
 			}
 
-		case *runtime.WarningEvent:
+		case *contract.WarningEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(fmt.Sprintf("\nWarning: %s\n", e.Message))); err != nil {
 				return "", err
 			}
 
-		case *runtime.SessionTitleEvent:
+		case *contract.SessionTitleEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.SessionUpdate{
 				SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
 					SessionUpdate: "session_info_update",
@@ -915,24 +917,24 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 				return "", err
 			}
 
-		case *runtime.AgentInfoEvent:
+		case *contract.AgentInfoEvent:
 			a.refreshCommands(ctx, acpSess)
 
-		case *runtime.TokenUsageEvent:
+		case *contract.TokenUsageEvent:
 			if usage != nil {
 				if err := a.emitUsage(ctx, acpSess.id, usage); err != nil {
 					return "", err
 				}
 			}
 
-		case *runtime.ModelFallbackEvent:
+		case *contract.ModelFallbackEvent:
 			if err := a.sendUpdate(ctx, acpSess.id, acp.UpdateAgentMessageText(
 				fmt.Sprintf("\nModel %s failed, falling back to %s (%s)\n", e.FailedModel, e.FallbackModel, e.Reason),
 			)); err != nil {
 				return "", err
 			}
 
-		case *runtime.MaxIterationsReachedEvent:
+		case *contract.MaxIterationsReachedEvent:
 			if err := a.handleMaxIterationsReached(ctx, acpSess, e); err != nil {
 				return "", err
 			}
@@ -946,7 +948,7 @@ func (a *Agent) runAgent(ctx context.Context, acpSess *Session) (stopReason acp.
 }
 
 // handleToolCallConfirmation handles tool call permission requests.
-func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session, e *runtime.ToolCallConfirmationEvent, id acp.ToolCallId) (bool, error) {
+func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session, e *contract.ToolCallConfirmationEvent, id acp.ToolCallId) (bool, error) {
 	workingDir, _ := acpSess.workspaceSnapshot()
 	toolCallUpdate := buildToolCallUpdate(e.ToolCall, e.ToolDefinition, acp.ToolCallStatusPending, workingDir)
 	toolCallUpdate.ToolCallId = id
@@ -1002,7 +1004,7 @@ func (a *Agent) handleToolCallConfirmation(ctx context.Context, acpSess *Session
 }
 
 // handleMaxIterationsReached handles max iterations events.
-func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session, e *runtime.MaxIterationsReachedEvent) error {
+func (a *Agent) handleMaxIterationsReached(ctx context.Context, acpSess *Session, e *contract.MaxIterationsReachedEvent) error {
 	title := fmt.Sprintf("Maximum iterations (%d) reached", e.MaxIterations)
 	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 		Meta:      traceMeta(ctx, nil),

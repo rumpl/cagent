@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -367,7 +368,7 @@ func (r *LocalRuntime) enforceBudget(
 	ctx context.Context,
 	sess *session.Session,
 	a *agent.Agent,
-	events EventSink,
+	events contract.EventSink,
 ) iterationDecision {
 	breach := r.currentBudget().exceededFor(a.Name())
 	if breach == nil {
@@ -413,11 +414,11 @@ func (s *budgetSet) exceededFor(agentName string) *budgetBreach {
 const unpricedSpendWarning = "This run has a max_cost limit, but some model or evaluator spend is unknown and the runtime cannot price it, " +
 	"so that spend does not count against the limit. Set a model- or evaluator-level `cost:` block when rates are missing; requests without usage cannot be priced."
 
-func (r *LocalRuntime) recordBudget(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events EventSink) {
+func (r *LocalRuntime) recordBudget(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events contract.EventSink) {
 	r.recordBudgetSpend(sess, a, usage, cost, active, events, false)
 }
 
-func (r *LocalRuntime) recordBudgetSpend(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events EventSink, unknown bool) {
+func (r *LocalRuntime) recordBudgetSpend(sess *session.Session, a *agent.Agent, usage *chat.Usage, cost *float64, active time.Duration, events contract.EventSink, unknown bool) {
 	s := r.currentBudget()
 	if s == nil {
 		return
@@ -432,7 +433,7 @@ func (r *LocalRuntime) recordBudgetSpend(sess *session.Session, a *agent.Agent, 
 		nt.Tracker.recordSpend(a.Name(), usage, cost, active, unknown)
 	}
 	if warnUnpriced && s.unpricedSpend() {
-		events.Emit(Warning(unpricedSpendWarning, a.Name()))
+		events.Emit(contract.Warning(unpricedSpendWarning, a.Name()))
 	}
 	events.Emit(BudgetUsage(sess.ID, a.Name(), s.snapshot()))
 }

@@ -11,7 +11,7 @@ import (
 	"cmp"
 	"strings"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -19,10 +19,10 @@ import (
 // with its neighbours.
 func Mergeable(event any) bool {
 	switch event.(type) {
-	case *runtime.AgentChoiceEvent,
-		*runtime.AgentChoiceReasoningEvent,
-		*runtime.PartialToolCallEvent,
-		*runtime.ToolCallOutputEvent:
+	case *contract.AgentChoiceEvent,
+		*contract.AgentChoiceReasoningEvent,
+		*contract.PartialToolCallEvent,
+		*contract.ToolCallOutputEvent:
 		return true
 	default:
 		return false
@@ -54,23 +54,23 @@ func Merge[E any](events []E) []E {
 // the merged event and how many of rest it consumed.
 func mergeRun[E any](first E, rest []E) (E, int) {
 	switch ev := any(first).(type) {
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		return mergeAgentChoiceRun(ev, rest)
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		return mergeAgentChoiceReasoningRun(ev, rest)
-	case *runtime.PartialToolCallEvent:
+	case *contract.PartialToolCallEvent:
 		return mergePartialToolCallRun(ev, rest)
-	case *runtime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		return mergeToolCallOutputRun(ev, rest)
 	default:
 		return first, 0
 	}
 }
 
-func mergeAgentChoiceRun[E any](first *runtime.AgentChoiceEvent, rest []E) (E, int) {
+func mergeAgentChoiceRun[E any](first *contract.AgentChoiceEvent, rest []E) (E, int) {
 	n, total := 0, len(first.Content)
 	for _, msg := range rest {
-		next, ok := any(msg).(*runtime.AgentChoiceEvent)
+		next, ok := any(msg).(*contract.AgentChoiceEvent)
 		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID || next.MessageID != first.MessageID {
 			break
 		}
@@ -85,9 +85,9 @@ func mergeAgentChoiceRun[E any](first *runtime.AgentChoiceEvent, rest []E) (E, i
 	b.Grow(total)
 	b.WriteString(first.Content)
 	for _, msg := range rest[:n] {
-		b.WriteString(any(msg).(*runtime.AgentChoiceEvent).Content)
+		b.WriteString(any(msg).(*contract.AgentChoiceEvent).Content)
 	}
-	return as[E](&runtime.AgentChoiceEvent{
+	return as[E](&contract.AgentChoiceEvent{
 		Type:         first.Type,
 		SessionID:    first.SessionID,
 		MessageID:    first.MessageID,
@@ -96,10 +96,10 @@ func mergeAgentChoiceRun[E any](first *runtime.AgentChoiceEvent, rest []E) (E, i
 	}), n
 }
 
-func mergeAgentChoiceReasoningRun[E any](first *runtime.AgentChoiceReasoningEvent, rest []E) (E, int) {
+func mergeAgentChoiceReasoningRun[E any](first *contract.AgentChoiceReasoningEvent, rest []E) (E, int) {
 	n, total := 0, len(first.Content)
 	for _, msg := range rest {
-		next, ok := any(msg).(*runtime.AgentChoiceReasoningEvent)
+		next, ok := any(msg).(*contract.AgentChoiceReasoningEvent)
 		if !ok || next.AgentName != first.AgentName || next.SessionID != first.SessionID || next.MessageID != first.MessageID {
 			break
 		}
@@ -114,9 +114,9 @@ func mergeAgentChoiceReasoningRun[E any](first *runtime.AgentChoiceReasoningEven
 	b.Grow(total)
 	b.WriteString(first.Content)
 	for _, msg := range rest[:n] {
-		b.WriteString(any(msg).(*runtime.AgentChoiceReasoningEvent).Content)
+		b.WriteString(any(msg).(*contract.AgentChoiceReasoningEvent).Content)
 	}
-	return as[E](&runtime.AgentChoiceReasoningEvent{
+	return as[E](&contract.AgentChoiceReasoningEvent{
 		Type:         first.Type,
 		SessionID:    first.SessionID,
 		MessageID:    first.MessageID,
@@ -125,10 +125,10 @@ func mergeAgentChoiceReasoningRun[E any](first *runtime.AgentChoiceReasoningEven
 	}), n
 }
 
-func mergeToolCallOutputRun[E any](first *runtime.ToolCallOutputEvent, rest []E) (E, int) {
+func mergeToolCallOutputRun[E any](first *contract.ToolCallOutputEvent, rest []E) (E, int) {
 	n, total := 0, len(first.Output)
 	for _, msg := range rest {
-		next, ok := any(msg).(*runtime.ToolCallOutputEvent)
+		next, ok := any(msg).(*contract.ToolCallOutputEvent)
 		if !ok || next.ToolCallID != first.ToolCallID {
 			break
 		}
@@ -143,9 +143,9 @@ func mergeToolCallOutputRun[E any](first *runtime.ToolCallOutputEvent, rest []E)
 	b.Grow(total)
 	b.WriteString(first.Output)
 	for _, msg := range rest[:n] {
-		b.WriteString(any(msg).(*runtime.ToolCallOutputEvent).Output)
+		b.WriteString(any(msg).(*contract.ToolCallOutputEvent).Output)
 	}
-	return as[E](&runtime.ToolCallOutputEvent{
+	return as[E](&contract.ToolCallOutputEvent{
 		Type:           first.Type,
 		ToolCallID:     first.ToolCallID,
 		ToolDefinition: first.ToolDefinition,
@@ -154,10 +154,10 @@ func mergeToolCallOutputRun[E any](first *runtime.ToolCallOutputEvent, rest []E)
 	}), n
 }
 
-func mergePartialToolCallRun[E any](first *runtime.PartialToolCallEvent, rest []E) (E, int) {
+func mergePartialToolCallRun[E any](first *contract.PartialToolCallEvent, rest []E) (E, int) {
 	n, total := 0, len(first.ToolCall.Function.Arguments)
 	for _, msg := range rest {
-		next, ok := any(msg).(*runtime.PartialToolCallEvent)
+		next, ok := any(msg).(*contract.PartialToolCallEvent)
 		if !ok || next.ToolCall.ID != first.ToolCall.ID {
 			break
 		}
@@ -175,7 +175,7 @@ func mergePartialToolCallRun[E any](first *runtime.PartialToolCallEvent, rest []
 	name := first.ToolCall.Function.Name
 	toolDef := first.ToolDefinition
 	for _, msg := range rest[:n] {
-		next := any(msg).(*runtime.PartialToolCallEvent)
+		next := any(msg).(*contract.PartialToolCallEvent)
 		b.WriteString(next.ToolCall.Function.Arguments)
 		// The name and definition may only arrive on a later delta.
 		name = cmp.Or(name, next.ToolCall.Function.Name)
@@ -183,7 +183,7 @@ func mergePartialToolCallRun[E any](first *runtime.PartialToolCallEvent, rest []
 	}
 	toolCall := first.ToolCall
 	toolCall.Function = tools.FunctionCall{Name: name, Arguments: b.String()}
-	return as[E](&runtime.PartialToolCallEvent{
+	return as[E](&contract.PartialToolCallEvent{
 		Type:           first.Type,
 		ToolCall:       toolCall,
 		ToolDefinition: toolDef,
@@ -194,13 +194,13 @@ func mergePartialToolCallRun[E any](first *runtime.PartialToolCallEvent, rest []
 // deltaSize is the number of content bytes a delta carries.
 func deltaSize(event any) int {
 	switch ev := event.(type) {
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		return len(ev.Content)
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		return len(ev.Content)
-	case *runtime.PartialToolCallEvent:
+	case *contract.PartialToolCallEvent:
 		return len(ev.ToolCall.Function.Arguments)
-	case *runtime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		return len(ev.Output)
 	default:
 		return 0

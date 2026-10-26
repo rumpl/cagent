@@ -9,12 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
 type stubRunner struct {
-	events           []runtime.Event
+	events           []contract.Event
 	onRun            func(context.Context, *session.Session)
 	resumes          []runtime.ResumeRequest
 	elicitationIDs   []string
@@ -23,11 +24,11 @@ type stubRunner struct {
 	elicitationErr   error
 }
 
-func (r *stubRunner) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
+func (r *stubRunner) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
 	if r.onRun != nil {
 		r.onRun(ctx, sess)
 	}
-	events := make(chan runtime.Event, len(r.events))
+	events := make(chan contract.Event, len(r.events))
 	for _, event := range r.events {
 		events <- event
 	}
@@ -50,11 +51,11 @@ func TestRunAgentLoopForwardsEvents(t *testing.T) {
 	t.Parallel()
 	first := tools.ToolCall{ID: "first", Type: "function", Function: tools.FunctionCall{Name: "read_file", Arguments: `{"path":"test.txt"}`}}
 	second := tools.ToolCall{ID: "second", Type: "function", Function: tools.FunctionCall{Name: "think", Arguments: `{}`}}
-	runner := &stubRunner{events: []runtime.Event{
-		runtime.AgentChoice("root", "session", "hello"),
-		runtime.ToolCall(first, tools.Tool{}, "root"),
-		runtime.AgentChoice("root", "session", " world"),
-		runtime.ToolCall(second, tools.Tool{}, "root"),
+	runner := &stubRunner{events: []contract.Event{
+		contract.AgentChoice("root", "session", "hello"),
+		contract.ToolCall(first, tools.Tool{}, "root"),
+		contract.AgentChoice("root", "session", " world"),
+		contract.ToolCall(second, tools.Tool{}, "root"),
 	}}
 	sess := session.New()
 	runner.onRun = func(ctx context.Context, got *session.Session) {
@@ -77,10 +78,10 @@ func TestRunAgentLoopForwardsEvents(t *testing.T) {
 
 func TestRunAgentLoopRespondsToInteraction(t *testing.T) {
 	t.Parallel()
-	runner := &stubRunner{events: []runtime.Event{
-		&runtime.ToolCallConfirmationEvent{},
-		&runtime.ElicitationRequestEvent{ElicitationID: "request-id", ServerElicitationID: "server-id"},
-		&runtime.MaxIterationsReachedEvent{},
+	runner := &stubRunner{events: []contract.Event{
+		&contract.ToolCallConfirmationEvent{},
+		&contract.ElicitationRequestEvent{ElicitationID: "request-id", ServerElicitationID: "server-id"},
+		&contract.MaxIterationsReachedEvent{},
 	}, elicitationErr: errors.New("response failed")}
 
 	require.NoError(t, runAgentLoop(t.Context(), runner, session.New(), agentEmit{}))
@@ -94,11 +95,11 @@ func TestRunAgentLoopDrainsAfterErrorsAndCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	runner := &stubRunner{events: []runtime.Event{
-		&runtime.ErrorEvent{Error: "first failure"},
-		runtime.AgentChoice("root", "session", "cancel"),
-		&runtime.ErrorEvent{Error: "second failure"},
-		runtime.AgentChoice("root", "session", "drained"),
+	runner := &stubRunner{events: []contract.Event{
+		&contract.ErrorEvent{Error: "first failure"},
+		contract.AgentChoice("root", "session", "cancel"),
+		&contract.ErrorEvent{Error: "second failure"},
+		contract.AgentChoice("root", "session", "drained"),
 	}}
 	var content []string
 	err := runAgentLoop(ctx, runner, session.New(), agentEmit{onContent: func(delta string) {

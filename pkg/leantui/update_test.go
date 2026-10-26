@@ -17,6 +17,8 @@ import (
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -34,17 +36,17 @@ type cycleThinkingRuntime struct {
 	setCalls   int
 	setLevel   effort.Level
 	runCalls   int
-	followUps  []runtime.QueuedMessage
-	steered    []runtime.QueuedMessage
+	followUps  []contract.QueuedMessage
+	steered    []contract.QueuedMessage
 	steerErr   error
-	models     []runtime.ModelChoice
+	models     []modelcatalog.ModelChoice
 	modelRef   string
 	modelErr   error
 	store      session.Store
 }
 
-func (r *cycleThinkingRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{}
+func (r *cycleThinkingRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{}
 }
 func (r *cycleThinkingRuntime) CurrentAgentName(context.Context) string       { return "coder" }
 func (r *cycleThinkingRuntime) SetCurrentAgent(context.Context, string) error { return nil }
@@ -53,16 +55,16 @@ func (r *cycleThinkingRuntime) CurrentAgentTools(context.Context) ([]tools.Tool,
 }
 func (r *cycleThinkingRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus { return nil }
 func (r *cycleThinkingRuntime) RestartToolset(context.Context, string) error       { return nil }
-func (r *cycleThinkingRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {
+func (r *cycleThinkingRuntime) EmitStartupInfo(context.Context, *session.Session, contract.EventSink) {
 }
 
-func (r *cycleThinkingRuntime) EmitAgentInfo(_ context.Context, sink runtime.EventSink) {
-	sink.Emit(runtime.TeamInfo([]runtime.AgentDetails{{Name: "coder", Thinking: r.level.String()}}, "coder"))
+func (r *cycleThinkingRuntime) EmitAgentInfo(_ context.Context, sink contract.EventSink) {
+	sink.Emit(contract.TeamInfo([]contract.AgentDetails{{Name: "coder", Thinking: r.level.String()}}, "coder"))
 }
 func (r *cycleThinkingRuntime) ResetStartupInfo() {}
-func (r *cycleThinkingRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
+func (r *cycleThinkingRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
 	r.runCalls++
-	ch := make(chan runtime.Event)
+	ch := make(chan contract.Event)
 	close(ch)
 	return ch
 }
@@ -75,14 +77,14 @@ func (r *cycleThinkingRuntime) ResumeElicitation(context.Context, tools.Elicitat
 	return nil
 }
 func (r *cycleThinkingRuntime) SessionStore() session.Store { return r.store }
-func (r *cycleThinkingRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {
+func (r *cycleThinkingRuntime) Summarize(context.Context, *session.Session, string, contract.EventSink) {
 }
-func (r *cycleThinkingRuntime) PermissionsInfo() *runtime.PermissionsInfo { return nil }
+func (r *cycleThinkingRuntime) PermissionsInfo() *contract.PermissionsInfo { return nil }
 func (r *cycleThinkingRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet {
 	return nil
 }
 
-func (r *cycleThinkingRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (r *cycleThinkingRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -103,7 +105,7 @@ func (r *cycleThinkingRuntime) TitleGenerator(context.Context) *sessiontitle.Gen
 
 func (r *cycleThinkingRuntime) Close() error { return nil }
 func (r *cycleThinkingRuntime) Stop()        {}
-func (r *cycleThinkingRuntime) Steer(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *cycleThinkingRuntime) Steer(_ context.Context, msg contract.QueuedMessage) error {
 	if r.steerErr != nil {
 		return r.steerErr
 	}
@@ -111,7 +113,7 @@ func (r *cycleThinkingRuntime) Steer(_ context.Context, msg runtime.QueuedMessag
 	return nil
 }
 
-func (r *cycleThinkingRuntime) FollowUp(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *cycleThinkingRuntime) FollowUp(_ context.Context, msg contract.QueuedMessage) error {
 	r.followUps = append(r.followUps, msg)
 	return nil
 }
@@ -135,7 +137,7 @@ func (r *cycleThinkingRuntime) CancelFollowUp(_ context.Context, id string) bool
 	}
 	return false
 }
-func (r *cycleThinkingRuntime) QueueStatus() runtime.QueueStatus { return runtime.QueueStatus{} }
+func (r *cycleThinkingRuntime) QueueStatus() contract.QueueStatus { return contract.QueueStatus{} }
 
 func (r *cycleThinkingRuntime) TogglePause(context.Context) (bool, error) {
 	return false, nil
@@ -163,15 +165,15 @@ func (r *cycleThinkingRuntime) SetAgentThinkingLevel(_ context.Context, _ string
 	return level, nil
 }
 
-func (r *cycleThinkingRuntime) AvailableModels(context.Context) []runtime.ModelChoice {
+func (r *cycleThinkingRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice {
 	return r.models
 }
-func (r *cycleThinkingRuntime) SupportsModelSwitching() bool             { return r.supports }
-func (r *cycleThinkingRuntime) OnToolsChanged(func(runtime.Event))       {}
-func (r *cycleThinkingRuntime) OnBackgroundEvent(func(runtime.Event))    {}
-func (r *cycleThinkingRuntime) OnElicitationRequest(func(runtime.Event)) {}
+func (r *cycleThinkingRuntime) SupportsModelSwitching() bool              { return r.supports }
+func (r *cycleThinkingRuntime) OnToolsChanged(func(contract.Event))       {}
+func (r *cycleThinkingRuntime) OnBackgroundEvent(func(contract.Event))    {}
+func (r *cycleThinkingRuntime) OnElicitationRequest(func(contract.Event)) {}
 
-var _ runtime.Runtime = (*cycleThinkingRuntime)(nil)
+var _ contract.Runtime = (*cycleThinkingRuntime)(nil)
 
 func TestFirstMessageBangCommandRunsLocally(t *testing.T) {
 	rt := &cycleThinkingRuntime{}
@@ -204,9 +206,9 @@ func requireBangCommandOutput(t *testing.T, a *app.App, command, output string) 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	var result *runtime.ShellOutputEvent
+	var result *contract.ShellOutputEvent
 	a.SubscribeWith(ctx, func(msg tea.Msg) {
-		if event, ok := msg.(*runtime.ShellOutputEvent); ok && event.Done {
+		if event, ok := msg.(*contract.ShellOutputEvent); ok && event.Done {
 			result = event
 			cancel()
 		}
@@ -225,17 +227,17 @@ func TestBangCommandAppearsImmediatelyAndTracksOutput(t *testing.T) {
 	commandID := "bang-1"
 	command := "printf first; sleep 1; printf second"
 
-	m.handleEvent(t.Context(), runtime.ShellCommandStarted(commandID, command))
+	m.handleEvent(t.Context(), contract.ShellCommandStarted(commandID, command))
 	running := m.screen.Transcript.Tool(commandID)
 	require.NotNil(t, running)
 	require.NotNil(t, running.Message())
 	assert.Equal(t, tuitypes.ToolStatusRunning, running.Message().ToolStatus)
 	assert.Contains(t, running.Message().ToolCall.Function.Arguments, command)
 
-	m.handleEvent(t.Context(), runtime.ShellCommandOutput(commandID, "first"))
+	m.handleEvent(t.Context(), contract.ShellCommandOutput(commandID, "first"))
 	assert.Equal(t, "first", running.Message().Content)
 
-	m.handleEvent(t.Context(), runtime.ShellCommandFinished(commandID, command, "firstsecond", nil))
+	m.handleEvent(t.Context(), contract.ShellCommandFinished(commandID, command, "firstsecond", nil))
 	assert.Nil(t, m.screen.Transcript.Tool(commandID))
 	require.Equal(t, 1, m.screen.Transcript.BlockCount())
 	assert.Contains(t, strings.Join(m.screen.Transcript.BlockLines(0, 80), "\n"), "firstsecond")
@@ -395,7 +397,7 @@ func TestShiftTabCyclesThinkingLevel(t *testing.T) {
 
 func TestShiftTabReportsUnsupportedThinkingLevel(t *testing.T) {
 	t.Parallel()
-	rt := &cycleThinkingRuntime{supports: true, err: runtime.ErrUnsupported}
+	rt := &cycleThinkingRuntime{supports: true, err: contract.ErrUnsupported}
 	m := bareModel(24)
 	m.app = app.New(t.Context(), rt, session.New())
 
@@ -448,7 +450,7 @@ func TestModelCommandOpensModelAutocomplete(t *testing.T) {
 	t.Parallel()
 	rt := &cycleThinkingRuntime{
 		supports: true,
-		models: []runtime.ModelChoice{
+		models: []modelcatalog.ModelChoice{
 			{Name: "GPT 5", Ref: "openai/gpt-5", Provider: "openai", Model: "gpt-5", IsCurrent: true, IsDefault: true},
 			{Name: "Sonnet", Ref: "anthropic/claude-sonnet-4-6", Provider: "anthropic", Model: "claude-sonnet-4-6"},
 		},
@@ -497,7 +499,7 @@ func TestEscapeInterruptsActiveRun(t *testing.T) {
 	assert.NotContains(t, strings.Join(m.screen.Transcript.Lines(80, 0, true, m.sessionState, nil), "\n"), "Cancelled")
 
 	m.screen.Transcript.AppendAssistant("partial response")
-	m.handleEvent(t.Context(), runtime.StreamStopped("session", "coder", "canceled"))
+	m.handleEvent(t.Context(), contract.StreamStopped("session", "coder", "canceled"))
 
 	transcript := strings.Join(m.screen.Transcript.Lines(80, 0, false, m.sessionState, nil), "\n")
 	responseAt := strings.Index(transcript, "partial response")
@@ -519,11 +521,11 @@ func TestEscapeFinalizesToolWithoutResponse(t *testing.T) {
 			Arguments: `{}`,
 		},
 	}
-	m.handleEvent(t.Context(), runtime.ToolCall(toolCall, tools.Tool{Name: "edit_file"}, "coder"))
+	m.handleEvent(t.Context(), contract.ToolCall(toolCall, tools.Tool{Name: "edit_file"}, "coder"))
 	m.screen.Transcript.AppendAssistant("partial response")
 
 	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyEsc})
-	m.handleEvent(t.Context(), runtime.StreamStopped("session", "coder", "canceled"))
+	m.handleEvent(t.Context(), contract.StreamStopped("session", "coder", "canceled"))
 
 	assert.Zero(t, m.screen.Transcript.ToolCount())
 	assert.Zero(t, m.screen.Transcript.ToolByIDCount())
@@ -546,7 +548,7 @@ func TestCtrlCCancelMarkerFollowsBufferedResponse(t *testing.T) {
 
 	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyCtrlC})
 	m.screen.Transcript.AppendAssistant("partial response")
-	m.handleEvent(t.Context(), runtime.StreamStopped("session", "coder", "canceled"))
+	m.handleEvent(t.Context(), contract.StreamStopped("session", "coder", "canceled"))
 
 	transcript := strings.Join(m.screen.Transcript.Lines(80, 0, false, m.sessionState, nil), "\n")
 	responseAt := strings.Index(transcript, "partial response")
@@ -666,7 +668,7 @@ func TestOptionUpRestoresOnlyMessagesStillCancelable(t *testing.T) {
 		{ID: "consumed", Display: "already sent", Kind: ui.PendingUserSteer},
 		{ID: "pending", Display: "still pending", Kind: ui.PendingUserFollowUp},
 	}
-	rt.followUps = []runtime.QueuedMessage{{ID: "pending", Content: "still pending"}}
+	rt.followUps = []contract.QueuedMessage{{ID: "pending", Content: "still pending"}}
 
 	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltUp})
 
@@ -708,7 +710,7 @@ func TestSteeredUserEventConfirmsPendingAfterAssistant(t *testing.T) {
 	m.screen.Transcript.AppendAssistant("assistant response")
 	m.addPendingUser("", "/change", "resolved steering prompt", ui.PendingUserSteer)
 
-	m.handleEvent(t.Context(), runtime.UserMessage("resolved steering prompt\n", "session", nil, 1))
+	m.handleEvent(t.Context(), contract.UserMessage("resolved steering prompt\n", "session", nil, 1))
 
 	assert.Empty(t, m.pendingUsers)
 	assert.Equal(t, 2, m.screen.Transcript.BlockCount())
@@ -772,7 +774,7 @@ func TestSlashModelFallback(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rt := &cycleThinkingRuntime{
 				supports: true,
-				models: []runtime.ModelChoice{
+				models: []modelcatalog.ModelChoice{
 					{Name: "Sonnet", Ref: "anthropic/claude-sonnet-4-6", Provider: "anthropic", Model: "claude-sonnet-4-6"},
 				},
 			}
@@ -794,7 +796,7 @@ func TestSlashModelFallback(t *testing.T) {
 
 func TestSlashModelFallbackDisabled(t *testing.T) {
 	t.Parallel()
-	rt := &cycleThinkingRuntime{supports: true, models: []runtime.ModelChoice{{Ref: "openai/gpt-5", Model: "gpt-5"}}}
+	rt := &cycleThinkingRuntime{supports: true, models: []modelcatalog.ModelChoice{{Ref: "openai/gpt-5", Model: "gpt-5"}}}
 	m := bareModel(24)
 	m.app = app.New(t.Context(), rt, session.New())
 	m.disabledCommands = map[string]bool{"model": true}

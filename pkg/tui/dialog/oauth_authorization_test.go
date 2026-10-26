@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -46,7 +46,7 @@ func TestOAuthAuthorizationResponder(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), oauthContextKey{}, "retained"))
 			cancel()
 			responder := &recordingElicitationResponder{}
-			d := NewAttentionDialog(ctx, nil, responder, nil, &runtime.ElicitationRequestEvent{
+			d := NewAttentionDialog(ctx, nil, responder, nil, &contract.ElicitationRequestEvent{
 				ElicitationID: "request-1",
 				Meta:          map[string]any{"docker-agent/type": "oauth_flow", "docker-agent/server_url": "https://example.com"},
 			})
@@ -65,7 +65,7 @@ func TestOAuthAuthorizationResponder(t *testing.T) {
 
 func TestMaxIterationsNeedsNoApplication(t *testing.T) {
 	t.Parallel()
-	d := NewAttentionDialog(t.Context(), nil, nil, nil, &runtime.MaxIterationsReachedEvent{MaxIterations: 10})
+	d := NewAttentionDialog(t.Context(), nil, nil, nil, &contract.MaxIterationsReachedEvent{MaxIterations: 10})
 	require.IsType(t, &maxIterationsDialog{}, d)
 	assert.Equal(t, 10, d.(*maxIterationsDialog).maxIterations)
 	_, cmd := d.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})

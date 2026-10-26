@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -17,8 +17,8 @@ import (
 
 // transferRoster is a 3-agent roster whose current agent is "root" (set by
 // newAgentPanelSidebar), used across the transfer box tests.
-func transferRoster() []runtime.AgentDetails {
-	return []runtime.AgentDetails{
+func transferRoster() []contract.AgentDetails {
+	return []contract.AgentDetails{
 		{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
 		{Name: "Scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 		{Name: "Coder", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
@@ -127,9 +127,9 @@ func TestTransferPanelBelowRosterAnyOrder(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "Coder", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
-		runtime.AgentDetails{Name: "middle", Provider: "google", Model: "gemini-flash", Thinking: "off"},
-		runtime.AgentDetails{Name: "Scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "Coder", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+		contract.AgentDetails{Name: "middle", Provider: "google", Model: "gemini-flash", Thinking: "off"},
+		contract.AgentDetails{Name: "Scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 	)
 	m.SetAgentSwitching(true, "Scout", "Coder")
 
@@ -249,8 +249,8 @@ func TestTransferPanelTruncatesLongNames(t *testing.T) {
 	const from = "delegation-orchestrator"
 	const to = "implementation-reviewer"
 	m := newAgentPanelSidebar(t, MinWidth,
-		runtime.AgentDetails{Name: from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-		runtime.AgentDetails{Name: to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+		contract.AgentDetails{Name: from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+		contract.AgentDetails{Name: to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
 	)
 	m.SetAgentSwitching(true, from, to)
 
@@ -275,8 +275,8 @@ func TestTransferPanelWideUnicodeNames(t *testing.T) {
 	const from = "调度协调器智能体"
 	const to = "代码实现者智能体"
 	m := newAgentPanelSidebar(t, MinWidth,
-		runtime.AgentDetails{Name: from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-		runtime.AgentDetails{Name: to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+		contract.AgentDetails{Name: from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+		contract.AgentDetails{Name: to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
 	)
 	m.SetAgentSwitching(true, from, to)
 
@@ -325,8 +325,8 @@ func TestTransferCollapsedSummaryFitsNarrowWidths(t *testing.T) {
 			t.Parallel()
 
 			m := newAgentPanelSidebar(t, MinWidth,
-				runtime.AgentDetails{Name: tc.from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-				runtime.AgentDetails{Name: tc.to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+				contract.AgentDetails{Name: tc.from, Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+				contract.AgentDetails{Name: tc.to, Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
 			)
 			m.SetMode(ModeCollapsed)
 			// Isolate the info line to the transfer summary (no agent entry,
@@ -424,9 +424,9 @@ func TestTransferStackNestedRestore(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "A", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-		runtime.AgentDetails{Name: "B", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "C", Provider: "google", Model: "gemini-flash", Thinking: "off"},
+		contract.AgentDetails{Name: "A", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+		contract.AgentDetails{Name: "B", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "C", Provider: "google", Model: "gemini-flash", Thinking: "off"},
 	)
 
 	m.SetAgentSwitching(true, "A", "B")
@@ -474,9 +474,9 @@ func TestTransferStackOutOfOrderStop(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "A", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
-		runtime.AgentDetails{Name: "B", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "C", Provider: "google", Model: "gemini-flash", Thinking: "off"},
+		contract.AgentDetails{Name: "A", Provider: "openai", Model: "gpt-5.4", Thinking: "off"},
+		contract.AgentDetails{Name: "B", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "C", Provider: "google", Model: "gemini-flash", Thinking: "off"},
 	)
 
 	m.SetAgentSwitching(true, "A", "B")
@@ -580,7 +580,7 @@ func TestTransferBoundariesIgnoredWhileCancelled(t *testing.T) {
 	assert.False(t, m.transferAnimation.IsActive())
 
 	// The next stream start clears the flag: delegation works again.
-	_, _ = m.Update(runtime.StreamStarted("root-session", "root"))
+	_, _ = m.Update(contract.StreamStarted("root-session", "root"))
 	res = m.SetAgentSwitching(true, "Scout", "Coder")
 	assert.True(t, res.Accepted, "a new stream reactivates transfer tracking")
 	assert.Equal(t, transferBoxTitle, visibleBoxTitle(m))
@@ -650,7 +650,7 @@ func TestTransferClearedOnCancelResetAndLoad(t *testing.T) {
 	assertCleared("stale timers after a cancel reactivate nothing")
 
 	// A new stream start lifts the cancel guard for the next scenarios.
-	_, _ = m.Update(runtime.StreamStarted("root-session", "root"))
+	_, _ = m.Update(contract.StreamStarted("root-session", "root"))
 	m.SetAgentSwitching(true, "Scout", "Coder")
 	m.SetAgentSwitching(false, "Coder", "Scout") // leaves a live Return
 	returnGen := m.agentReturn.gen

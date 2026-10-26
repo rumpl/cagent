@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 )
@@ -22,14 +23,14 @@ func TestPersistentMessageIDsSeparateStreamAttempts(t *testing.T) {
 	sess := session.New()
 	require.NoError(t, store.AddSession(t.Context(), sess))
 	obs := newPersistenceObserver(store)
-	for _, event := range []Event{
+	for _, event := range []contract.Event{
 		userMessageEvent(chat.Message{Role: chat.MessageRoleUser, Content: "user", MessageID: "user-id"}, sess.ID, 0),
-		AgentChoice("root", sess.ID, "partial", "attempt-one"),
-		AgentChoiceReasoning("root", sess.ID, "think", "attempt-two"),
-		AgentChoice("root", sess.ID, "answer", "attempt-two"),
-		MessageAdded(sess.ID, session.NewAgentMessage("root", &chat.Message{Role: chat.MessageRoleAssistant, MessageID: "attempt-two", Content: "answer", ReasoningContent: "think"}), "root"),
-		AgentChoice("root", sess.ID, "unfinished", "attempt-three"),
-		MessageAdded(sess.ID, session.NewAgentMessage("root", &chat.Message{Role: chat.MessageRoleTool, Content: "tool result"}), "root"),
+		contract.AgentChoice("root", sess.ID, "partial", "attempt-one"),
+		contract.AgentChoiceReasoning("root", sess.ID, "think", "attempt-two"),
+		contract.AgentChoice("root", sess.ID, "answer", "attempt-two"),
+		contract.MessageAdded(sess.ID, session.NewAgentMessage("root", &chat.Message{Role: chat.MessageRoleAssistant, MessageID: "attempt-two", Content: "answer", ReasoningContent: "think"}), "root"),
+		contract.AgentChoice("root", sess.ID, "unfinished", "attempt-three"),
+		contract.MessageAdded(sess.ID, session.NewAgentMessage("root", &chat.Message{Role: chat.MessageRoleTool, Content: "tool result"}), "root"),
 	} {
 		obs.OnEvent(t.Context(), sess, event)
 	}
@@ -53,18 +54,18 @@ func TestPersistentMessageIDsStreamEvents(t *testing.T) {
 	sess := session.New()
 	var ids []string
 	for range 2 {
-		var events []Event
+		var events []contract.Event
 		stream := newStreamBuilder().AddReasoning("thinking").AddContent("hello ").AddContent("world").AddStopWithUsage(1, 1).Build()
-		result, err := handleStream(t.Context(), nil, stream, a, nil, sess, EventSinkFunc(func(e Event) { events = append(events, e) }), time.Second)
+		result, err := handleStream(t.Context(), nil, stream, a, nil, sess, EventSinkFunc(func(e contract.Event) { events = append(events, e) }), time.Second)
 		require.NoError(t, err)
 		require.NotEmpty(t, result.MessageID)
 		var count int
 		for _, ev := range events {
 			switch e := ev.(type) {
-			case *AgentChoiceEvent:
+			case *contract.AgentChoiceEvent:
 				assert.Equal(t, result.MessageID, e.MessageID)
 				count++
-			case *AgentChoiceReasoningEvent:
+			case *contract.AgentChoiceReasoningEvent:
 				assert.Equal(t, result.MessageID, e.MessageID)
 				count++
 			}
@@ -83,8 +84,8 @@ func TestPersistentMessageIDsObserverStateIsRunLocal(t *testing.T) {
 	sess := session.New()
 	r := &LocalRuntime{observers: []func() EventObserver{func() EventObserver { return newPersistenceObserver(store) }}}
 	for _, content := range []string{"one", "two"} {
-		input := make(chan Event, 1)
-		input <- AgentChoice("root", sess.ID, content)
+		input := make(chan contract.Event, 1)
+		input <- contract.AgentChoice("root", sess.ID, content)
 		close(input)
 		for range r.observe(t.Context(), sess, input) {
 		}
@@ -105,10 +106,10 @@ func TestPersistentMessageIDsHarnessFinalization(t *testing.T) {
 	sess := session.New()
 	require.NoError(t, store.AddSession(t.Context(), sess))
 	obs := newPersistenceObserver(store)
-	obs.OnEvent(t.Context(), sess, AgentChoiceReasoning("root", sess.ID, "thought", "harness-id"))
-	obs.OnEvent(t.Context(), sess, AgentChoice("root", sess.ID, "answer", "harness-id"))
+	obs.OnEvent(t.Context(), sess, contract.AgentChoiceReasoning("root", sess.ID, "thought", "harness-id"))
+	obs.OnEvent(t.Context(), sess, contract.AgentChoice("root", sess.ID, "answer", "harness-id"))
 	r := &LocalRuntime{now: time.Now}
-	r.recordHarnessAssistantMessage(sess, agent.New("root", "test"), "answer", "thought", "harness-id", "harness", nil, 0, EventSinkFunc(func(ev Event) { obs.OnEvent(t.Context(), sess, ev) }))
+	r.recordHarnessAssistantMessage(sess, agent.New("root", "test"), "answer", "thought", "harness-id", "harness", nil, 0, EventSinkFunc(func(ev contract.Event) { obs.OnEvent(t.Context(), sess, ev) }))
 	saved, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
 	msgs := saved.OwnMessages()

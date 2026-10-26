@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 func TestAttentionQueue(t *testing.T) {
 	t.Parallel()
 	state := New("tab", "")
-	first := &runtime.ElicitationRequestEvent{ElicitationID: "first"}
-	second := &runtime.ElicitationRequestEvent{ElicitationID: "second"}
+	first := &contract.ElicitationRequestEvent{ElicitationID: "first"}
+	second := &contract.ElicitationRequestEvent{ElicitationID: "second"}
 	for _, event := range []tea.Msg{first, second} {
 		changed, bell := state.Apply(event, false)
 		assert.True(t, changed)
@@ -23,7 +23,7 @@ func TestAttentionQueue(t *testing.T) {
 	_, _, attention := state.Snapshot()
 	assert.True(t, attention)
 	state.Acknowledge()
-	stashed := &runtime.ElicitationRequestEvent{ElicitationID: "stashed"}
+	stashed := &contract.ElicitationRequestEvent{ElicitationID: "stashed"}
 	state.Prepend(stashed)
 	_, _, attention = state.Snapshot()
 	assert.False(t, attention, "restashing a seen prompt must not raise attention")
@@ -36,9 +36,9 @@ func TestAttentionQueue(t *testing.T) {
 func TestActiveAttentionUsesSameQueueWithoutBell(t *testing.T) {
 	t.Parallel()
 	for _, event := range []tea.Msg{
-		&runtime.ToolCallConfirmationEvent{},
-		&runtime.MaxIterationsReachedEvent{},
-		&runtime.ElicitationRequestEvent{},
+		&contract.ToolCallConfirmationEvent{},
+		&contract.MaxIterationsReachedEvent{},
+		&contract.ElicitationRequestEvent{},
 	} {
 		state := New("tab", "")
 		changed, bell := state.Apply(event, true)
@@ -63,20 +63,20 @@ func TestStreamBoundaries(t *testing.T) {
 				t.Run(id, func(t *testing.T) {
 					t.Parallel()
 					state := New("tab", "")
-					state.Apply(&runtime.StreamStartedEvent{SessionID: "tab"}, false)
+					state.Apply(&contract.StreamStartedEvent{SessionID: "tab"}, false)
 					foreground := []tea.Msg{
-						&runtime.ToolCallConfirmationEvent{},
-						&runtime.MaxIterationsReachedEvent{},
-						&runtime.ElicitationRequestEvent{SessionID: "tab"},
-						&runtime.ElicitationRequestEvent{},
+						&contract.ToolCallConfirmationEvent{},
+						&contract.MaxIterationsReachedEvent{},
+						&contract.ElicitationRequestEvent{SessionID: "tab"},
+						&contract.ElicitationRequestEvent{},
 					}
-					detached := &runtime.ElicitationRequestEvent{SessionID: "background-job"}
+					detached := &contract.ElicitationRequestEvent{SessionID: "background-job"}
 					for _, event := range append(foreground, detached) {
 						state.Apply(event, false)
 					}
-					var event tea.Msg = &runtime.StreamStoppedEvent{SessionID: id}
+					var event tea.Msg = &contract.StreamStoppedEvent{SessionID: id}
 					if started {
-						event = &runtime.StreamStartedEvent{SessionID: id}
+						event = &contract.StreamStartedEvent{SessionID: id}
 					}
 					changed, bell := state.Apply(event, false)
 					assert.False(t, bell)
@@ -103,11 +103,11 @@ func TestStreamBoundaries(t *testing.T) {
 func TestStreamBoundaryClearsForegroundAttention(t *testing.T) {
 	t.Parallel()
 	for _, event := range []tea.Msg{
-		&runtime.StreamStartedEvent{SessionID: "tab"},
-		&runtime.StreamStoppedEvent{SessionID: "tab"},
+		&contract.StreamStartedEvent{SessionID: "tab"},
+		&contract.StreamStoppedEvent{SessionID: "tab"},
 	} {
 		state := New("tab", "")
-		state.Apply(&runtime.ElicitationRequestEvent{}, false)
+		state.Apply(&contract.ElicitationRequestEvent{}, false)
 		state.Apply(event, false)
 		assert.Nil(t, state.Consume())
 		_, _, attention := state.Snapshot()
@@ -123,7 +123,7 @@ func TestTitleAndUnrelatedEvents(t *testing.T) {
 	state.SetTitle("restored")
 	title, _, _ = state.Snapshot()
 	assert.Equal(t, "restored", title)
-	changed, bell := state.Apply(&runtime.SessionTitleEvent{Title: "generated"}, true)
+	changed, bell := state.Apply(&contract.SessionTitleEvent{Title: "generated"}, true)
 	require.True(t, changed)
 	assert.False(t, bell)
 	title, _, _ = state.Snapshot()
@@ -136,8 +136,8 @@ func TestTitleAndUnrelatedEvents(t *testing.T) {
 func TestReplaceSessionRetainsSameConversation(t *testing.T) {
 	t.Parallel()
 	state := New("conversation", "title")
-	event := &runtime.ElicitationRequestEvent{SessionID: "child"}
-	state.Apply(&runtime.StreamStartedEvent{SessionID: "conversation"}, false)
+	event := &contract.ElicitationRequestEvent{SessionID: "child"}
+	state.Apply(&contract.StreamStartedEvent{SessionID: "conversation"}, false)
 	state.Apply(event, false)
 	state.ReplaceSession("conversation")
 	title, running, attention := state.Snapshot()
@@ -155,9 +155,9 @@ func TestReplaceSessionRetainsSameConversation(t *testing.T) {
 func TestRecoveryPreservesDetachedRequests(t *testing.T) {
 	t.Parallel()
 	state := New("root", "")
-	detached := runtime.ElicitationRequest("request", "form", nil, "", "child-request", "", "child", nil, "worker")
+	detached := contract.ElicitationRequest("request", "form", nil, "", "child-request", "", "child", nil, "worker")
 	state.Apply(detached, false)
-	state.Apply(runtime.SessionRecovered("root"), false)
+	state.Apply(contract.SessionRecovered("root"), false)
 	require.Same(t, detached, state.Consume())
-	require.False(t, state.RetiresAttention(runtime.SessionRecovered("root"), detached))
+	require.False(t, state.RetiresAttention(contract.SessionRecovered("root"), detached))
 }

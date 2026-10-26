@@ -18,7 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -242,12 +242,12 @@ func TestToolNamesLiveReplayAndPermissionWire(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tracker.report(t.Context(), a, s, "root", call, definition, acpsdk.ToolCallStatusInProgress)
 	require.NoError(t, err)
-	require.NoError(t, tracker.complete(t.Context(), a, s, runtime.ToolCallResponse(call.ID, definition, tools.ResultSuccess("ok"), "ok", "root").(*runtime.ToolCallResponseEvent)))
+	require.NoError(t, tracker.complete(t.Context(), a, s, contract.ToolCallResponse(call.ID, definition, tools.ResultSuccess("ok"), "ok", "root").(*contract.ToolCallResponseEvent)))
 	call.ID = "interrupted"
 	_, err = tracker.report(t.Context(), a, s, "root", call, definition, acpsdk.ToolCallStatusInProgress)
 	require.NoError(t, err)
 	require.NoError(t, tracker.interrupt(t.Context(), a, s))
-	require.NoError(t, tracker.complete(t.Context(), a, s, runtime.ToolCallResponse("orphan", definition, tools.ResultSuccess("ok"), "ok", "root").(*runtime.ToolCallResponseEvent)))
+	require.NoError(t, tracker.complete(t.Context(), a, s, contract.ToolCallResponse("orphan", definition, tools.ResultSuccess("ok"), "ok", "root").(*contract.ToolCallResponseEvent)))
 	for _, line := range out.lines() {
 		assert.Contains(t, line, `"name":"acp_generation_alias"`)
 		assert.NotContains(t, line, toolNameKey)

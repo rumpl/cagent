@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	base "github.com/docker/docker-agent/pkg/model/provider/contracts"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -117,26 +118,26 @@ func nativeTestSession() *session.Session {
 
 type compactionOutcome struct {
 	outcome string
-	summary *SessionSummaryEvent
+	summary *contract.SessionSummaryEvent
 	errors  []string
 }
 
 func runCompaction(t *testing.T, rt *LocalRuntime, sess *session.Session, prompt string) compactionOutcome {
 	t.Helper()
-	events := make(chan Event, 64)
+	events := make(chan contract.Event, 64)
 	rt.compactWithReason(t.Context(), sess, prompt, compactionReasonManual, NewChannelSink(events))
 	close(events)
 
 	var out compactionOutcome
 	for ev := range events {
 		switch e := ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" {
 				out.outcome = e.Outcome
 			}
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			out.summary = e
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			out.errors = append(out.errors, e.Error)
 		}
 	}
@@ -162,7 +163,7 @@ func TestNativeCompactionReplacesWholePromptAndPersistsBlock(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "focus on decisions")
 
-	assert.Equal(t, CompactionOutcomeApplied, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	assert.Empty(t, got.errors)
 	require.Equal(t, 1, comp.callCount(), "the traced wrapper must be unwrapped to reach the compactor")
 	assert.Equal(t, "focus on decisions", comp.prompt)
@@ -223,7 +224,7 @@ func TestNativeCompactionKeepsItemsAppendedAfterSnapshot(t *testing.T) {
 	rt := newNativeRuntime(t, root)
 
 	got := runCompaction(t, rt, sess, "")
-	assert.Equal(t, CompactionOutcomeApplied, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 
 	var conversation []string
 	for _, msg := range sess.GetMessages(root) {
@@ -262,7 +263,7 @@ func TestNativeCompactionRequiresOptIn(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeApplied, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	assert.Zero(t, comp.callCount())
 	last := sess.Messages[len(sess.Messages)-1]
 	assert.Equal(t, "llm summary", last.Summary)
@@ -282,7 +283,7 @@ func TestNativeCompactionRejectsUnsupportedModel(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeFailed, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeFailed, got.outcome)
 	require.Len(t, got.errors, 1)
 	assert.Contains(t, got.errors[0], "does not support provider-native compaction")
 	assert.Len(t, sess.Messages, before, "an explicit opt-in must not silently fall back to the LLM strategy")
@@ -308,7 +309,7 @@ func TestNativeCompactionRunsBeforeLLMCallHooks(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeApplied, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	require.Equal(t, 1, comp.callCount())
 	require.Len(t, comp.messages, 1, "the compactor must receive the hook rewrite, not the raw prompt")
 	assert.Equal(t, "[REDACTED]", comp.messages[0].Content)
@@ -335,7 +336,7 @@ func TestNativeCompactionBlockedByBeforeLLMCallHook(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeFailed, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeFailed, got.outcome)
 	require.Len(t, got.errors, 1)
 	assert.Contains(t, got.errors[0], "no outbound calls")
 	assert.Zero(t, comp.callCount())
@@ -354,7 +355,7 @@ func TestNativeCompactionRejectsForeignCompactionModel(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeFailed, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeFailed, got.outcome)
 	require.Len(t, got.errors, 1)
 	assert.Contains(t, got.errors[0], "compaction_model")
 	assert.Zero(t, comp.callCount(), "an incompatible compaction_model must not be silently ignored")
@@ -373,7 +374,7 @@ func TestNativeCompactionErrorLeavesTranscriptIntact(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeFailed, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeFailed, got.outcome)
 	require.Len(t, got.errors, 1)
 	assert.Contains(t, got.errors[0], "boom")
 	assert.Nil(t, got.summary)
@@ -400,7 +401,7 @@ func TestNativeCompactionEmptySummaryIsNoop(t *testing.T) {
 
 			got := runCompaction(t, rt, sess, "")
 
-			assert.Equal(t, CompactionOutcomeSkipped, got.outcome)
+			assert.Equal(t, contract.CompactionOutcomeSkipped, got.outcome)
 			assert.Empty(t, got.errors)
 			assert.Nil(t, got.summary)
 			assert.Len(t, sess.Messages, before)
@@ -429,7 +430,7 @@ func TestNativeCompactionHookSummaryBypassesProvider(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	assert.Equal(t, CompactionOutcomeApplied, got.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	assert.Zero(t, comp.callCount(), "a hook-supplied summary must bypass native compaction")
 	last := sess.Messages[len(sess.Messages)-1]
 	assert.Equal(t, hookSummary, last.Summary)
@@ -450,7 +451,7 @@ func TestNativeCompactionSurvivesSQLiteReload(t *testing.T) {
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
 	got := runCompaction(t, rt, sess, "")
-	require.Equal(t, CompactionOutcomeApplied, got.outcome)
+	require.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	require.NoError(t, store.Close())
 
 	reopened, err := sqlitestore.New(t.Context(), dbPath)
@@ -508,7 +509,7 @@ func TestNativeCompactionPricesEachIteration(t *testing.T) {
 
 	got := runCompaction(t, rt, sess, "")
 
-	require.Equal(t, CompactionOutcomeApplied, got.outcome)
+	require.Equal(t, contract.CompactionOutcomeApplied, got.outcome)
 	require.NotNil(t, got.summary)
 	assert.InDelta(t, 2*60_000*1/1e6, got.summary.Cost, 1e-9, "base rate for each iteration, not the tier rate on the sum")
 	assert.Equal(t, int64(120_000), sess.Messages[len(sess.Messages)-1].Usage.InputTokens, "token accounting keeps the total")

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -73,7 +73,7 @@ func TestHandleRoutedMsg_InactiveTabDispatchesEffects(t *testing.T) {
 	})
 	background := m.tabs[backgroundID].chatPage.(*effectRecordingPage)
 
-	inner := runtime.AgentSwitching(true, "root", "scout")
+	inner := contract.AgentSwitching(true, "root", "scout")
 	_, cmd := m.Update(messages.RoutedMsg{SessionID: backgroundID, Inner: inner})
 
 	require.Len(t, background.updates, 1, "the inner message reaches the owning page")
@@ -122,7 +122,7 @@ func TestHandleRoutedMsg_TransferOnHiddenTabArmsTimersAndStaysLocal(t *testing.T
 	const transferBoxMarker = "─ Transfer "
 	_, cmd := m.Update(messages.RoutedMsg{
 		SessionID: backgroundID,
-		Inner:     runtime.AgentSwitching(true, "root", "scout"),
+		Inner:     contract.AgentSwitching(true, "root", "scout"),
 	})
 
 	assert.NotNil(t, cmd, "the hidden tab's presentation timers run as local work")

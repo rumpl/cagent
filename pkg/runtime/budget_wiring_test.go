@@ -10,17 +10,18 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
-type collectSink struct{ events []Event }
+type collectSink struct{ events []contract.Event }
 
-func (s *collectSink) Emit(e Event) { s.events = append(s.events, e) }
+func (s *collectSink) Emit(e contract.Event) { s.events = append(s.events, e) }
 
-func (s *collectSink) budgetUsages() []*BudgetUsageEvent {
-	var out []*BudgetUsageEvent
+func (s *collectSink) budgetUsages() []*contract.BudgetUsageEvent {
+	var out []*contract.BudgetUsageEvent
 	for _, e := range s.events {
-		if b, ok := e.(*BudgetUsageEvent); ok {
+		if b, ok := e.(*contract.BudgetUsageEvent); ok {
 			out = append(out, b)
 		}
 	}
@@ -55,7 +56,7 @@ func TestRecordBudgetEmitsNonZeroReading(t *testing.T) {
 	usages := sink.budgetUsages()
 	require.Len(t, usages, 1, "recordBudget must emit exactly one budget_usage event")
 
-	byName := map[string]BudgetStatus{}
+	byName := map[string]contract.BudgetStatus{}
 	for _, b := range usages[0].Budgets {
 		byName[b.Name] = b
 	}
@@ -104,9 +105,9 @@ func TestRecordBudgetCacheTokensExceedNamedLimit(t *testing.T) {
 	}
 
 	require.Equal(t, iterationStop, r.enforceBudget(t.Context(), sess, a, sink))
-	var exceeded *BudgetExceededEvent
+	var exceeded *contract.BudgetExceededEvent
 	for _, e := range sink.events {
-		if ev, ok := e.(*BudgetExceededEvent); ok {
+		if ev, ok := e.(*contract.BudgetExceededEvent); ok {
 			exceeded = ev
 		}
 	}
@@ -205,15 +206,15 @@ func TestEnforceBudgetEmitsCanonicalStopMessage(t *testing.T) {
 
 	require.Equal(t, iterationStop, r.enforceBudget(t.Context(), sess, a, sink))
 
-	var exceeded *BudgetExceededEvent
-	var added *MessageAddedEvent
+	var exceeded *contract.BudgetExceededEvent
+	var added *contract.MessageAddedEvent
 	exceededIdx, addedIdx := -1, -1
 	for i, e := range sink.events {
 		switch ev := e.(type) {
-		case *BudgetExceededEvent:
+		case *contract.BudgetExceededEvent:
 			exceeded = ev
 			exceededIdx = i
-		case *MessageAddedEvent:
+		case *contract.MessageAddedEvent:
 			added = ev
 			addedIdx = i
 		}

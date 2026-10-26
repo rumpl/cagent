@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -268,7 +269,7 @@ func (e *fallbackExecutor) execute(
 	messages []chat.Message,
 	agentTools []tools.Tool,
 	sess *session.Session,
-	events EventSink,
+	events contract.EventSink,
 	idleRetry *idleStreamRetryAllowance,
 	admitIdleRetry idleRetryAdmission,
 ) (streamResult, provider.Provider, error) {
@@ -301,7 +302,7 @@ func (e *fallbackExecutor) execute(
 				id = serving.ID
 			}
 			if needsAnnouncement || id != announcedID {
-				events.Emit(AgentInfo(a.Name(), id.String(), a.Description(), a.WelcomeMessage()))
+				events.Emit(contract.AgentInfo(a.Name(), id.String(), a.Description(), a.WelcomeMessage()))
 				announcedID = id
 				needsAnnouncement = false
 			}
@@ -343,7 +344,7 @@ func (e *fallbackExecutor) execute(
 				if lastErr != nil {
 					reason = lastErr.Error()
 				}
-				events.Emit(ModelFallback(
+				events.Emit(contract.ModelFallback(
 					a.Name(),
 					prevModelID.String(),
 					modelEntry.provider.ID().String(),
@@ -419,7 +420,7 @@ func (e *fallbackExecutor) execute(
 						"retry", retryLimit,
 						"limit", retryLimit,
 					)
-					events.Emit(Warning(
+					events.Emit(contract.Warning(
 						"Delegated model stream was idle before responding; retrying once.",
 						a.Name(),
 					))

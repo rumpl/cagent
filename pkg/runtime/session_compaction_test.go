@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	providerbase "github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -145,16 +146,16 @@ func TestDoCompactBeforeHookDeniesSkipsCompaction(t *testing.T) {
 	}))
 	originalLen := len(sess.Messages)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(events))
 	close(events)
 
 	var sawCompactionEvent, sawSummaryEvent bool
 	for ev := range events {
 		switch ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			sawCompactionEvent = true
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			sawSummaryEvent = true
 		}
 	}
@@ -207,22 +208,22 @@ func TestDoCompactBeforeHookSuppliesSummary(t *testing.T) {
 		session.NewMessageItem(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, Content: "hello"}}),
 	}))
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(events))
 	close(events)
 
-	var summaryEvent *SessionSummaryEvent
+	var summaryEvent *contract.SessionSummaryEvent
 	var compactionStartCount, compactionDoneCount int
 	for ev := range events {
 		switch e := ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			switch e.Status {
 			case "started":
 				compactionStartCount++
 			case "completed":
 				compactionDoneCount++
 			}
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			summaryEvent = e
 		}
 	}
@@ -295,7 +296,7 @@ func TestDoCompactAfterHookFires(t *testing.T) {
 	sess.InputTokens = 1234
 	sess.OutputTokens = 567
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonThreshold, NewChannelSink(events))
 	close(events)
 	for range events {
@@ -333,7 +334,7 @@ func TestDoCompactInMemoryStoreAppendsSummaryOnce(t *testing.T) {
 	}))
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.Summarize(t.Context(), sess, "", NewChannelSink(events))
 	close(events)
 	for range events {
@@ -370,24 +371,24 @@ func TestDoCompactPersistenceFailureReportsFailedWithoutApplying(t *testing.T) {
 	require.NoError(t, base.AddSession(t.Context(), sess))
 	before := len(sess.Messages)
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.Summarize(t.Context(), sess, "", NewChannelSink(events))
 	close(events)
 	var outcome string
 	var sawError, sawSummary bool
 	for ev := range events {
 		switch e := ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" {
 				outcome = e.Outcome
 			}
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			sawError = true
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			sawSummary = true
 		}
 	}
-	assert.Equal(t, CompactionOutcomeFailed, outcome)
+	assert.Equal(t, contract.CompactionOutcomeFailed, outcome)
 	assert.True(t, sawError)
 	assert.False(t, sawSummary, "an unpersisted summary must not be announced as successful")
 	assert.Len(t, sess.Messages, before, "failed persistence must leave live continuation unchanged")
@@ -417,7 +418,7 @@ func TestDoCompactPersistsSummaryForSQLiteReload(t *testing.T) {
 	)
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.Summarize(t.Context(), sess, "", NewChannelSink(events))
 	close(events)
 	for range events {
@@ -461,7 +462,7 @@ func TestDoCompactObservedRunDoesNotDuplicateSummary(t *testing.T) {
 	}))
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	inner := make(chan Event, 32)
+	inner := make(chan contract.Event, 32)
 	observed := rt.observe(t.Context(), sess, inner)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(inner))
 	close(inner)
@@ -507,22 +508,22 @@ func TestDoCompactNoHooksMatchesPriorBehavior(t *testing.T) {
 		session.NewMessageItem(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, Content: "hello"}}),
 	}))
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(events))
 	close(events)
 
 	var startCount, doneCount int
-	var summaryEvent *SessionSummaryEvent
+	var summaryEvent *contract.SessionSummaryEvent
 	for ev := range events {
 		switch e := ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			switch e.Status {
 			case "started":
 				startCount++
 			case "completed":
 				doneCount++
 			}
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			summaryEvent = e
 		}
 	}
@@ -557,13 +558,13 @@ func TestDoCompactSummaryEventCarriesCost(t *testing.T) {
 		session.NewMessageItem(&session.Message{Message: chat.Message{Role: chat.MessageRoleAssistant, Content: "hello"}}),
 	}))
 
-	events := make(chan Event, 32)
+	events := make(chan contract.Event, 32)
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(events))
 	close(events)
 
-	var summaryEvent *SessionSummaryEvent
+	var summaryEvent *contract.SessionSummaryEvent
 	for ev := range events {
-		if e, ok := ev.(*SessionSummaryEvent); ok {
+		if e, ok := ev.(*contract.SessionSummaryEvent); ok {
 			summaryEvent = e
 		}
 	}

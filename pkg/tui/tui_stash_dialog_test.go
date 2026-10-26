@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 )
@@ -33,8 +33,8 @@ func TestReplayPendingEventRestoresAllStashedDialogs(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	id := m.supervisor.ActiveID()
-	first := &runtime.ElicitationRequestEvent{ElicitationID: "first"}
-	second := &runtime.ElicitationRequestEvent{ElicitationID: "second"}
+	first := &contract.ElicitationRequestEvent{ElicitationID: "first"}
+	second := &contract.ElicitationRequestEvent{ElicitationID: "second"}
 	one, two := &stubDialog{id: "one"}, &stubDialog{id: "two"}
 	for _, entry := range []dialog.OpenDialogMsg{{Model: one, OriginatingEvent: first}, {Model: two, OriginatingEvent: second}} {
 		_, _ = m.dialogMgr.Update(entry)
@@ -57,8 +57,8 @@ func TestReplayPendingEventDiscardsStaleStash(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	id := m.supervisor.ActiveID()
-	old := &runtime.ElicitationRequestEvent{}
-	fresh := &runtime.ElicitationRequestEvent{}
+	old := &contract.ElicitationRequestEvent{}
+	fresh := &contract.ElicitationRequestEvent{}
 	stashed := &stubDialog{id: "old"}
 	m.activeTab.attentionDialogs = map[tea.Msg]dialog.Dialog{old: stashed}
 	m.activeTab.state.Prepend(fresh)
@@ -71,7 +71,7 @@ func TestReplayPendingEventDiscardsStaleStash(t *testing.T) {
 func TestReplayPendingEventNoPendingClearsStash(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
-	m.activeTab.attentionDialogs = map[tea.Msg]dialog.Dialog{&runtime.ElicitationRequestEvent{}: &stubDialog{}}
+	m.activeTab.attentionDialogs = map[tea.Msg]dialog.Dialog{&contract.ElicitationRequestEvent{}: &stubDialog{}}
 	assert.Nil(t, m.replayPendingEvent(m.supervisor.ActiveID()))
 	assert.Nil(t, m.activeTab.attentionDialogs)
 }

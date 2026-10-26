@@ -8,11 +8,12 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
 // appendSteerAndEmit adds a steer message to the session and emits the corresponding event.
-func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessage, events EventSink) {
+func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm contract.QueuedMessage, events contract.EventSink) {
 	msg := session.UserMessage(sm.Content, sm.MultiContent...)
 	msg.Message.MessageID = uuid.NewV4().String()
 	pos := sess.AddMessage(msg)
@@ -46,7 +47,7 @@ func (r *LocalRuntime) appendSteerAndEmit(sess *session.Session, sm QueuedMessag
 //
 // Returns drained=true with messageCountBefore set when any messages
 // were drained and emitted; otherwise drained=false.
-func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) steerResult {
+func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Session, a *agent.Agent, events contract.EventSink) steerResult {
 	// A routed invocation keeps later input queued until its boundary, so
 	// the steered text cannot change the assessment already made.
 	if sess.Routed() {
@@ -56,7 +57,7 @@ func (r *LocalRuntime) drainAndEmitSteered(ctx context.Context, sess *session.Se
 }
 
 // drainSteeredQueue unconditionally moves queued steering messages into the session.
-func (r *LocalRuntime) drainSteeredQueue(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) steerResult {
+func (r *LocalRuntime) drainSteeredQueue(ctx context.Context, sess *session.Session, a *agent.Agent, events contract.EventSink) steerResult {
 	steered := r.steerQueue.Drain(ctx)
 	if len(steered) == 0 {
 		return steerResult{}
@@ -82,7 +83,7 @@ func (r *LocalRuntime) drainSteeredQueue(ctx context.Context, sess *session.Sess
 
 // drainSteeredQueueAtBoundary drains the steering queue where an invocation
 // ends; routed conversations only ever drain here.
-func (r *LocalRuntime) drainSteeredQueueAtBoundary(ctx context.Context, sess *session.Session, a *agent.Agent, ls *loopState, events EventSink) steerResult {
+func (r *LocalRuntime) drainSteeredQueueAtBoundary(ctx context.Context, sess *session.Session, a *agent.Agent, ls *loopState, events contract.EventSink) steerResult {
 	if ls.route != nil {
 		return r.drainSteeredQueue(ctx, sess, a, events)
 	}
@@ -109,7 +110,7 @@ type steerResult struct {
 // to it in a shallow copy of the slice. If the last part is not text type
 // (e.g. image), sm is returned unchanged — non-text parts carry their own
 // provider envelope that acts as a separator.
-func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
+func appendNewlineToQueuedMessage(sm contract.QueuedMessage) contract.QueuedMessage {
 	if len(sm.MultiContent) == 0 {
 		sm.Content += "\n"
 		return sm
@@ -128,7 +129,7 @@ func appendNewlineToQueuedMessage(sm QueuedMessage) QueuedMessage {
 
 // applySteering commits transient context only when submission hooks allow it.
 // Draining, routing restarts, and compaction stay at their distinct loop boundaries.
-func (r *LocalRuntime) applySteering(ctx context.Context, sess *session.Session, a *agent.Agent, ls *loopState, sr steerResult, events EventSink) (blocked bool) {
+func (r *LocalRuntime) applySteering(ctx context.Context, sess *session.Session, a *agent.Agent, ls *loopState, sr steerResult, events contract.EventSink) (blocked bool) {
 	if sr.stop {
 		slog.WarnContext(ctx, "user_steering_messages_submit hook signalled run termination",
 			"agent", a.Name(), "session_id", sess.ID, "reason", sr.stopMsg)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	skillstool "github.com/docker/docker-agent/pkg/tools/builtin/skills"
@@ -29,9 +30,9 @@ type pausedTeardownRuntime struct {
 	calls   int
 }
 
-func (r *pausedTeardownRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event {
+func (r *pausedTeardownRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event {
 	r.calls++
-	events := make(chan runtime.Event)
+	events := make(chan contract.Event)
 	go func() {
 		defer close(r.drained)
 		defer close(events)
@@ -39,9 +40,9 @@ func (r *pausedTeardownRuntime) RunStream(ctx context.Context, sess *session.Ses
 		<-ctx.Done()
 		// Exceed the App bus buffer to catch forwarding to a departed consumer.
 		for range 256 {
-			events <- runtime.AgentChoice("root", sess.ID, "discarded tail")
+			events <- contract.AgentChoice("root", sess.ID, "discarded tail")
 		}
-		events <- runtime.StreamStopped(sess.ID, "root", runtime.TurnEndReasonCanceled)
+		events <- contract.StreamStopped(sess.ID, "root", runtime.TurnEndReasonCanceled)
 	}()
 	return events
 }

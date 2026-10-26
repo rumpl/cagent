@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -62,7 +63,7 @@ func TestRunStreamRecoversOversizedHistoricalResult(t *testing.T) {
 			sess := oversizedHistory(t)
 			original := sess.Messages[2].Message.Message.Content
 			for event := range rt.RunStream(t.Context(), sess) {
-				if failure, ok := event.(*ErrorEvent); ok {
+				if failure, ok := event.(*contract.ErrorEvent); ok {
 					t.Fatalf("unexpected runtime error: %s", failure.Error)
 				}
 			}
@@ -84,7 +85,7 @@ func TestNativeCompactionBoundsHistoricalResult(t *testing.T) {
 	original := sess.Messages[2].Message.Message.Content
 	result := runCompaction(t, rt, sess, "")
 	assert.Empty(t, result.errors)
-	assert.Equal(t, CompactionOutcomeApplied, result.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, result.outcome)
 	assertBoundedHistoricalResult(t, prov.messages)
 	assert.Equal(t, original, sess.Messages[2].Message.Message.Content)
 }
@@ -97,7 +98,7 @@ func TestLLMCompactionBoundsHistoricalResult(t *testing.T) {
 	original := sess.Messages[2].Message.Message.Content
 	result := runCompaction(t, rt, sess, "")
 	assert.Empty(t, result.errors)
-	assert.Equal(t, CompactionOutcomeApplied, result.outcome)
+	assert.Equal(t, contract.CompactionOutcomeApplied, result.outcome)
 	require.NotEmpty(t, prov.got)
 	assertBoundedHistoricalResult(t, prov.got[0])
 	assert.Equal(t, original, sess.Messages[2].Message.Message.Content)

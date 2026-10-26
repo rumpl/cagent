@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/hooks/builtins"
 	"github.com/docker/docker-agent/pkg/promptfiles"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -101,7 +102,7 @@ func (r *LocalRuntime) dispatchHook(
 	a *agent.Agent,
 	event hooks.EventType,
 	input *hooks.Input,
-	events EventSink,
+	events contract.EventSink,
 ) *hooks.Result {
 	exec := r.hooksExec(a)
 	if exec == nil || !exec.Has(event) {
@@ -117,11 +118,11 @@ func (r *LocalRuntime) dispatchHook(
 
 	started := time.Now()
 	if events != nil {
-		events.Emit(HookStarted(event, input.SessionID, a.Name()))
+		events.Emit(contract.HookStarted(event, input.SessionID, a.Name()))
 	}
 	result, err := exec.Dispatch(ctx, event, input)
 	if events != nil {
-		events.Emit(HookFinished(event, input.SessionID, result, err, time.Since(started), a.Name()))
+		events.Emit(contract.HookFinished(event, input.SessionID, result, err, time.Since(started), a.Name()))
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "Hook execution failed", "event", event, "agent", a.Name(), "error", err)
@@ -132,7 +133,7 @@ func (r *LocalRuntime) dispatchHook(
 	}
 
 	if events != nil && result.SystemMessage != "" {
-		events.Emit(Warning(result.SystemMessage, a.Name()))
+		events.Emit(contract.Warning(result.SystemMessage, a.Name()))
 	}
 	return result
 }
@@ -140,7 +141,7 @@ func (r *LocalRuntime) dispatchHook(
 // executeSessionStartHooks fires session_start once at the top of RunStream.
 // Its context is fed into the cache-stable instruction snapshot rather than
 // appended to the visible transcript.
-func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) instructionObservation {
+func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events contract.EventSink) instructionObservation {
 	return observeInstructions(r.dispatchHook(ctx, a, hooks.EventSessionStart, &hooks.Input{
 		SessionID: sess.ID,
 		Source:    "startup",
@@ -150,7 +151,7 @@ func (r *LocalRuntime) executeSessionStartHooks(ctx context.Context, sess *sessi
 // executeTurnStartHooks fires turn_start before each model call. Recomputing
 // its context each turn lets the instruction layer detect date and prompt-file
 // changes without mutating the initial system prefix.
-func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) instructionObservation {
+func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.Session, a *agent.Agent, events contract.EventSink) instructionObservation {
 	return observeInstructions(r.dispatchHook(ctx, a, hooks.EventTurnStart, &hooks.Input{
 		SessionID: sess.ID,
 	}, events), r.hasPromptFileGuard(a))
@@ -159,7 +160,7 @@ func (r *LocalRuntime) executeTurnStartHooks(ctx context.Context, sess *session.
 // Reason values reported in [hooks.Input.Reason] when [hooks.EventTurnEnd]
 // fires. The same values (including the exported trio below, plus
 // hook_blocked/loop_detected/budget_exceeded) are also reported verbatim in
-// [runtime.StreamStoppedEvent.Reason] — loop.go passes its turnEndReason*
+// [contract.StreamStoppedEvent.Reason] — loop.go passes its turnEndReason*
 // classification straight through to StreamStopped. The runtime guarantees
 // that turn_end runs once per turn that fired turn_start, no matter how the
 // turn exited; the reason classifies which exit path the runtime took.
@@ -218,7 +219,7 @@ const (
 // turn_start. Observational; the result is discarded. Reason is one
 // of the turnEndReason* constants above and is reported via
 // [hooks.Input.Reason] so handlers can branch on the exit path.
-func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, reason string, events EventSink) {
+func (r *LocalRuntime) executeTurnEndHooks(ctx context.Context, sess *session.Session, a *agent.Agent, reason string, events contract.EventSink) {
 	r.dispatchHook(ctx, a, hooks.EventTurnEnd, &hooks.Input{
 		SessionID: sess.ID,
 		AgentName: a.Name(),
@@ -351,7 +352,7 @@ func (r *LocalRuntime) executeSessionEndHooks(ctx context.Context, sess *session
 // surfaced as a Warning by [dispatchHook]. AgentName + LastUserMessage
 // are populated so builtins like cache_response can key on the user's
 // question and resolve the agent through the runtime closure.
-func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Session, a *agent.Agent, responseContent string, events EventSink) {
+func (r *LocalRuntime) executeStopHooks(ctx context.Context, sess *session.Session, a *agent.Agent, responseContent string, events contract.EventSink) {
 	if a.Cache() != nil {
 		ctx = context.WithValue(ctx, responseCacheBypassKey{}, promptHasAttachments(sess))
 	}
@@ -640,7 +641,7 @@ func (r *LocalRuntime) executeBeforeCompactionHooks(
 	a *agent.Agent,
 	reason string,
 	contextLimit int64,
-	events EventSink,
+	events contract.EventSink,
 ) *hooks.Result {
 	inputTokens, outputTokens := sess.Usage()
 	return r.dispatchHook(ctx, a, hooks.EventBeforeCompaction, &hooks.Input{
@@ -668,7 +669,7 @@ func (r *LocalRuntime) executeAfterCompactionHooks(
 	contextLimit int64,
 	preInputTokens, preOutputTokens int64,
 	summary string,
-	events EventSink,
+	events contract.EventSink,
 ) {
 	r.dispatchHook(ctx, a, hooks.EventAfterCompaction, &hooks.Input{
 		SessionID:        sess.ID,
@@ -686,7 +687,7 @@ func (r *LocalRuntime) executeAfterCompactionHooks(
 // (decision="block" / continue=false / exit 2) stops the run loop;
 // AdditionalContext is returned as a transient system message that
 // callers splice into the conversation for that turn only.
-func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events EventSink) (stop bool, message string, contextMsgs []chat.Message) {
+func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events contract.EventSink) (stop bool, message string, contextMsgs []chat.Message) {
 	result := r.dispatchHook(ctx, a, hooks.EventUserPromptSubmit, &hooks.Input{
 		SessionID: sess.ID,
 		Prompt:    prompt,
@@ -702,7 +703,7 @@ func (r *LocalRuntime) executeUserPromptSubmitHooks(ctx context.Context, sess *s
 // (decision="block" / continue=false / exit 2) stops the run loop, and
 // AdditionalContext is returned as a transient system message that the
 // caller threads into the steered turn only — never persisted.
-func (r *LocalRuntime) executeUserSteeringMessagesSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, steeringMessages []string, events EventSink) (stop bool, message string, contextMsgs []chat.Message) {
+func (r *LocalRuntime) executeUserSteeringMessagesSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, steeringMessages []string, events contract.EventSink) (stop bool, message string, contextMsgs []chat.Message) {
 	result := r.dispatchHook(ctx, a, hooks.EventUserSteeringMessagesSubmit, &hooks.Input{
 		SessionID:        sess.ID,
 		SteeringMessages: steeringMessages,
@@ -719,7 +720,7 @@ func (r *LocalRuntime) executeUserSteeringMessagesSubmitHooks(ctx context.Contex
 // continue=false / exit 2) stops the run loop, and AdditionalContext is
 // returned as a transient system message that the caller threads into
 // the follow-up turn only — never persisted.
-func (r *LocalRuntime) executeUserFollowupSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events EventSink) (stop bool, message string, contextMsgs []chat.Message) {
+func (r *LocalRuntime) executeUserFollowupSubmitHooks(ctx context.Context, sess *session.Session, a *agent.Agent, prompt string, events contract.EventSink) (stop bool, message string, contextMsgs []chat.Message) {
 	result := r.dispatchHook(ctx, a, hooks.EventUserFollowupSubmit, &hooks.Input{
 		SessionID: sess.ID,
 		Prompt:    prompt,
@@ -732,7 +733,7 @@ func (r *LocalRuntime) executeUserFollowupSubmitHooks(ctx context.Context, sess 
 // is reported in [hooks.Input.Source]. A terminating verdict skips
 // compaction entirely; AdditionalContext is appended to the
 // compaction prompt so handlers can steer the summary.
-func (r *LocalRuntime) executePreCompactHooks(ctx context.Context, sess *session.Session, a *agent.Agent, source string, events EventSink) (skip bool, message, additionalPrompt string) {
+func (r *LocalRuntime) executePreCompactHooks(ctx context.Context, sess *session.Session, a *agent.Agent, source string, events contract.EventSink) (skip bool, message, additionalPrompt string) {
 	result := r.dispatchHook(ctx, a, hooks.EventPreCompact, &hooks.Input{
 		SessionID: sess.ID,
 		Source:    source,

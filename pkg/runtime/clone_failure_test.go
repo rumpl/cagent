@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -83,21 +84,21 @@ func TestCloneFailuresReachRuntimeCallers(t *testing.T) {
 			assert.Equal(t, int64(100_000), rt.effectiveContextLimit(t.Context(), a, 100_000))
 			sess := session.New(session.WithMessages([]session.Item{session.NewMessageItem(session.UserMessage("keep this conversation"))}))
 			before := sess.MessagesSnapshot()
-			events := make(chan Event, 32)
+			events := make(chan contract.Event, 32)
 			rt.Summarize(t.Context(), sess, "", NewChannelSink(events))
 			close(events)
 			var failures int
 			for event := range events {
 				switch e := event.(type) {
-				case *ErrorEvent:
+				case *contract.ErrorEvent:
 					failures++
 					assert.Contains(t, e.Error, "resolving compaction context window")
 					assert.Contains(t, e.Error, tt.want.Error())
-				case *SessionCompactionEvent:
+				case *contract.SessionCompactionEvent:
 					if e.Status == "completed" {
-						assert.Equal(t, CompactionOutcomeFailed, e.Outcome)
+						assert.Equal(t, contract.CompactionOutcomeFailed, e.Outcome)
 					}
-				case *SessionSummaryEvent:
+				case *contract.SessionSummaryEvent:
 					t.Error("unexpected summary")
 				}
 			}

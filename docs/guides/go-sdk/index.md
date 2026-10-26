@@ -135,18 +135,31 @@ The CLI uses this helper for both its initial runtime and TUI-spawned runtimes.
 The HTTP API wires the same manifest budgets into its native runtimes; other
 serving adapters retain their existing wiring and budget behavior.
 
+## Runtime packages
+
+Import the implementation or contract you use directly:
+
+- `pkg/runtime`: local execution and construction options.
+- `pkg/runtime/contract`: shared runtime interface, events, and event sinks.
+- `pkg/runtime/remote`: HTTP client and remote execution (`remote.NewClient`, `remote.NewRuntime`).
+- `pkg/runtime/modelcatalog`: model choices, discovery configuration, and picker decoration.
+- `pkg/runtime/inspection`: read-only agent and execution-capability types.
+- `pkg/runtime/artifacts`: generated-file references and resolution errors.
+
+These types and remote constructors are not re-exported from `pkg/runtime`.
+
 ## Execution Capability Inspection
 
 `(*runtime.LocalRuntime).AgentExecutionCapabilities(name)` returns a static
 native/harness profile without starting tools, constructing drivers or
 initializing budget counters. Unknown agents return nil. The same optional
-profile is available on `runtime.AgentConfigInfo`, `runtime.AgentDetails` in
-`team_info`, and local startup/refresh `runtime.AgentInfoEvent` values.
+profile is available on `inspection.AgentConfigInfo`, `contract.AgentDetails` in
+`team_info`, and local startup/refresh `contract.AgentInfoEvent` values.
 See [Execution capabilities](../../features/api-server/index.md#execution-capabilities)
 for field meanings and unknown/remote behavior.
 
-`runtime.Runtime` and existing function signatures are unchanged. The exported
-inspection/event structs have new optional fields: downstream code using
+Shared interfaces and events live in `pkg/runtime/contract`; inspection types live
+in `pkg/runtime/inspection`. The exported inspection/event structs have optional fields: downstream code using
 **unkeyed** composite literals for these structs must switch to keyed literals.
 Existing keyed literals and JSON consumers accepting additional fields remain
 compatible. Capability support is not proof an adapter installed configuration
@@ -233,7 +246,7 @@ if err := chat.Restart(); err != nil {
 | `Err`          | A user-facing runtime error; no further content events follow.           |
 | `Done`         | Clean end of turn; no more events.                                       |
 | `Elicitation`  | A pending MCP elicitation request (`Config.ForwardElicitation` only); answer with `RespondToElicitation`. |
-| `RuntimeEvent` | The original `runtime.Event` for callers that need the full stream.      |
+| `RuntimeEvent` | The original `contract.Event` for callers that need the full stream.      |
 
 ### Opt-in behaviors
 
@@ -262,7 +275,7 @@ case ev.Elicitation != nil:
         map[string]any{"token": token}, ev.Elicitation.ElicitationID)
 ```
 
-For anything beyond that, call `chat.Runtime()` to access the underlying `runtime.Runtime` directly.
+For anything beyond that, call `chat.Runtime()` to access the underlying `contract.Runtime` directly.
 
 > [!WARNING]
 > **Breaking change: `Runtime.ResumeElicitation` (#3584)**
@@ -274,10 +287,10 @@ For anything beyond that, call `chat.Runtime()` to access the underlying `runtim
 > *callers* of the 3-argument form keep compiling unchanged — `rt.ResumeElicitation(ctx, action, content)`
 > still works and falls back to resolving the sole pending request.
 >
-> If you implement your own `runtime.Runtime` (rather than embedding
-> `runtime.LocalRuntime`/`runtime.RemoteRuntime`), you do need to update your
+> If you implement your own `contract.Runtime` (rather than embedding
+> `runtime.LocalRuntime`/`remote.Runtime`), you do need to update your
 > method's signature to match, and also add an `OnElicitationRequest(handler
-> func(runtime.Event))` method (a no-op is fine if your runtime never raises
+> func(contract.Event))` method (a no-op is fine if your runtime never raises
 > elicitations) — both are required interface methods, matching the existing
 > no-op-able pattern already used by `OnToolsChanged`/`OnBackgroundEvent`.
 
@@ -390,7 +403,7 @@ options retains the legacy global fallback, including registrations made after
 runtime construction. Factories are still invoked lazily, at execution time.
 Runtime decorators used with `ResolveCommand` should forward
 `CommandEvaluatorFactory() runtime.CommandEvaluatorFactory` to preserve this
-selection. The `runtime.Runtime` interface itself is unchanged.
+selection. The shared runtime interface lives in `pkg/runtime/contract`.
 
 These options also work through `embeddedchat.Config.RuntimeOptions`. Loader
 policy remains separate: `teamloader.WithStrict(config.FeatureHarness)` permits
@@ -661,34 +674,36 @@ func createCalculator(llm provider.Provider) *agent.Agent {
 Process events as they happen:
 
 ```go
-func runStreaming(ctx context.Context, rt runtime.Runtime, sess *session.Session) error {
+import "github.com/docker/docker-agent/pkg/runtime/contract"
+
+func runStreaming(ctx context.Context, rt contract.Runtime, sess *session.Session) error {
     events := rt.RunStream(ctx, sess)
 
     for event := range events {
         switch e := event.(type) {
-        case *runtime.StreamStartedEvent:
+        case *contract.StreamStartedEvent:
             fmt.Println("Stream started")
 
-        case *runtime.AgentChoiceEvent:
+        case *contract.AgentChoiceEvent:
             // Print response chunks as they arrive
             fmt.Print(e.Content)
 
-        case *runtime.ToolCallEvent:
+        case *contract.ToolCallEvent:
             fmt.Printf("\n[Tool call: %s]\n", e.ToolCall.Function.Name)
 
-        case *runtime.ToolCallConfirmationEvent:
+        case *contract.ToolCallConfirmationEvent:
             // Auto-approve tool calls
             rt.Resume(ctx, runtime.ResumeRequest{
                 Type: runtime.ResumeTypeApproveSession,
             })
 
-        case *runtime.ToolCallResponseEvent:
+        case *contract.ToolCallResponseEvent:
             fmt.Printf("[Tool response: %s]\n", e.Response)
 
-        case *runtime.StreamStoppedEvent:
+        case *contract.StreamStoppedEvent:
             fmt.Println("\nStream stopped")
 
-        case *runtime.ErrorEvent:
+        case *contract.ErrorEvent:
             return fmt.Errorf("error: %s", e.Error)
         }
     }
@@ -986,7 +1001,7 @@ if err != nil {
 
 // Check for errors in the event stream
 for event := range rt.RunStream(ctx, sess) {
-    if errEvent, ok := event.(*runtime.ErrorEvent); ok {
+    if errEvent, ok := event.(*contract.ErrorEvent); ok {
         return fmt.Errorf("stream error: %s", errEvent.Error)
     }
 }

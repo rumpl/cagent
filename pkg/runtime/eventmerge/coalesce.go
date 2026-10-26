@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // DefaultWindow is the coalescing window used when none is configured. It
@@ -30,12 +30,12 @@ const maxPendingBytes = 64 << 10
 // The returned channel is closed once in is closed. Coalesce always drains
 // in to the end, discarding events once ctx is done, so the producer never
 // blocks on an abandoned consumer.
-func Coalesce(ctx context.Context, in <-chan runtime.Event, window time.Duration) <-chan runtime.Event {
+func Coalesce(ctx context.Context, in <-chan contract.Event, window time.Duration) <-chan contract.Event {
 	if window <= 0 {
 		return in
 	}
 
-	out := make(chan runtime.Event)
+	out := make(chan contract.Event)
 	c := &coalescer{done: ctx.Done(), out: out, window: window}
 	go func() {
 		defer close(out)
@@ -49,10 +49,10 @@ func Coalesce(ctx context.Context, in <-chan runtime.Event, window time.Duration
 
 type coalescer struct {
 	done   <-chan struct{}
-	out    chan<- runtime.Event
+	out    chan<- contract.Event
 	window time.Duration
 
-	pending      []runtime.Event
+	pending      []contract.Event
 	pendingBytes int
 	lastEmit     time.Time
 	timer        *time.Timer
@@ -60,7 +60,7 @@ type coalescer struct {
 
 // run forwards in until it is closed. It returns false if done was closed
 // first, leaving the rest of in to the caller.
-func (c *coalescer) run(in <-chan runtime.Event) bool {
+func (c *coalescer) run(in <-chan contract.Event) bool {
 	for {
 		var tick <-chan time.Time
 		if c.timer != nil {
@@ -84,7 +84,7 @@ func (c *coalescer) run(in <-chan runtime.Event) bool {
 	}
 }
 
-func (c *coalescer) accept(event runtime.Event) bool {
+func (c *coalescer) accept(event contract.Event) bool {
 	if !Mergeable(event) {
 		return c.flush() && c.send(event)
 	}
@@ -126,7 +126,7 @@ func (c *coalescer) flush() bool {
 	return true
 }
 
-func (c *coalescer) send(event runtime.Event) bool {
+func (c *coalescer) send(event contract.Event) bool {
 	select {
 	case c.out <- event:
 		return true

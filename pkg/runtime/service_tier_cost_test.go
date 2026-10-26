@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -70,17 +71,17 @@ func TestRunStreamServiceTierCost(t *testing.T) {
 				}))
 			sess := session.New(session.WithUserMessage("hi"))
 			sess.Title = "Service tier test"
-			var lastUsage *MessageUsage
-			var budget *BudgetStatus
+			var lastUsage *contract.MessageUsage
+			var budget *contract.BudgetStatus
 			for ev := range rt.RunStream(t.Context(), sess) {
 				switch ev := ev.(type) {
-				case *ErrorEvent:
+				case *contract.ErrorEvent:
 					t.Errorf("unexpected runtime error: %s", ev.Error)
-				case *TokenUsageEvent:
+				case *contract.TokenUsageEvent:
 					if ev.Usage != nil && ev.Usage.LastMessage != nil {
 						lastUsage = ev.Usage.LastMessage
 					}
-				case *BudgetUsageEvent:
+				case *contract.BudgetUsageEvent:
 					for _, b := range ev.Budgets {
 						if b.Name == runBudgetName {
 							budget = &b
@@ -142,7 +143,7 @@ func TestServiceTierMixedTurnsPersistCost(t *testing.T) {
 				stream.responses[len(stream.responses)-1].Usage = &chat.Usage{InputTokens: turn.input, CachedInputTokens: 20_000, CacheWriteTokens: 30_000, OutputTokens: 5_000, ReasoningTokens: 3_000, ServiceTier: turn.tier}
 				model.stream = stream
 				for event := range rt.RunStream(t.Context(), sess) {
-					if event, ok := event.(*ErrorEvent); ok {
+					if event, ok := event.(*contract.ErrorEvent); ok {
 						t.Fatalf("runtime error: %s", event.Error)
 					}
 				}

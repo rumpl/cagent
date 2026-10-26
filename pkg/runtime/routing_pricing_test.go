@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/rulebased"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -178,26 +179,26 @@ func TestRoutedPricing(t *testing.T) {
 				var sidebarModel string
 				var sidebarModels []string
 				var message *chat.Message
-				var usage *MessageUsage
-				var budget *BudgetStatus
+				var usage *contract.MessageUsage
+				var budget *contract.BudgetStatus
 				for ev := range rt.RunStream(t.Context(), sess) {
 					switch ev := ev.(type) {
-					case *AgentInfoEvent:
+					case *contract.AgentInfoEvent:
 						sidebarModels = append(sidebarModels, ev.Model)
 						sidebarModel = ev.Model
-					case *ModelFallbackEvent:
+					case *contract.ModelFallbackEvent:
 						sidebarModel = ev.FallbackModel
-					case *ErrorEvent:
+					case *contract.ErrorEvent:
 						t.Errorf("unexpected runtime error: %s", ev.Error)
-					case *MessageAddedEvent:
+					case *contract.MessageAddedEvent:
 						if ev.Message != nil && ev.Message.Message.Role == chat.MessageRoleAssistant {
 							message = &ev.Message.Message
 						}
-					case *TokenUsageEvent:
+					case *contract.TokenUsageEvent:
 						if ev.Usage != nil && ev.Usage.LastMessage != nil {
 							usage = ev.Usage.LastMessage
 						}
-					case *BudgetUsageEvent:
+					case *contract.BudgetUsageEvent:
 						for _, b := range ev.Budgets {
 							if b.Name == runBudgetName {
 								budget = &b
@@ -341,7 +342,7 @@ func TestRoutedIdleRetryServingModel(t *testing.T) {
 				}
 				var announced []string
 				for _, event := range sink.events {
-					if event, ok := event.(*AgentInfoEvent); ok {
+					if event, ok := event.(*contract.AgentInfoEvent); ok {
 						announced = append(announced, event.Model)
 					}
 				}
@@ -369,13 +370,13 @@ func TestRoutedSameIDFallbackServingModel(t *testing.T) {
 	var assistant *chat.Message
 	for event := range rt.RunStream(t.Context(), sess) {
 		switch event := event.(type) {
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			t.Errorf("runtime error: %s", event.Error)
-		case *AgentInfoEvent:
+		case *contract.AgentInfoEvent:
 			announced = append(announced, event.Model)
-		case *ModelFallbackEvent:
+		case *contract.ModelFallbackEvent:
 			announced = append(announced, event.FallbackModel)
-		case *MessageAddedEvent:
+		case *contract.MessageAddedEvent:
 			if event.Message != nil && event.Message.Message.Role == chat.MessageRoleAssistant {
 				assistant = &event.Message.Message
 			}

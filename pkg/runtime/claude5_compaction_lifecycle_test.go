@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/providers"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -59,10 +60,10 @@ func openSessionStore(t *testing.T, path string) session.Store {
 	return store
 }
 
-func requireNoErrorEvents(t *testing.T, events []Event) {
+func requireNoErrorEvents(t *testing.T, events []contract.Event) {
 	t.Helper()
 	for _, ev := range events {
-		if e, ok := ev.(*ErrorEvent); ok {
+		if e, ok := ev.(*contract.ErrorEvent); ok {
 			t.Fatalf("unexpected error event: %s", e.Error)
 		}
 	}

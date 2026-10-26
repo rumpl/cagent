@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -24,13 +25,13 @@ func TestAppendSteerAndEmitConcurrentWithAddMessage(t *testing.T) {
 	sess := session.New()
 
 	const n = 100
-	events := make(chan Event, n)
+	events := make(chan contract.Event, n)
 	sink := NewChannelSink(events)
 
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			rt.appendSteerAndEmit(sess, QueuedMessage{Content: "steer"}, sink)
+			rt.appendSteerAndEmit(sess, contract.QueuedMessage{Content: "steer"}, sink)
 		})
 		wg.Go(func() {
 			sess.AddMessage(session.UserMessage("concurrent-http-add"))
@@ -41,7 +42,7 @@ func TestAppendSteerAndEmitConcurrentWithAddMessage(t *testing.T) {
 
 	items := sess.MessagesSnapshot()
 	for ev := range events {
-		um, ok := ev.(*UserMessageEvent)
+		um, ok := ev.(*contract.UserMessageEvent)
 		if !ok {
 			t.Fatalf("unexpected event type %T", ev)
 		}
@@ -73,7 +74,7 @@ func TestEmitStartupInfoConcurrentWithAddMessage(t *testing.T) {
 		Content: "hi",
 	}))
 
-	sink := EventSinkFunc(func(Event) {})
+	sink := EventSinkFunc(func(contract.Event) {})
 
 	done := make(chan struct{})
 	go func() {

@@ -13,23 +13,24 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/evaluator"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
-func budgetExceededEvents(events []Event) []*BudgetExceededEvent {
-	var out []*BudgetExceededEvent
+func budgetExceededEvents(events []contract.Event) []*contract.BudgetExceededEvent {
+	var out []*contract.BudgetExceededEvent
 	for _, ev := range events {
-		if e, ok := ev.(*BudgetExceededEvent); ok {
+		if e, ok := ev.(*contract.BudgetExceededEvent); ok {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-func warnings(events []Event) []string {
+func warnings(events []contract.Event) []string {
 	var out []string
 	for _, ev := range events {
-		if w, ok := ev.(*WarningEvent); ok {
+		if w, ok := ev.(*contract.WarningEvent); ok {
 			out = append(out, w.Message)
 		}
 	}
@@ -237,7 +238,7 @@ func TestRouting_RejectedStructuredOutputDoesNotRoute(t *testing.T) {
 
 	var sawStructuredError bool
 	for _, e := range routedErrors(events) {
-		sawStructuredError = sawStructuredError || e.Code == ErrorCodeStructuredOutputFailed
+		sawStructuredError = sawStructuredError || e.Code == contract.ErrorCodeStructuredOutputFailed
 	}
 	assert.True(t, sawStructuredError)
 	assert.Zero(t, st.providers["reviewer"].calls.Load(), "an unaccepted answer must never continue to another agent")

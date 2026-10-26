@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -128,9 +129,9 @@ func TestRuntimeOptsBudgets(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
 
 			sess := session.New(session.WithUserMessage("hello"))
-			var statuses []runtime.BudgetStatus
+			var statuses []contract.BudgetStatus
 			for event := range rt.RunStream(t.Context(), sess) {
-				if usage, ok := event.(*runtime.BudgetUsageEvent); ok {
+				if usage, ok := event.(*contract.BudgetUsageEvent); ok {
 					statuses = usage.Budgets
 				}
 			}

@@ -13,11 +13,12 @@ import (
 	"github.com/docker/docker-agent/pkg/cache"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
 
-func runWithCache(t *testing.T, c *cache.Cache, prov *messageRecordingProvider, sess *session.Session, extraOpts ...agent.Opt) []Event {
+func runWithCache(t *testing.T, c *cache.Cache, prov *messageRecordingProvider, sess *session.Session, extraOpts ...agent.Opt) []contract.Event {
 	t.Helper()
 
 	opts := append([]agent.Opt{
@@ -32,7 +33,7 @@ func runWithCache(t *testing.T, c *cache.Cache, prov *messageRecordingProvider, 
 	sess.Title = "cache test"
 
 	evCh := rt.RunStream(t.Context(), sess)
-	var events []Event
+	var events []contract.Event
 	for ev := range evCh {
 		events = append(events, ev)
 	}
@@ -63,7 +64,7 @@ func TestCache_StoresAndReplaysAnswer(t *testing.T) {
 	events1 := runWithCache(t, c, prov, sess1)
 
 	require.NotEmpty(t, events1)
-	assert.IsType(t, &StreamStoppedEvent{}, events1[len(events1)-1])
+	assert.IsType(t, &contract.StreamStoppedEvent{}, events1[len(events1)-1])
 
 	prov.mu.Lock()
 	require.Len(t, prov.recordedMessages, 1, "expected exactly one model call on first turn (cache miss)")
@@ -300,9 +301,9 @@ func TestCache_ToolModeValidHitReplaysWithoutModel(t *testing.T) {
 	assert.Equal(t, compacted.String(), last, "the replayed content must be canonical compact JSON")
 }
 
-func hasAgentChoice(events []Event, content string) bool {
+func hasAgentChoice(events []contract.Event, content string) bool {
 	for _, ev := range events {
-		if ac, ok := ev.(*AgentChoiceEvent); ok && strings.Contains(ac.Content, content) {
+		if ac, ok := ev.(*contract.AgentChoiceEvent); ok && strings.Contains(ac.Content, content) {
 			return true
 		}
 	}

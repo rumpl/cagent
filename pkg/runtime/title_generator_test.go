@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -124,9 +125,9 @@ func TestRunStream_ImageOutputOnlyModel_MainStreamUnaffected(t *testing.T) {
 	var content strings.Builder
 	for ev := range rt.RunStream(t.Context(), sess) {
 		switch e := ev.(type) {
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			t.Fatalf("main stream must stay successful, got ErrorEvent %q", e.Error)
-		case *AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			content.WriteString(e.Content)
 		}
 	}

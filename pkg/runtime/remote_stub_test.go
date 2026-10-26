@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config/latest"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -40,11 +41,11 @@ func (s *stubRemoteClient) ResumeElicitation(context.Context, string, tools.Elic
 	return nil
 }
 
-func (s *stubRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan Event, error) {
+func (s *stubRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan contract.Event, error) {
 	panic("RunAgent not exercised by the contract test")
 }
 
-func (s *stubRemoteClient) RunAgentWithAgentName(context.Context, string, string, string, []api.Message, string) (<-chan Event, error) {
+func (s *stubRemoteClient) RunAgentWithAgentName(context.Context, string, string, string, []api.Message, string) (<-chan contract.Event, error) {
 	panic("RunAgentWithAgentName not exercised by the contract test")
 }
 
@@ -64,7 +65,7 @@ func (s *stubRemoteClient) GetAgentToolCount(context.Context, string, string) (i
 	return 0, nil
 }
 
-func (s *stubRemoteClient) StreamSessionEvents(context.Context, string) (<-chan Event, error) {
+func (s *stubRemoteClient) StreamSessionEvents(context.Context, string) (<-chan contract.Event, error) {
 	panic("StreamSessionEvents not exercised by the contract test")
 }
 

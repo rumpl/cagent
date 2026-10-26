@@ -19,7 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/evaluation"
 	"github.com/docker/docker-agent/pkg/modelinfo"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/shellpath"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -383,7 +383,7 @@ func (m *appModel) handleShowAgentDetails(agentName string) (tea.Model, tea.Cmd)
 			continue
 		}
 		cfg := m.application.AgentConfigInfo(m.ctx(), agentName)
-		var usage *runtime.Usage
+		var usage *contract.Usage
 		if u, ok := m.activeTab.sessionState.AgentUsage(agentName); ok {
 			usage = &u
 		}
@@ -517,7 +517,7 @@ func (m *appModel) handleShowContextDialog() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		breakdown, err := appRef.ContextBreakdown(ctx)
 		switch {
-		case errors.Is(err, runtime.ErrUnsupported):
+		case errors.Is(err, contract.ErrUnsupported):
 			return notification.ShowMsg{
 				Text: "Context breakdown is not supported with remote runtimes",
 				Type: notification.TypeInfo,
@@ -667,7 +667,7 @@ func (m *appModel) handleRefreshModelPicker(query string) (tea.Model, tea.Cmd) {
 		func() tea.Msg {
 			err := application.RefreshModelsCatalog(ctx)
 			result := messages.ModelPickerRefreshedMsg{Query: query, CatalogRefreshed: err == nil}
-			if errors.Is(err, runtime.ErrUnsupported) {
+			if errors.Is(err, contract.ErrUnsupported) {
 				err = nil
 			}
 			result.Err = err
@@ -709,7 +709,7 @@ func (m *appModel) handleCycleThinkingLevel() (tea.Model, tea.Cmd) {
 		return m, notification.InfoCmd("Thinking levels can't be changed with remote runtimes")
 	}
 	if _, err := m.application.CycleAgentThinkingLevel(m.ctx()); err != nil {
-		if errors.Is(err, runtime.ErrUnsupported) {
+		if errors.Is(err, contract.ErrUnsupported) {
 			return m, notification.InfoCmd("Current model does not support thinking levels")
 		}
 		return m, notification.ErrorCmd(fmt.Sprintf("Failed to change thinking level: %v", err))
@@ -734,7 +734,7 @@ func (m *appModel) handleSetThinkingLevel(level string) (tea.Model, tea.Cmd) {
 	}
 	applied, err := m.application.SetAgentThinkingLevel(m.ctx(), parsed)
 	if err != nil {
-		if errors.Is(err, runtime.ErrUnsupported) {
+		if errors.Is(err, contract.ErrUnsupported) {
 			return m, notification.InfoCmd("Current model does not support thinking levels")
 		}
 		return m, notification.ErrorCmd(fmt.Sprintf("Failed to set thinking level: %v", err))

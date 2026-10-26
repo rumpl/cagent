@@ -17,7 +17,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/plans"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tui/components/notification"
@@ -416,7 +416,7 @@ func TestPlanChangedEvent_RefreshesOpenPlanDialogs(t *testing.T) {
 	mustCreatePlan(t, svc, "release", "content")
 	openPlanBrowser(t, m, plans.ListResult{Plans: []plans.Plan{}})
 
-	msgs := runPlanFlow(t, m, runtime.PlanChanged("shared", "release", plan.ChangeActionWrite, 1, "root"))
+	msgs := runPlanFlow(t, m, contract.PlanChanged("shared", "release", plan.ChangeActionWrite, 1, "root"))
 	dataMsg, ok := firstOfType[dialog.PlanBrowserDataMsg](msgs)
 	require.True(t, ok, "an open plan browser must live-refresh on shared plan mutations")
 	require.Len(t, dataMsg.Result.Plans, 1)
@@ -439,7 +439,7 @@ func TestPlanChangedEvent_BackgroundSessionStillRefreshes(t *testing.T) {
 
 	msgs := runPlanFlow(t, m, messages.RoutedMsg{
 		SessionID: backgroundID,
-		Inner:     runtime.PlanChanged("shared", "release", plan.ChangeActionStatus, 2, "bg-agent"),
+		Inner:     contract.PlanChanged("shared", "release", plan.ChangeActionStatus, 2, "bg-agent"),
 	})
 	_, ok := firstOfType[dialog.PlanBrowserDataMsg](msgs)
 	assert.True(t, ok, "shared plans are scope-global: background mutations refresh the open browser")
@@ -638,7 +638,7 @@ func TestPlanChangedEvent_RefreshesBuriedPlanDialogs(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	msgs := runPlanFlow(t, m, runtime.PlanChanged("shared", "release", plan.ChangeActionWrite, 2, "root"))
+	msgs := runPlanFlow(t, m, contract.PlanChanged("shared", "release", plan.ChangeActionWrite, 2, "root"))
 
 	listMsg, ok := firstOfType[dialog.PlanBrowserDataMsg](msgs)
 	require.True(t, ok, "a buried browser must still trigger a list refresh")
@@ -1015,7 +1015,7 @@ func TestPlanChangedEvent_RefreshReadsAsynchronously(t *testing.T) {
 	sizeDialogs(t, m)
 	openPlanBrowser(t, m, plans.ListResult{Plans: []plans.Plan{}})
 
-	msgs := requireDeferredRead(t, m, blocking, runtime.PlanChanged("shared", "release", plan.ChangeActionWrite, 1, "root"))
+	msgs := requireDeferredRead(t, m, blocking, contract.PlanChanged("shared", "release", plan.ChangeActionWrite, 1, "root"))
 	_, ok := firstOfType[dialog.PlanBrowserDataMsg](msgs)
 	assert.True(t, ok, "the event-driven refresh lands once the deferred read completes")
 }

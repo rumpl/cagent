@@ -10,11 +10,13 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/inspection"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-func (r *LocalRuntime) emitAgentAndTeamInfo(ctx context.Context, a *agent.Agent, send func(Event) bool) bool {
+func (r *LocalRuntime) emitAgentAndTeamInfo(ctx context.Context, a *agent.Agent, send func(contract.Event) bool) bool {
 	modelID := r.getEffectiveModelID(ctx, a)
 	modelLabel := modelID.String()
 	contextLimit := r.contextLimitForAgentModel(ctx, a, modelID)
@@ -32,14 +34,14 @@ func (r *LocalRuntime) emitAgentAndTeamInfo(ctx context.Context, a *agent.Agent,
 		contextLimit = 0
 		compactionModel, primaryLimit = "", 0
 	}
-	info := AgentInfo(a.Name(), modelLabel, a.Description(), a.WelcomeMessage(), contextLimit).(*AgentInfoEvent)
-	info.ExecutionCapabilities = executionCapabilities(a)
+	info := contract.AgentInfo(a.Name(), modelLabel, a.Description(), a.WelcomeMessage(), contextLimit).(*contract.AgentInfoEvent)
+	info.ExecutionCapabilities = inspection.Capabilities(a)
 	info.CompactionModel = compactionModel
 	info.PrimaryContextLimit = primaryLimit
 	if !send(info) {
 		return false
 	}
-	return send(TeamInfo(r.agentDetailsFromTeam(ctx), r.currentAgentName()))
+	return send(contract.TeamInfo(r.agentDetailsFromTeam(ctx), r.currentAgentName()))
 }
 
 func (r *LocalRuntime) contextLimitForAgentModel(ctx context.Context, a *agent.Agent, modelID modelsdev.ID) int64 {
@@ -51,12 +53,12 @@ func (r *LocalRuntime) contextLimitForAgentModel(ctx context.Context, a *agent.A
 
 // EmitAgentInfo implements [Runtime.EmitAgentInfo]: it refreshes the agent and
 // team display without touching toolset discovery.
-func (r *LocalRuntime) EmitAgentInfo(ctx context.Context, events EventSink) {
+func (r *LocalRuntime) EmitAgentInfo(ctx context.Context, events contract.EventSink) {
 	a := r.CurrentAgent()
 	if a == nil {
 		return
 	}
-	r.emitAgentAndTeamInfo(ctx, a, func(event Event) bool {
+	r.emitAgentAndTeamInfo(ctx, a, func(event contract.Event) bool {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -68,7 +70,7 @@ func (r *LocalRuntime) EmitAgentInfo(ctx context.Context, events EventSink) {
 // EmitStartupInfo emits initial agent, team, and toolset information for immediate sidebar display.
 // When sess is non-nil and contains token data, a TokenUsageEvent is also emitted so that the
 // sidebar can display context usage percentage on session restore.
-func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events EventSink) {
+func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Session, events contract.EventSink) {
 	// CompareAndSwap makes the check-and-set atomic: App.Start emits from a
 	// spawned goroutine while reEmitStartupInfo (e.g. on /new session) resets
 	// and re-emits from another, and a plain bool check-then-set race would
@@ -80,7 +82,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	a := r.CurrentAgent()
 
 	// Helper to send events with context check
-	send := func(event Event) bool {
+	send := func(event contract.Event) bool {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -109,7 +111,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 	}
 	if restoredInput > 0 || restoredOutput > 0 {
 		contextLimit := r.contextLimitForAgentModel(ctx, a, modelID)
-		usage := SessionUsage(sess, contextLimit, a.CompactionThreshold())
+		usage := contract.SessionUsage(sess, contextLimit, a.CompactionThreshold())
 
 		// Reconstruct LastMessage from the parent session's last assistant
 		// message so that FinishReason (and other per-message fields) are
@@ -129,7 +131,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 				continue
 			}
 			msg := &item.Message.Message
-			lm := &MessageUsage{
+			lm := &contract.MessageUsage{
 				Model:        msg.Model,
 				Cost:         msg.Cost,
 				FinishReason: msg.FinishReason,
@@ -141,7 +143,7 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 			break
 		}
 
-		send(NewTokenUsageEvent(sess.ID, r.currentAgentName(), usage))
+		send(contract.NewTokenUsageEvent(sess.ID, r.currentAgentName(), usage))
 	}
 
 	// Tool loading can be slow (MCP servers need to start). Mark the
@@ -166,18 +168,18 @@ func (r *LocalRuntime) EmitStartupInfo(ctx context.Context, sess *session.Sessio
 // emitToolsProgressively loads tools from each toolset and emits progress updates.
 // This allows the UI to show the tool count incrementally as each toolset loads,
 // with a spinner indicating that more tools may be coming.
-func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agent, send func(Event) bool) {
+func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agent, send func(contract.Event) bool) {
 	toolsets := a.ToolSets()
 	totalToolsets := len(toolsets)
 
 	// If no toolsets, emit final state immediately
 	if totalToolsets == 0 {
-		send(ToolsetInfo(0, false, r.currentAgentName()))
+		send(contract.ToolsetInfo(0, false, r.currentAgentName()))
 		return
 	}
 
 	// Emit initial loading state
-	if !send(ToolsetInfo(0, true, r.currentAgentName())) {
+	if !send(contract.ToolsetInfo(0, true, r.currentAgentName())) {
 		return
 	}
 
@@ -254,13 +256,13 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 		totalTools += len(ts)
 
 		// Emit progress update - still loading unless this is the last toolset
-		if !send(ToolsetInfo(totalTools, !isLast, r.currentAgentName())) {
+		if !send(contract.ToolsetInfo(totalTools, !isLast, r.currentAgentName())) {
 			return
 		}
 	}
 
 	// Emit final state (not loading)
-	send(ToolsetInfo(totalTools, false, r.currentAgentName()))
+	send(contract.ToolsetInfo(totalTools, false, r.currentAgentName()))
 }
 
 // listToolsWithTimeout enumerates a toolset's tools under a bounded deadline.

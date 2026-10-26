@@ -4,6 +4,7 @@ import (
 	"reflect"
 
 	ragtypes "github.com/docker/docker-agent/pkg/rag/types"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -25,7 +26,7 @@ import (
 //
 // Non-blocking sink: the RAG watcher outlives the per-message events channel,
 // and a blocking send after the channel closes would panic.
-func (r *LocalRuntime) subscribeToolsetEvents(sess *session.Session, events EventSink) (release func()) {
+func (r *LocalRuntime) subscribeToolsetEvents(sess *session.Session, events contract.EventSink) (release func()) {
 	sink := nonBlocking(events)
 
 	type ownedToolSet struct {

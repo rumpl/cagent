@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/sound"
 	"github.com/docker/docker-agent/pkg/tools"
 	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
@@ -63,16 +63,16 @@ import (
 func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	// ===== Error and Warning Events =====
-	case *runtime.ErrorEvent:
+	case *contract.ErrorEvent:
 		if userconfig.Get().GetSound() {
 			sound.Play(p.ctx(), sound.Failure)
 		}
 		return true, p.messages.AddErrorMessage(msg.Error)
 
-	case *runtime.WarningEvent:
+	case *contract.WarningEvent:
 		return true, notification.WarningCmd(msg.Message)
 
-	case *runtime.ModelFallbackEvent:
+	case *contract.ModelFallbackEvent:
 		// Update sidebar with the fallback model immediately so it reflects the switch
 		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.FallbackModel, "", 0, "", 0)
 		// Notify user when switching to a fallback model, include the reason
@@ -80,10 +80,10 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(sidebarCmd, notification.WarningCmd(fallbackMsg))
 
 	// ===== Stream Lifecycle Events =====
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		return true, p.handleStreamStarted(msg)
 
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		if p.isSubSessionEvent(msg.SessionID) {
 			return true, nil
 		}
@@ -96,58 +96,58 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		model, cleanup := p.messages.Update(msg)
 		p.messages = model.(messages.Model)
 		return true, tea.Batch(cleanup, p.forwardToSidebar(msg), p.setWorking(false), p.setPendingResponse(false))
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		return true, p.handleStreamStopped(msg)
 
 	// ===== Content Events =====
-	case *runtime.UserMessageEvent:
+	case *contract.UserMessageEvent:
 		p.showStartupBanner = false
 		p.consumePendingMessage(msg.Message)
 		return true, p.messages.ReplaceLoadingWithUser(msg.Message, msg.SessionPosition)
 
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		return true, p.handleAgentChoice(msg)
 
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		return true, p.handleAgentChoiceReasoning(msg)
 
-	case *runtime.MessageAddedEvent:
+	case *contract.MessageAddedEvent:
 		return true, p.handleMessageAdded(msg)
 
-	case *runtime.ShellOutputEvent:
+	case *contract.ShellOutputEvent:
 		return true, p.handleShellCommand(msg)
 
 	// ===== Tool Events =====
-	case *runtime.PartialToolCallEvent:
+	case *contract.PartialToolCallEvent:
 		return true, p.handlePartialToolCall(msg)
 
-	case *runtime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		return true, p.handleToolCall(msg)
 
-	case *runtime.ToolCallConfirmationEvent:
+	case *contract.ToolCallConfirmationEvent:
 		return true, p.handleToolCallConfirmation(msg)
 
-	case *runtime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		return true, p.handleToolCallOutput(msg)
 
-	case *runtime.ToolCallResponseEvent:
+	case *contract.ToolCallResponseEvent:
 		return true, p.handleToolCallResponse(msg)
 
 	// ===== Sidebar Info Events (forwarded) =====
-	case *runtime.BackgroundAgentStatusEvent:
+	case *contract.BackgroundAgentStatusEvent:
 		return true, p.forwardToSidebar(msg)
 
-	case *runtime.EvaluationUsageEvent:
+	case *contract.EvaluationUsageEvent:
 		if sess := p.app.Session(); sess != nil {
 			sess.AddEvaluationUsageRecord(msg.Evaluation)
 		}
 		return true, nil
 
-	case *runtime.TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		p.handleTokenUsage(msg)
 		return true, nil
 
-	case *runtime.AgentInfoEvent:
+	case *contract.AgentInfoEvent:
 		sidebarCmd := p.sidebar.SetAgentInfo(msg.AgentName, msg.Model, msg.Description, msg.ContextLimit, msg.CompactionModel, msg.PrimaryContextLimit)
 		if msg.WelcomeMessage != "" {
 			p.showStartupBanner = false
@@ -155,24 +155,24 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		p.messages.AddWelcomeMessage(msg.WelcomeMessage)
 		return true, sidebarCmd
 
-	case *runtime.TeamInfoEvent:
+	case *contract.TeamInfoEvent:
 		p.sidebar.SetTeamInfo(msg.AvailableAgents)
 		return true, nil
 
-	case *runtime.AgentSwitchingEvent:
+	case *contract.AgentSwitchingEvent:
 		return true, p.handleAgentSwitching(msg)
 
-	case *runtime.AgentRouteEvent:
+	case *contract.AgentRouteEvent:
 		return true, notification.InfoCmd(routeSummary(msg))
 
-	case *runtime.ToolsetInfoEvent:
+	case *contract.ToolsetInfoEvent:
 		p.sidebar.SetSkillsInfo(len(p.app.CurrentAgentSkills()))
 		return true, p.forwardToSidebar(msg)
 
-	case *runtime.SessionTitleEvent:
+	case *contract.SessionTitleEvent:
 		return true, p.forwardToSidebar(msg)
 
-	case *runtime.SessionCompactionEvent:
+	case *contract.SessionCompactionEvent:
 		// The sidebar tracks the started/completed pair to drive its
 		// "compacting…" gauge state (it ignores sessions it is not
 		// currently displaying).
@@ -209,9 +209,9 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 		return true, sidebarCmd
 
 	// ===== RAG Indexing Events (forwarded to sidebar) =====
-	case *runtime.RAGIndexingStartedEvent,
-		*runtime.RAGIndexingProgressEvent,
-		*runtime.RAGIndexingCompletedEvent:
+	case *contract.RAGIndexingStartedEvent,
+		*contract.RAGIndexingProgressEvent,
+		*contract.RAGIndexingCompletedEvent:
 		return true, p.forwardToSidebar(msg)
 
 	// ===== Budget Events =====
@@ -219,17 +219,17 @@ func (p *chatPage) handleRuntimeEvent(msg tea.Msg) (bool, tea.Cmd) {
 	// is rendered as a warning rather than a dialog: the run is already
 	// stopping and there is nothing to ask the user, unlike the iteration
 	// cap, which offers to continue.
-	case *runtime.BudgetUsageEvent:
+	case *contract.BudgetUsageEvent:
 		return true, p.forwardToSidebar(msg)
 
-	case *runtime.BudgetExceededEvent:
+	case *contract.BudgetExceededEvent:
 		return true, p.handleBudgetExceeded(msg)
 
 	// ===== Dialog Events =====
-	case *runtime.MaxIterationsReachedEvent:
+	case *contract.MaxIterationsReachedEvent:
 		return true, p.handleMaxIterationsReached(msg)
 
-	case *runtime.ElicitationRequestEvent:
+	case *contract.ElicitationRequestEvent:
 		return true, p.handleElicitationRequest(msg)
 	}
 
@@ -260,11 +260,11 @@ func (p *chatPage) isSubSessionEvent(sessionID string) bool {
 // "failed" already surfaced an ErrorEvent; "skipped" means the compaction
 // was a no-op (nothing to compact, hook veto, empty model output). Empty
 // outcome (older servers) keeps the legacy success toast.
-func rootCompactionNotice(msg *runtime.SessionCompactionEvent) tea.Cmd {
+func rootCompactionNotice(msg *contract.SessionCompactionEvent) tea.Cmd {
 	switch msg.Outcome {
-	case "", runtime.CompactionOutcomeApplied:
+	case "", contract.CompactionOutcomeApplied:
 		return notification.SuccessCmd("Session compacted successfully.")
-	case runtime.CompactionOutcomeSkipped:
+	case contract.CompactionOutcomeSkipped:
 		return notification.InfoCmd("Session compaction skipped.")
 	}
 	return nil
@@ -273,7 +273,7 @@ func rootCompactionNotice(msg *runtime.SessionCompactionEvent) tea.Cmd {
 // subSessionCompactionNotice builds the agent-scoped feedback for a
 // sub-agent session's compaction: success, skipped or failed on the terminal
 // event, silence while it runs (the request itself was already announced).
-func subSessionCompactionNotice(msg *runtime.SessionCompactionEvent) tea.Cmd {
+func subSessionCompactionNotice(msg *contract.SessionCompactionEvent) tea.Cmd {
 	if msg.Status != "completed" {
 		return nil
 	}
@@ -282,11 +282,11 @@ func subSessionCompactionNotice(msg *runtime.SessionCompactionEvent) tea.Cmd {
 		agentLabel = "sub-agent"
 	}
 	switch msg.Outcome {
-	case "", runtime.CompactionOutcomeApplied:
+	case "", contract.CompactionOutcomeApplied:
 		return notification.SuccessCmd(fmt.Sprintf("Compacted %s's session.", agentLabel))
-	case runtime.CompactionOutcomeSkipped:
+	case contract.CompactionOutcomeSkipped:
 		return notification.InfoCmd(fmt.Sprintf("Compaction skipped for %s's session.", agentLabel))
-	case runtime.CompactionOutcomeFailed:
+	case contract.CompactionOutcomeFailed:
 		return notification.ErrorCmd(fmt.Sprintf("Compaction failed for %s's session.", agentLabel))
 	}
 	return nil
@@ -294,7 +294,7 @@ func subSessionCompactionNotice(msg *runtime.SessionCompactionEvent) tea.Cmd {
 
 // handleTokenUsage updates sidebar and session with token usage data.
 // This handler performs side effects only and returns no command.
-func (p *chatPage) handleTokenUsage(msg *runtime.TokenUsageEvent) {
+func (p *chatPage) handleTokenUsage(msg *contract.TokenUsageEvent) {
 	p.sidebar.SetTokenUsage(msg)
 	if msg.Usage != nil {
 		if sess := p.app.Session(); sess != nil {
@@ -321,7 +321,7 @@ func (p *chatPage) handleTokenUsage(msg *runtime.TokenUsageEvent) {
 	}
 }
 
-func (p *chatPage) handleStreamStarted(msg *runtime.StreamStartedEvent) tea.Cmd {
+func (p *chatPage) handleStreamStarted(msg *contract.StreamStartedEvent) tea.Cmd {
 	slog.Debug("handleStreamStarted called", "agent", msg.AgentName, "session_id", msg.SessionID)
 	p.contentIdentity.Finish(p.contentSession(msg.SessionID))
 	if p.contentSessionID == p.contentSession(msg.SessionID) {
@@ -355,7 +355,7 @@ func (p *chatPage) trackContentSession(sessionID string) {
 	}
 }
 
-func (p *chatPage) handleAgentChoice(msg *runtime.AgentChoiceEvent) tea.Cmd {
+func (p *chatPage) handleAgentChoice(msg *contract.AgentChoiceEvent) tea.Cmd {
 	if p.streamCancelled {
 		return nil
 	}
@@ -371,7 +371,7 @@ func (p *chatPage) handleAgentChoice(msg *runtime.AgentChoiceEvent) tea.Cmd {
 	return tea.Batch(activityCmd, p.messages.AppendAssistantContent(identity.SessionID, identity.MessageID, msg.AgentName, msg.Content))
 }
 
-func (p *chatPage) handleAgentChoiceReasoning(msg *runtime.AgentChoiceReasoningEvent) tea.Cmd {
+func (p *chatPage) handleAgentChoiceReasoning(msg *contract.AgentChoiceReasoningEvent) tea.Cmd {
 	if p.streamCancelled {
 		return nil
 	}
@@ -392,7 +392,7 @@ func (p *chatPage) handleAgentChoiceReasoning(msg *runtime.AgentChoiceReasoningE
 // narrates the outbound direction. Boundaries arriving after the user
 // cancelled the stream are dropped entirely: the delegation they belong to
 // was already torn down visually.
-func (p *chatPage) handleAgentSwitching(msg *runtime.AgentSwitchingEvent) tea.Cmd {
+func (p *chatPage) handleAgentSwitching(msg *contract.AgentSwitchingEvent) tea.Cmd {
 	if p.streamCancelled {
 		return nil
 	}
@@ -405,7 +405,7 @@ func (p *chatPage) handleAgentSwitching(msg *runtime.AgentSwitchingEvent) tea.Cm
 	return tea.Batch(cmd, returnCmd, p.messages.ScrollToBottom())
 }
 
-func (p *chatPage) handleStreamStopped(msg *runtime.StreamStoppedEvent) tea.Cmd {
+func (p *chatPage) handleStreamStopped(msg *contract.StreamStoppedEvent) tea.Cmd {
 	slog.Debug("handleStreamStopped called",
 		"agent", msg.AgentName,
 		"session_id", msg.SessionID,
@@ -483,7 +483,7 @@ func (p *chatPage) handleStreamStopped(msg *runtime.StreamStoppedEvent) tea.Cmd 
 // handlePartialToolCall processes partial tool call events by rendering each
 // tool call as it streams in. The tool call appears with its name and a static
 // "pending" indicator (not animated) to show it's receiving data.
-func (p *chatPage) handlePartialToolCall(msg *runtime.PartialToolCallEvent) tea.Cmd {
+func (p *chatPage) handlePartialToolCall(msg *contract.PartialToolCallEvent) tea.Cmd {
 	p.setPendingResponse(false)
 	var toolDef tools.Tool
 	if msg.ToolDefinition != nil {
@@ -496,14 +496,14 @@ func (p *chatPage) handlePartialToolCall(msg *runtime.PartialToolCallEvent) tea.
 	return tea.Batch(activityCmd, toolCmd, p.messages.ScrollToBottom())
 }
 
-func (p *chatPage) handleToolCallConfirmation(msg *runtime.ToolCallConfirmationEvent) tea.Cmd {
+func (p *chatPage) handleToolCallConfirmation(msg *contract.ToolCallConfirmationEvent) tea.Cmd {
 	spinnerCmd := p.setWorking(false)
 	toolCmd := p.messages.AddOrUpdateToolCall(msg.AgentName, msg.ToolCall, msg.ToolDefinition, types.ToolStatusConfirmation)
 	dialogCmd := p.attentionDialogCmd(msg)
 	return tea.Batch(toolCmd, p.messages.ScrollToBottom(), spinnerCmd, dialogCmd)
 }
 
-func (p *chatPage) handleToolCall(msg *runtime.ToolCallEvent) tea.Cmd {
+func (p *chatPage) handleToolCall(msg *contract.ToolCallEvent) tea.Cmd {
 	p.setPendingResponse(false)
 	spinnerCmd := p.setWorking(true)
 	sidebarCmd := p.forwardToSidebar(msg)
@@ -511,11 +511,11 @@ func (p *chatPage) handleToolCall(msg *runtime.ToolCallEvent) tea.Cmd {
 	return tea.Batch(toolCmd, p.messages.ScrollToBottom(), spinnerCmd, sidebarCmd)
 }
 
-func (p *chatPage) handleToolCallOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd {
+func (p *chatPage) handleToolCallOutput(msg *contract.ToolCallOutputEvent) tea.Cmd {
 	return tea.Batch(p.messages.AppendToolOutput(msg), p.messages.ScrollToBottom())
 }
 
-func (p *chatPage) handleShellCommand(msg *runtime.ShellOutputEvent) tea.Cmd {
+func (p *chatPage) handleShellCommand(msg *contract.ShellOutputEvent) tea.Cmd {
 	if msg.CommandID == "" {
 		return p.messages.AddShellOutputMessage(msg.Output)
 	}
@@ -540,7 +540,7 @@ func (p *chatPage) handleShellCommand(msg *runtime.ShellOutputEvent) tea.Cmd {
 
 	if !msg.Done {
 		return tea.Batch(
-			p.messages.AppendToolOutput(&runtime.ToolCallOutputEvent{ToolCallID: msg.CommandID, Output: msg.Output}),
+			p.messages.AppendToolOutput(&contract.ToolCallOutputEvent{ToolCallID: msg.CommandID, Output: msg.Output}),
 			p.messages.ScrollToBottom(),
 		)
 	}
@@ -554,7 +554,7 @@ func (p *chatPage) handleShellCommand(msg *runtime.ShellOutputEvent) tea.Cmd {
 		status = types.ToolStatusError
 	}
 	return tea.Batch(
-		p.messages.AddToolResult(&runtime.ToolCallResponseEvent{
+		p.messages.AddToolResult(&contract.ToolCallResponseEvent{
 			ToolCallID:     msg.CommandID,
 			Response:       response,
 			Result:         &tools.ToolCallResult{Output: response, IsError: msg.Error != ""},
@@ -564,7 +564,7 @@ func (p *chatPage) handleShellCommand(msg *runtime.ShellOutputEvent) tea.Cmd {
 	)
 }
 
-func (p *chatPage) handleToolCallResponse(msg *runtime.ToolCallResponseEvent) tea.Cmd {
+func (p *chatPage) handleToolCallResponse(msg *contract.ToolCallResponseEvent) tea.Cmd {
 	spinnerCmd := p.setWorking(true)
 	sidebarCmd := p.forwardToSidebar(msg)
 
@@ -589,7 +589,7 @@ func (p *chatPage) handleToolCallResponse(msg *runtime.ToolCallResponseEvent) te
 // Deliberately not a dialog: unlike the iteration cap there is nothing to
 // ask. A budget is a ceiling the operator set on purpose, so raising it
 // means editing the config rather than answering a prompt.
-func (p *chatPage) handleBudgetExceeded(msg *runtime.BudgetExceededEvent) tea.Cmd {
+func (p *chatPage) handleBudgetExceeded(msg *contract.BudgetExceededEvent) tea.Cmd {
 	spinnerCmd := p.setWorking(false)
 	warnCmd := notification.WarningCmd(fmt.Sprintf(
 		"Run stopped by %s — used %s of %s.", msg.ConfigPath, msg.Used, msg.Max,
@@ -597,11 +597,11 @@ func (p *chatPage) handleBudgetExceeded(msg *runtime.BudgetExceededEvent) tea.Cm
 	return tea.Batch(spinnerCmd, warnCmd)
 }
 
-func (p *chatPage) handleMaxIterationsReached(msg *runtime.MaxIterationsReachedEvent) tea.Cmd {
+func (p *chatPage) handleMaxIterationsReached(msg *contract.MaxIterationsReachedEvent) tea.Cmd {
 	return tea.Batch(p.setWorking(false), p.attentionDialogCmd(msg))
 }
 
-func (p *chatPage) handleElicitationRequest(msg *runtime.ElicitationRequestEvent) tea.Cmd {
+func (p *chatPage) handleElicitationRequest(msg *contract.ElicitationRequestEvent) tea.Cmd {
 	return tea.Batch(p.setWorking(false), p.attentionDialogCmd(msg))
 }
 
@@ -630,7 +630,7 @@ func isSuccessfulStop(reason string) bool {
 }
 
 // routeSummary is the one-line, task-free description of a routing transition.
-func routeSummary(e *runtime.AgentRouteEvent) string {
+func routeSummary(e *contract.AgentRouteEvent) string {
 	summary := fmt.Sprintf("Routing %s → %s", e.FromAgent, e.ToAgent)
 	if e.Selected != "" {
 		summary += " (" + e.Selected

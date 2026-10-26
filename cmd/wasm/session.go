@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/embeddedchat"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -129,7 +130,7 @@ func (s *chatSession) run(t *turn, emit func(context.Context, map[string]any)) (
 		if ev.Err != nil {
 			runErr = ev.Err
 		}
-		if e, ok := ev.RuntimeEvent.(*runtime.TokenUsageEvent); ok && e.Usage != nil && e.Usage.LastMessage != nil {
+		if e, ok := ev.RuntimeEvent.(*contract.TokenUsageEvent); ok && e.Usage != nil && e.Usage.LastMessage != nil {
 			input += e.Usage.LastMessage.InputTokens
 			output += e.Usage.LastMessage.OutputTokens
 		}

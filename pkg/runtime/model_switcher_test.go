@@ -18,6 +18,8 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -128,7 +130,7 @@ func TestCycleAgentThinkingLevel_Errors(t *testing.T) {
 		r := &LocalRuntime{team: team.New(team.WithAgents(root))}
 
 		_, err := r.CycleAgentThinkingLevel(t.Context(), "root")
-		require.ErrorIs(t, err, ErrUnsupported)
+		require.ErrorIs(t, err, contract.ErrUnsupported)
 	})
 
 	t.Run("agent not found", func(t *testing.T) {
@@ -136,7 +138,7 @@ func TestCycleAgentThinkingLevel_Errors(t *testing.T) {
 		root := agent.New("root", "test")
 		r := &LocalRuntime{
 			team:             team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{},
+			modelSwitcherCfg: &modelcatalog.Config{},
 		}
 
 		_, err := r.CycleAgentThinkingLevel(t.Context(), "missing")
@@ -150,11 +152,11 @@ func TestCycleAgentThinkingLevel_Errors(t *testing.T) {
 		root := agent.New("root", "test", agent.WithModel(model))
 		r := &LocalRuntime{
 			team:             team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{},
+			modelSwitcherCfg: &modelcatalog.Config{},
 		}
 
 		_, err := r.CycleAgentThinkingLevel(t.Context(), "root")
-		require.ErrorIs(t, err, ErrUnsupported)
+		require.ErrorIs(t, err, contract.ErrUnsupported)
 		assert.False(t, root.HasModelOverride(), "no override should be set when cycling is unsupported")
 	})
 }
@@ -193,7 +195,7 @@ func TestCycleAgentThinkingLevel_AdvancesAndOverrides(t *testing.T) {
 	root := agent.New("root", "test", agent.WithModel(model))
 	r := &LocalRuntime{
 		team: team.New(team.WithAgents(root)),
-		modelSwitcherCfg: &ModelSwitcherConfig{
+		modelSwitcherCfg: &modelcatalog.Config{
 			ProviderRegistry: testProviderRegistry(),
 			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "sk-test"}),
 		},
@@ -225,7 +227,7 @@ func TestSetAgentThinkingLevel(t *testing.T) {
 		root := agent.New("root", "test", agent.WithModel(newConfigProvider(cfg)))
 		r := &LocalRuntime{
 			team: team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider:      environment.NewMapEnvProvider(env),
 			},
@@ -275,7 +277,7 @@ func TestSetAgentThinkingLevel(t *testing.T) {
 		)
 
 		_, err := r.SetAgentThinkingLevel(t.Context(), "root", effort.High)
-		require.ErrorIs(t, err, ErrUnsupported)
+		require.ErrorIs(t, err, contract.ErrUnsupported)
 		assert.False(t, root.HasModelOverride())
 	})
 
@@ -285,7 +287,7 @@ func TestSetAgentThinkingLevel(t *testing.T) {
 		r := &LocalRuntime{team: team.New(team.WithAgents(root))}
 
 		_, err := r.SetAgentThinkingLevel(t.Context(), "root", effort.High)
-		require.ErrorIs(t, err, ErrUnsupported)
+		require.ErrorIs(t, err, contract.ErrUnsupported)
 	})
 
 	t.Run("model-specific top tier is accepted", func(t *testing.T) {
@@ -324,7 +326,7 @@ func TestSetAgentThinkingLevel_ConcurrentOverrideBetweenResolutionAndApply(t *te
 		root := agent.New("root", "test", agent.WithModel(modelA))
 		r := &LocalRuntime{
 			team: team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider: environment.NewMapEnvProvider(map[string]string{
 					"OPENAI_API_KEY":    "sk-test",
@@ -365,7 +367,7 @@ func TestSetAgentThinkingLevel_ConcurrentOverrideBetweenResolutionAndApply(t *te
 
 		r := &LocalRuntime{
 			team: team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider:      environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "sk-test"}),
 			},
@@ -395,7 +397,7 @@ func TestCurrentAgentThinkingLevels(t *testing.T) {
 		return &LocalRuntime{
 			team:   tm,
 			agents: newAgentRouter(tm, "root"),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider:      environment.NewMapEnvProvider(env),
 			},
@@ -470,7 +472,7 @@ func TestSetAgentThinkingLevel_NoneSurvivesOnGPT56(t *testing.T) {
 		root := agent.New("root", "test", agent.WithModel(model))
 		r := &LocalRuntime{
 			team: team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider:      environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "sk-test"}),
 			},
@@ -493,7 +495,7 @@ func TestSetAgentThinkingLevel_NoneSurvivesOnGPT56(t *testing.T) {
 		root := agent.New("root", "test", agent.WithModel(model))
 		r := &LocalRuntime{
 			team: team.New(team.WithAgents(root)),
-			modelSwitcherCfg: &ModelSwitcherConfig{
+			modelSwitcherCfg: &modelcatalog.Config{
 				ProviderRegistry: testProviderRegistry(),
 				EnvProvider:      environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "sk-test"}),
 			},
@@ -574,7 +576,7 @@ func TestCycleAgentThinkingLevel_PerModelTopTier(t *testing.T) {
 			root := agent.New("root", "test", agent.WithModel(model))
 			r := &LocalRuntime{
 				team: team.New(team.WithAgents(root)),
-				modelSwitcherCfg: &ModelSwitcherConfig{
+				modelSwitcherCfg: &modelcatalog.Config{
 					ProviderRegistry: testProviderRegistry(),
 					EnvProvider:      environment.NewMapEnvProvider(map[string]string{"ANTHROPIC_API_KEY": "sk-test"}),
 				},
@@ -605,7 +607,7 @@ func TestCycleAgentThinkingLevel_VercelQualifiedGPT56(t *testing.T) {
 	root := agent.New("root", "test", agent.WithModel(model))
 	r := &LocalRuntime{
 		team: team.New(team.WithAgents(root)),
-		modelSwitcherCfg: &ModelSwitcherConfig{
+		modelSwitcherCfg: &modelcatalog.Config{
 			ProviderRegistry: testProviderRegistry(),
 			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"AI_GATEWAY_API_KEY": "vck-test"}),
 		},
@@ -632,7 +634,7 @@ func TestSetAgentThinkingLevel_VercelQualifiedGPT56Max(t *testing.T) {
 	root := agent.New("root", "test", agent.WithModel(model))
 	r := &LocalRuntime{
 		team: team.New(team.WithAgents(root)),
-		modelSwitcherCfg: &ModelSwitcherConfig{
+		modelSwitcherCfg: &modelcatalog.Config{
 			ProviderRegistry: testProviderRegistry(),
 			EnvProvider:      environment.NewMapEnvProvider(map[string]string{"AI_GATEWAY_API_KEY": "vck-test"}),
 		},
@@ -719,7 +721,7 @@ func TestResolveModelRef_RejectsAlloyConfig(t *testing.T) {
 	t.Parallel()
 
 	r := &LocalRuntime{
-		modelSwitcherCfg: &ModelSwitcherConfig{
+		modelSwitcherCfg: &modelcatalog.Config{
 			ProviderRegistry: testProviderRegistry(),
 			Models: map[string]latest.ModelConfig{
 				// Alloy config: no provider, comma-separated models
@@ -747,7 +749,7 @@ func TestResolveModelRef_InvalidFormat(t *testing.T) {
 	t.Parallel()
 
 	r := &LocalRuntime{
-		modelSwitcherCfg: &ModelSwitcherConfig{
+		modelSwitcherCfg: &modelcatalog.Config{
 			ProviderRegistry: testProviderRegistry(),
 			Models:           map[string]latest.ModelConfig{},
 		},
@@ -777,8 +779,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("default marked current when no override is set", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{
 				{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true},
 				{Name: "other", Ref: "openai/gpt-4o"},
 			},
@@ -792,8 +794,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("override matching a known choice marks it current", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{
 				{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true},
 				{Name: "other", Ref: "openai/gpt-4o"},
 			},
@@ -807,8 +809,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("synthesizes choice for inline override not in list", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true}},
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true}},
 			"anthropic/claude-sonnet-4-0",
 			nil,
 		)
@@ -822,8 +824,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("appends custom refs from session history", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true}},
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true}},
 			"",
 			[]string{"openai/gpt-4o", "anthropic/claude-sonnet-4-0"},
 		)
@@ -837,8 +839,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("does not duplicate custom ref already in list", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{{Name: "default", Ref: "openai/gpt-4o", IsDefault: true}},
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{{Name: "default", Ref: "openai/gpt-4o", IsDefault: true}},
 			"",
 			[]string{"openai/gpt-4o"},
 		)
@@ -851,8 +853,8 @@ func TestDecorateModelChoices(t *testing.T) {
 		// "my_model" is a config key (no slash); when not in the runtime's
 		// list we should NOT fabricate a choice for it because we have no
 		// provider/model breakdown to display.
-		got := DecorateModelChoices(
-			[]ModelChoice{{Name: "default", Ref: "default", IsDefault: true}},
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{{Name: "default", Ref: "default", IsDefault: true}},
 			"my_model",
 			nil,
 		)
@@ -862,8 +864,8 @@ func TestDecorateModelChoices(t *testing.T) {
 
 	t.Run("custom ref matching the active override is marked current", func(t *testing.T) {
 		t.Parallel()
-		got := DecorateModelChoices(
-			[]ModelChoice{{Name: "default", Ref: "default", IsDefault: true}},
+		got := modelcatalog.DecorateModelChoices(
+			[]modelcatalog.ModelChoice{{Name: "default", Ref: "default", IsDefault: true}},
 			"openai/gpt-4o",
 			[]string{"openai/gpt-4o"},
 		)
@@ -880,13 +882,13 @@ func TestDecorateModelChoices(t *testing.T) {
 	// the input slice or its underlying array.
 	t.Run("does not mutate the input slice", func(t *testing.T) {
 		t.Parallel()
-		input := []ModelChoice{
+		input := []modelcatalog.ModelChoice{
 			{Name: "default", Ref: "openai/gpt-4o-mini", IsDefault: true},
 			{Name: "other", Ref: "openai/gpt-4o"},
 		}
 		orig := slices.Clone(input)
 
-		_ = DecorateModelChoices(input, "openai/gpt-4o", []string{"anthropic/claude-sonnet-4-0"})
+		_ = modelcatalog.DecorateModelChoices(input, "openai/gpt-4o", []string{"anthropic/claude-sonnet-4-0"})
 
 		assert.Equal(t, orig, input, "DecorateModelChoices must not modify the input slice")
 	})
@@ -915,7 +917,7 @@ func TestAgentThinkingConfigurationIsLocalAndConservative(t *testing.T) {
 			for _, model := range models {
 				agent.WithModel(model)(a)
 			}
-			r := &LocalRuntime{team: team.New(team.WithAgents(a)), modelSwitcherCfg: &ModelSwitcherConfig{}}
+			r := &LocalRuntime{team: team.New(team.WithAgents(a)), modelSwitcherCfg: &modelcatalog.Config{}}
 			levels, current := r.AgentThinkingConfiguration("root")
 			assert.Equal(t, tc.want, len(levels) > 0)
 			if tc.want {

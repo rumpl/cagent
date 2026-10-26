@@ -25,7 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/plans"
 	"github.com/docker/docker-agent/pkg/programstatus"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/commands"
@@ -1199,7 +1199,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.forwardDialog(msg)
 	case dialog.CloseDialogMsg:
 		if msg.ElicitationID != "" {
-			prompt, ok := m.dialogMgr.TopBackgroundEvent().(*runtime.ElicitationRequestEvent)
+			prompt, ok := m.dialogMgr.TopBackgroundEvent().(*contract.ElicitationRequestEvent)
 			if !ok || prompt.ElicitationID != msg.ElicitationID {
 				return m, nil
 			}
@@ -1267,21 +1267,21 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- Runtime event specializations ---
 
-	case *runtime.TeamInfoEvent:
+	case *contract.TeamInfoEvent:
 		m.activeTab.sessionState.SetAvailableAgents(msg.AvailableAgents)
 		m.activeTab.sessionState.SetCurrentAgentName(msg.CurrentAgent)
 		return m.forwardChat(msg)
 
-	case *runtime.AgentInfoEvent:
+	case *contract.AgentInfoEvent:
 		m.activeTab.sessionState.SetCurrentAgentName(msg.AgentName)
 		m.application.TrackCurrentAgentModel(msg.Model)
 		return m.forwardChat(msg)
 
-	case *runtime.SessionTitleEvent:
+	case *contract.SessionTitleEvent:
 		m.activeTab.sessionState.SetSessionTitle(msg.Title)
 		return m.forwardChat(msg)
 
-	case *runtime.PlanChangedEvent:
+	case *contract.PlanChangedEvent:
 		return m.handlePlanChangedEvent(msg)
 
 	// --- New session (slash command /new) ---
@@ -1616,12 +1616,12 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 
-	case *runtime.TokenUsageEvent, *runtime.EvaluationUsageEvent, *runtime.BackgroundAgentStatusEvent:
+	case *contract.TokenUsageEvent, *contract.EvaluationUsageEvent, *contract.BackgroundAgentStatusEvent:
 		return m.forwardChat(msg)
 
 	default:
 		// Handle runtime events for active session
-		if event, isRuntimeEvent := msg.(runtime.Event); isRuntimeEvent {
+		if event, isRuntimeEvent := msg.(contract.Event); isRuntimeEvent {
 			if agentName := event.GetAgentName(); agentName != "" {
 				m.activeTab.sessionState.SetCurrentAgentName(agentName)
 			}
@@ -1670,11 +1670,11 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	}
 
 	// Update session state for inactive sessions
-	if event, isRuntimeEvent := msg.Inner.(runtime.Event); isRuntimeEvent {
+	if event, isRuntimeEvent := msg.Inner.(contract.Event); isRuntimeEvent {
 		if sessionState := tab.sessionState; sessionState != nil {
 			// Background lifecycle and usage do not change the selected agent.
 			switch msg.Inner.(type) {
-			case *runtime.TokenUsageEvent, *runtime.EvaluationUsageEvent, *runtime.BackgroundAgentStatusEvent:
+			case *contract.TokenUsageEvent, *contract.EvaluationUsageEvent, *contract.BackgroundAgentStatusEvent:
 			default:
 				if agentName := event.GetAgentName(); agentName != "" {
 					sessionState.SetCurrentAgentName(agentName)
@@ -1688,7 +1688,7 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	tab.chatPage = page
 
 	// Shared plan mutations refresh visible sidebars and dialogs, regardless of origin.
-	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDataVisible() {
+	if _, isPlanChange := msg.Inner.(*contract.PlanChangedEvent); isPlanChange && m.planDataVisible() {
 		effects.Global = tea.Batch(effects.Global, m.planRefreshCmd(false))
 	}
 	return m, tea.Batch(stateCmd, effects.Cmd(false))
@@ -1706,11 +1706,11 @@ func (m *appModel) applyPauseEvent(ss *service.SessionState, msg tea.Msg) {
 		return
 	}
 	switch msg.(type) {
-	case *runtime.PausedEvent:
+	case *contract.PausedEvent:
 		if ss.PauseState() != service.PauseNone {
 			ss.SetPauseState(service.PausePaused)
 		}
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		if ss.PauseState() == service.PausePausing {
 			ss.SetPauseState(service.PausePaused)
 		}
@@ -2634,7 +2634,7 @@ func (m *appModel) canReuseUsageView(msg tea.Msg) bool {
 	if routed, ok := msg.(messages.RoutedMsg); ok {
 		msg = routed.Inner
 	}
-	_, ok := msg.(*runtime.TokenUsageEvent)
+	_, ok := msg.(*contract.TokenUsageEvent)
 	return ok
 }
 
@@ -2659,10 +2659,10 @@ func (m *appModel) canRestorePointerCache(msg tea.Msg) bool {
 		x, y = msg.X, msg.Y
 	case messages.WheelCoalescedMsg:
 		x, y = msg.X, msg.Y
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		return true
 	case messages.RoutedMsg:
-		_, ok := msg.Inner.(*runtime.AgentChoiceEvent)
+		_, ok := msg.Inner.(*contract.AgentChoiceEvent)
 		return ok
 	default:
 		return false

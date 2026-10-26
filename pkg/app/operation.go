@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 type operationKey struct{}
@@ -34,19 +34,19 @@ func operationEvent(ctx context.Context, msg tea.Msg) tea.Msg {
 		return msg
 	}
 	switch event := msg.(type) {
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		tagged := *event
 		tagged.OperationID = id
 		return &tagged
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		tagged := *event
 		tagged.OperationID = id
 		return &tagged
-	case *runtime.ErrorEvent:
+	case *contract.ErrorEvent:
 		tagged := *event
 		tagged.OperationID = id
 		return &tagged
-	case *runtime.SessionCompactionEvent:
+	case *contract.SessionCompactionEvent:
 		tagged := *event
 		tagged.OperationID = id
 		return &tagged

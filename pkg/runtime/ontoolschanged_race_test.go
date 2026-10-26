@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/team"
 )
 
@@ -32,7 +33,7 @@ func TestOnToolsChangedConcurrentRegisterAndEmit(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Go(func() {
-			rt.OnToolsChanged(func(Event) {
+			rt.OnToolsChanged(func(contract.Event) {
 				calls.Add(1)
 			})
 		})

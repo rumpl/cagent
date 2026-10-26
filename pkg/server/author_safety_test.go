@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -263,7 +264,7 @@ func TestAuthorSafetyDefault_FailedBuildKeepsMarkerForRetry(t *testing.T) {
 	// safety: balanced, so a default is selectable), then runtime
 	// construction fails.
 	buildErr := errors.New("synthetic runtime construction failure")
-	sm.newRuntime = func(context.Context, *team.Team, ...runtime.Opt) (runtime.Runtime, error) {
+	sm.newRuntime = func(context.Context, *team.Team, ...runtime.Opt) (contract.Runtime, error) {
 		return nil, buildErr
 	}
 	_, _, err = sm.runtimeForSession(ctx, sess, "agent.yaml", "root", &config.RuntimeConfig{})

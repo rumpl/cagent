@@ -16,6 +16,8 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/skills"
@@ -50,20 +52,20 @@ type immediateCommandMsg struct{ arg string }
 
 type queueTestRuntime struct{}
 
-func (queueTestRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{}
+func (queueTestRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{}
 }
 func (queueTestRuntime) CurrentAgentName(context.Context) string                 { return "root" }
 func (queueTestRuntime) SetCurrentAgent(context.Context, string) error           { return nil }
 func (queueTestRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) { return nil, nil }
 func (queueTestRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus      { return nil }
 func (queueTestRuntime) RestartToolset(context.Context, string) error            { return nil }
-func (queueTestRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {
+func (queueTestRuntime) EmitStartupInfo(context.Context, *session.Session, contract.EventSink) {
 }
-func (queueTestRuntime) EmitAgentInfo(context.Context, runtime.EventSink) {}
-func (queueTestRuntime) ResetStartupInfo()                                {}
-func (queueTestRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (queueTestRuntime) EmitAgentInfo(context.Context, contract.EventSink) {}
+func (queueTestRuntime) ResetStartupInfo()                                 {}
+func (queueTestRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	close(ch)
 	return ch
 }
@@ -76,14 +78,14 @@ func (queueTestRuntime) ResumeElicitation(context.Context, tools.ElicitationActi
 	return nil
 }
 func (queueTestRuntime) SessionStore() session.Store { return nil }
-func (queueTestRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {
+func (queueTestRuntime) Summarize(context.Context, *session.Session, string, contract.EventSink) {
 }
-func (queueTestRuntime) PermissionsInfo() *runtime.PermissionsInfo { return nil }
+func (queueTestRuntime) PermissionsInfo() *contract.PermissionsInfo { return nil }
 func (queueTestRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet {
 	return nil
 }
 
-func (queueTestRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (queueTestRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -99,26 +101,27 @@ func (queueTestRuntime) UpdateSessionTitle(context.Context, *session.Session, st
 	return nil
 }
 func (queueTestRuntime) TitleGenerator(context.Context) *sessiontitle.Generator { return nil }
-func (queueTestRuntime) Steer(context.Context, runtime.QueuedMessage) error     { return nil }
-func (queueTestRuntime) FollowUp(context.Context, runtime.QueuedMessage) error  { return nil }
+func (queueTestRuntime) Steer(context.Context, contract.QueuedMessage) error    { return nil }
+func (queueTestRuntime) FollowUp(context.Context, contract.QueuedMessage) error { return nil }
 func (queueTestRuntime) SetAgentModel(context.Context, string, string) error    { return nil }
 func (queueTestRuntime) CycleAgentThinkingLevel(context.Context, string) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
 func (queueTestRuntime) SetAgentThinkingLevel(context.Context, string, effort.Level) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
-func (queueTestRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
-func (queueTestRuntime) SupportsModelSwitching() bool                          { return false }
-func (queueTestRuntime) OnToolsChanged(func(runtime.Event))                    {}
-func (queueTestRuntime) OnBackgroundEvent(func(runtime.Event))                 {}
-func (queueTestRuntime) OnElicitationRequest(func(runtime.Event))              {}
-func (queueTestRuntime) QueueStatus() runtime.QueueStatus                      { return runtime.QueueStatus{} }
-func (queueTestRuntime) TogglePause(context.Context) (bool, error)             { return false, nil }
-func (queueTestRuntime) Close() error                                          { return nil }
+func (queueTestRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice { return nil }
+func (queueTestRuntime) SupportsModelSwitching() bool                               { return false }
+func (queueTestRuntime) OnToolsChanged(func(contract.Event))                        {}
+func (queueTestRuntime) OnBackgroundEvent(func(contract.Event))                     {}
+func (queueTestRuntime) OnElicitationRequest(func(contract.Event))                  {}
+func (queueTestRuntime) QueueStatus() contract.QueueStatus                          { return contract.QueueStatus{} }
 
-var _ runtime.Runtime = queueTestRuntime{}
+func (queueTestRuntime) TogglePause(context.Context) (bool, error) { return false, nil }
+func (queueTestRuntime) Close() error                              { return nil }
+
+var _ contract.Runtime = queueTestRuntime{}
 
 // skillDispatchRuntime records how a skill slash command is ultimately
 // executed so tests can assert it reaches the right resolution path:
@@ -138,16 +141,16 @@ func (r *skillDispatchRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet {
 	return r.skillset
 }
 
-func (r *skillDispatchRuntime) RunSkillFork(_ context.Context, sess *session.Session, args skillstool.RunSkillArgs, sink runtime.EventSink) (*tools.ToolCallResult, error) {
+func (r *skillDispatchRuntime) RunSkillFork(_ context.Context, sess *session.Session, args skillstool.RunSkillArgs, sink contract.EventSink) (*tools.ToolCallResult, error) {
 	r.mu.Lock()
 	r.forkCalls = append(r.forkCalls, args)
 	r.mu.Unlock()
 
-	sink.Emit(runtime.StreamStopped(sess.ID, "", ""))
+	sink.Emit(contract.StreamStopped(sess.ID, "", ""))
 	return tools.ResultSuccess("done"), nil
 }
 
-func (r *skillDispatchRuntime) RunStream(_ context.Context, sess *session.Session) <-chan runtime.Event {
+func (r *skillDispatchRuntime) RunStream(_ context.Context, sess *session.Session) <-chan contract.Event {
 	r.mu.Lock()
 	r.runStreamRuns++
 	if items := sess.GetAllMessages(); len(items) > 0 {
@@ -155,8 +158,8 @@ func (r *skillDispatchRuntime) RunStream(_ context.Context, sess *session.Sessio
 	}
 	r.mu.Unlock()
 
-	ch := make(chan runtime.Event, 1)
-	ch <- runtime.StreamStopped(sess.ID, "", "")
+	ch := make(chan contract.Event, 1)
+	ch <- contract.StreamStopped(sess.ID, "", "")
 	close(ch)
 	return ch
 }
@@ -570,11 +573,11 @@ type steerRecordingRuntime struct {
 
 	mu        sync.Mutex
 	steerErr  error
-	steers    []runtime.QueuedMessage
-	followUps []runtime.QueuedMessage
+	steers    []contract.QueuedMessage
+	followUps []contract.QueuedMessage
 }
 
-func (r *steerRecordingRuntime) Steer(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *steerRecordingRuntime) Steer(_ context.Context, msg contract.QueuedMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.steerErr != nil {
@@ -584,7 +587,7 @@ func (r *steerRecordingRuntime) Steer(_ context.Context, msg runtime.QueuedMessa
 	return nil
 }
 
-func (r *steerRecordingRuntime) FollowUp(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *steerRecordingRuntime) FollowUp(_ context.Context, msg contract.QueuedMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.followUps = append(r.followUps, msg)
@@ -617,7 +620,7 @@ func (r *steerRecordingRuntime) CancelFollowUp(_ context.Context, id string) boo
 	return false
 }
 
-func (r *steerRecordingRuntime) followedUp() []runtime.QueuedMessage {
+func (r *steerRecordingRuntime) followedUp() []contract.QueuedMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.followUps) == 0 {
@@ -626,7 +629,7 @@ func (r *steerRecordingRuntime) followedUp() []runtime.QueuedMessage {
 	return slices.Clone(r.followUps)
 }
 
-func (r *steerRecordingRuntime) steered() []runtime.QueuedMessage {
+func (r *steerRecordingRuntime) steered() []contract.QueuedMessage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.steers) == 0 {

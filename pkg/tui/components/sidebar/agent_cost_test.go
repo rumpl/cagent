@@ -9,17 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
 // recordAgentUsageWithCost feeds a TokenUsageEvent carrying a cumulative cost
 // snapshot through the sidebar's normal entry point.
 func recordAgentUsageWithCost(m *model, sessionID, agentName string, contextLen, contextLimit int64, cost float64) {
-	m.SetTokenUsage(&runtime.TokenUsageEvent{
+	m.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sessionID,
-		AgentContext: runtime.AgentContext{AgentName: agentName},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: agentName},
+		Usage: &contract.Usage{
 			InputTokens:   contextLen / 2,
 			OutputTokens:  contextLen - contextLen/2,
 			ContextLength: contextLen,
@@ -53,9 +53,9 @@ func TestAgentCardShowsPerAgentCost(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "worker", Provider: "openai", Model: "gpt-5.4"},
-		runtime.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "worker", Provider: "openai", Model: "gpt-5.4"},
+		contract.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o"},
 	)
 
 	// Two cumulative snapshots of the same session, then a second session.
@@ -85,8 +85,8 @@ func TestAgentCardCostPrecision(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "cheap", Provider: "openai", Model: "gpt-5.4-mini"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "cheap", Provider: "openai", Model: "gpt-5.4-mini"},
 	)
 
 	recordAgentUsageWithCost(m, "session-root", "root", 30_000, 100_000, 0.1284)
@@ -107,11 +107,11 @@ func TestAgentCardCostRestoredFromSession(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
-		runtime.AgentDetails{Name: "writer", Provider: "google", Model: "gemini-flash"},
-		runtime.AgentDetails{Name: "local", Provider: "dmr", Model: "llama3.2"},
-		runtime.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
+		contract.AgentDetails{Name: "writer", Provider: "google", Model: "gemini-flash"},
+		contract.AgentDetails{Name: "local", Provider: "dmr", Model: "llama3.2"},
+		contract.AgentDetails{Name: "idle", Provider: "openai", Model: "gpt-4o"},
 	)
 
 	// root ($0.10), a zero-cost local run and a compaction summary ($0.01) in
@@ -156,8 +156,8 @@ func TestAgentCardCostRestoredThenLive(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
 	)
 
 	// Restored: root $0.10 + developer sub-session $0.05 + compaction $0.01.
@@ -194,8 +194,8 @@ func TestAgentCardCostRepeatedRestoreAndSwitch(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "developer", Provider: "openai", Model: "gpt-5.4"},
 	)
 
 	first := session.New()
@@ -228,7 +228,7 @@ func TestAgentCardSingleMetricsLineAtWideWidth(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 56,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
 	)
 	recordAgentUsageWithCost(m, "session-root", "root", 30_000, 100_000, 0.1284)
 
@@ -244,9 +244,9 @@ func TestAgentCardSingleMetricsLineAtWideWidth(t *testing.T) {
 func previewSidebar(t *testing.T, width int) *model {
 	t.Helper()
 	m := newAgentPanelSidebar(t, width,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
-		runtime.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-		runtime.AgentDetails{Name: "writer", Provider: "google", Model: "gemini-flash"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
+		contract.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "writer", Provider: "google", Model: "gemini-flash"},
 	)
 	recordAgentUsageWithCost(m, "session-root", "root", 30_000, 100_000, 0.1284)
 	recordAgentUsageWithCost(m, "session-scout", "scout", 12_000, 200_000, 0.0042)

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -19,10 +20,10 @@ func TestSessionUsageCarriesCompactionThreshold(t *testing.T) {
 	sess.InputTokens = 600
 	sess.OutputTokens = 400
 
-	u := SessionUsage(sess, 100_000)
+	u := contract.SessionUsage(sess, 100_000)
 	assert.Zero(t, u.CompactionThreshold, "threshold is 0 (unknown) when omitted")
 
-	u = SessionUsage(sess, 100_000, 0.75)
+	u = contract.SessionUsage(sess, 100_000, 0.75)
 	assert.InDelta(t, 0.75, u.CompactionThreshold, 0.0001)
 	assert.Equal(t, int64(100_000), u.ContextLimit)
 	assert.Equal(t, int64(1_000), u.ContextLength)
@@ -50,11 +51,11 @@ func TestSessionUsageCostIncludesEmbeddedSubSessions(t *testing.T) {
 	sub.Messages = append(sub.Messages, costItem("developer", 0.05))
 	sess.Messages = append(sess.Messages, session.Item{SubSession: sub})
 
-	u := SessionUsage(sess, 100_000)
+	u := contract.SessionUsage(sess, 100_000)
 	assert.InDelta(t, 0.15, u.Cost, 1e-9, "restored total = own + embedded sub-session cost")
 
 	sess.ApplyCompaction(100, 0, session.Item{Summary: "summary", Cost: 0.01})
-	u = SessionUsage(sess, 100_000)
+	u = contract.SessionUsage(sess, 100_000)
 	assert.InDelta(t, 0.16, u.Cost, 1e-9, "compaction increases the emitted total")
 }
 
@@ -70,10 +71,10 @@ func TestSessionUsageCostExcludesLiveSubSessions(t *testing.T) {
 
 	child := session.New(session.WithParentID(sess.ID))
 	child.Messages = append(child.Messages, costItem("developer", 0.05))
-	assert.InDelta(t, 0.05, SessionUsage(child, 100_000).Cost, 1e-9, "the child emits its own cost")
+	assert.InDelta(t, 0.05, contract.SessionUsage(child, 100_000).Cost, 1e-9, "the child emits its own cost")
 
 	sess.AddLiveSubSession(child)
-	assert.InDelta(t, 0.10, SessionUsage(sess, 100_000).Cost, 1e-9, "the parent keeps emitting only its own cost")
+	assert.InDelta(t, 0.10, contract.SessionUsage(sess, 100_000).Cost, 1e-9, "the parent keeps emitting only its own cost")
 }
 
 // TestBudgetExceededEventJSONContract pins the wire shape of
@@ -135,7 +136,7 @@ func TestBudgetExceededEventJSONContract(t *testing.T) {
 	assert.NotContains(t, string(data), "gpt-4o")
 
 	// The client-side decoder (see NewClient's registry) restores it.
-	var event BudgetExceededEvent
+	var event contract.BudgetExceededEvent
 	require.NoError(t, json.Unmarshal(data, &event))
 	require.NotNil(t, event.StopMessage)
 	assert.Equal(t, stopText, event.StopMessage.Message.Content)
@@ -160,7 +161,7 @@ func TestMessageAddedEventJSONHasNoPayload(t *testing.T) {
 		CreatedAt: "2024-01-15T10:30:00Z",
 	})
 
-	data, err := json.Marshal(MessageAdded("sess-1", msg, "root"))
+	data, err := json.Marshal(contract.MessageAdded("sess-1", msg, "root"))
 	require.NoError(t, err)
 
 	var decoded map[string]any
@@ -187,9 +188,9 @@ func TestMessageAddedCompletionMetadataJSON(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			msg := session.NewAgentMessage("root", &tc.msg)
-			data, err := json.Marshal(MessageAdded("sess", msg, "root"))
+			data, err := json.Marshal(contract.MessageAdded("sess", msg, "root"))
 			require.NoError(t, err)
-			var decoded MessageAddedEvent
+			var decoded contract.MessageAddedEvent
 			require.NoError(t, json.Unmarshal(data, &decoded))
 			assert.Equal(t, tc.empty, decoded.AssistantMessageEmpty)
 			assert.Equal(t, tc.tools, decoded.HasToolCalls)

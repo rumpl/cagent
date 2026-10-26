@@ -21,6 +21,7 @@ import (
 	evaluatorprovider "github.com/docker/docker-agent/pkg/evaluator/provider"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/permissions"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/teamloader"
@@ -142,18 +143,18 @@ func TestEvaluatorHookApprovalIntegration(t *testing.T) {
 				ID: "call_1", Type: "function",
 				Function: tools.FunctionCall{Name: "the_tool", Arguments: `{"cmd":"git status"}`},
 			}}
-			eventCh := make(chan Event, 32)
+			eventCh := make(chan contract.Event, 32)
 			rt.processToolCalls(t.Context(), sess, root, calls, agentTools, NewChannelSink(eventCh))
 			close(eventCh)
 			events := collectClosedEvents(eventCh)
 
 			assert.Equal(t, tt.wantRun, executed)
 			assert.EqualValues(t, 1, requests.Load(), "each tool call must evaluate exactly once")
-			assert.False(t, hasEventOfType[*ToolCallConfirmationEvent](events))
-			assert.Equal(t, tt.wantBlock, hasEventOfType[*HookBlockedEvent](events))
-			var responses []*ToolCallResponseEvent
+			assert.False(t, hasEventOfType[*contract.ToolCallConfirmationEvent](events))
+			assert.Equal(t, tt.wantBlock, hasEventOfType[*contract.HookBlockedEvent](events))
+			var responses []*contract.ToolCallResponseEvent
 			for _, event := range events {
-				if response, ok := event.(*ToolCallResponseEvent); ok {
+				if response, ok := event.(*contract.ToolCallResponseEvent); ok {
 					responses = append(responses, response)
 				}
 			}
@@ -265,15 +266,15 @@ agents:
 				executed = false
 				sess := session.New(session.WithAgentName(a.Name()), session.WithSafetyPolicy(session.SafetyPolicyAutonomous), session.WithNonInteractive(true))
 				calls := []tools.ToolCall{{ID: "call_1", Type: "function", Function: tools.FunctionCall{Name: "scoped_tool", Arguments: `{}`}}}
-				events := make(chan Event, 32)
+				events := make(chan contract.Event, 32)
 				rt.processToolCalls(t.Context(), sess, a, calls, agentTools, NewChannelSink(events))
 				close(events)
 				assert.Equal(t, a == root, executed, "child guard must use its own deny response")
 				collected := collectClosedEvents(events)
-				assert.Equal(t, a == child, hasEventOfType[*HookBlockedEvent](collected))
+				assert.Equal(t, a == child, hasEventOfType[*contract.HookBlockedEvent](collected))
 				if a == child {
 					for _, event := range collected {
-						if blocked, ok := event.(*HookBlockedEvent); ok {
+						if blocked, ok := event.(*contract.HookBlockedEvent); ok {
 							assert.Contains(t, blocked.Message, "Evaluator policy matched the selected outcome.")
 						}
 					}

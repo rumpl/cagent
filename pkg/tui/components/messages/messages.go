@@ -16,7 +16,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/lrucache"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	transfertask "github.com/docker/docker-agent/pkg/tools/builtin/transfertask/types"
@@ -86,8 +86,8 @@ type Model interface {
 	AddCancelledMessage() tea.Cmd
 	AddWelcomeMessage(content string) tea.Cmd
 	AddOrUpdateToolCall(agentName string, toolCall tools.ToolCall, toolDef tools.Tool, status types.ToolStatus) tea.Cmd
-	AppendToolOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd
-	AddToolResult(msg *runtime.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd
+	AppendToolOutput(msg *contract.ToolCallOutputEvent) tea.Cmd
+	AddToolResult(msg *contract.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd
 	AppendToLastMessage(agentName, content string) tea.Cmd
 	AppendAssistantContent(sessionID, messageID, agentName, content string) tea.Cmd
 	AppendReasoningContent(sessionID, messageID, agentName, content string) tea.Cmd
@@ -337,7 +337,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		finalizeCmd := m.FinalizeStream()
 		m.removeSpinner()
 		m.removePendingToolCallMessages()
@@ -2059,7 +2059,7 @@ func (m *model) AddOrUpdateToolCall(agentName string, toolCall tools.ToolCall, t
 	return view.Init()
 }
 
-func (m *model) AppendToolOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd {
+func (m *model) AppendToolOutput(msg *contract.ToolCallOutputEvent) tea.Cmd {
 	if msg.Output == "" {
 		return nil
 	}
@@ -2093,7 +2093,7 @@ func (m *model) AppendToolOutput(msg *runtime.ToolCallOutputEvent) tea.Cmd {
 	return nil
 }
 
-func (m *model) AddToolResult(msg *runtime.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd {
+func (m *model) AddToolResult(msg *contract.ToolCallResponseEvent, status types.ToolStatus) tea.Cmd {
 	// First check reasoning blocks for the tool call
 	for i := range slices.Backward(m.messages) {
 		if m.messages[i].Type == types.MessageTypeAssistantReasoningBlock {

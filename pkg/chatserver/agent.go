@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -190,7 +191,7 @@ func appendLatestUser(sess *session.Session, msgs []ChatCompletionMessage) bool 
 
 // runtimeRunner is the execution and interaction contract the chat adapter needs.
 type runtimeRunner interface {
-	RunStream(ctx context.Context, sess *session.Session) <-chan runtime.Event
+	RunStream(ctx context.Context, sess *session.Session) <-chan contract.Event
 	Resume(ctx context.Context, req runtime.ResumeRequest)
 	ResumeElicitation(ctx context.Context, action tools.ElicitationAction, content map[string]any, elicitationID ...string) error
 }
@@ -225,11 +226,11 @@ func runAgentLoop(ctx context.Context, rt runtimeRunner, sess *session.Session, 
 	toolIndex := 0
 	for ev := range rt.RunStream(ctx, sess) {
 		switch e := ev.(type) {
-		case *runtime.AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			if emit.onContent != nil {
 				emit.onContent(e.Content)
 			}
-		case *runtime.ToolCallEvent:
+		case *contract.ToolCallEvent:
 			if emit.onToolCall != nil {
 				emit.onToolCall(ToolCallReference{
 					Index:    toolIndex,
@@ -239,20 +240,20 @@ func runAgentLoop(ctx context.Context, rt runtimeRunner, sess *session.Session, 
 				})
 				toolIndex++
 			}
-		case *runtime.ToolCallConfirmationEvent:
+		case *contract.ToolCallConfirmationEvent:
 			// Defensive: resolved policy normally handles tool approval before this point.
 			rt.Resume(ctx, runtime.ResumeApprove())
-		case *runtime.ElicitationRequestEvent:
+		case *contract.ElicitationRequestEvent:
 			// Required: the runtime blocks until we respond, regardless
 			// of NonInteractive. Decline so the tool call fails fast.
 			_ = rt.ResumeElicitation(ctx, tools.ElicitationActionDecline, nil, e.ElicitationID)
-		case *runtime.MaxIterationsReachedEvent:
+		case *contract.MaxIterationsReachedEvent:
 			// Defensive: in non-interactive mode the runtime already
 			// stops on its own and this Resume is dropped.
 			rt.Resume(ctx, runtime.ResumeReject(""))
-		case *runtime.ErrorEvent:
+		case *contract.ErrorEvent:
 			runErrs = append(runErrs, errors.New(e.Error))
-		case *runtime.StreamStoppedEvent:
+		case *contract.StreamStoppedEvent:
 			if e.SessionID != sess.ID {
 				continue
 			}

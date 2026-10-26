@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
@@ -14,10 +14,10 @@ import (
 // recordUsageWithThreshold feeds a usage snapshot that carries the agent's
 // configured compaction threshold, as live TokenUsageEvents do.
 func (s *testSidebar) recordUsageWithThreshold(sessionID, agentName string, contextLen, contextLimit int64, threshold float64) {
-	s.SetTokenUsage(&runtime.TokenUsageEvent{
+	s.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sessionID,
-		AgentContext: runtime.AgentContext{AgentName: agentName},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: agentName},
+		Usage: &contract.Usage{
 			InputTokens:         contextLen / 2,
 			OutputTokens:        contextLen - contextLen/2,
 			ContextLength:       contextLen,
@@ -83,13 +83,13 @@ func TestTokenUsageLine_CompactingIndicator(t *testing.T) {
 	// workingAgent, so needsSpinner stays true throughout).
 	m.spinnerActive = true
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
 	assert.True(t, m.compacting)
 	line := ansi.Strip(m.tokenUsageLine())
 	assert.Contains(t, line, "(compacting…)")
 	assert.NotContains(t, line, "%", "the percentage yields to the compacting indicator")
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "session-1", Status: "completed", Outcome: runtime.CompactionOutcomeApplied})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "session-1", Status: "completed", Outcome: contract.CompactionOutcomeApplied})
 	assert.False(t, m.compacting)
 	line = ansi.Strip(m.tokenUsageLine())
 	assert.Contains(t, line, "(30%)")
@@ -119,16 +119,16 @@ func TestCompactingGaugeIgnoresOtherSessions(t *testing.T) {
 	m.startStream("session-1", "root")
 	m.spinnerActive = true
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "background-1", Status: "started"})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "background-1", Status: "started"})
 	assert.False(t, m.compacting, "another session's compaction must not show the root gauge as compacting")
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
 	assert.True(t, m.compacting, "the displayed session's compaction still drives the gauge")
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "background-1", Status: "completed", Outcome: runtime.CompactionOutcomeApplied})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "background-1", Status: "completed", Outcome: contract.CompactionOutcomeApplied})
 	assert.True(t, m.compacting, "another session's completion must not clear the running gauge")
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "session-1", Status: "completed", Outcome: runtime.CompactionOutcomeApplied})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "session-1", Status: "completed", Outcome: contract.CompactionOutcomeApplied})
 	assert.False(t, m.compacting)
 }
 
@@ -142,6 +142,6 @@ func TestCompactingGaugeBeforeAnySessionKnown(t *testing.T) {
 	m.workingAgent = "root" // keep needsSpinner true so Update never touches the coordinator
 	m.spinnerActive = true
 
-	m.Update(&runtime.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
+	m.Update(&contract.SessionCompactionEvent{SessionID: "session-1", Status: "started"})
 	assert.True(t, m.compacting)
 }

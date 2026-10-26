@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
@@ -33,7 +33,7 @@ func (m *streamingMotionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.mu.Unlock()
 
 	switch msg := msg.(type) {
-	case *agentruntime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		m.chunks.Add(1)
 	case tea.MouseMotionMsg:
 		m.motions.Add(1)
@@ -105,7 +105,7 @@ func TestActualProgramLongStreamMotionWorkIsViewportBounded(t *testing.T) {
 	root.application.Session().Messages = sess.Messages
 	_ = root.activeTab.chatPage.Init()
 	root.handleWindowResize(120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
 	_ = root.View()
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	writer := &wallClockCountingWriter{}
@@ -115,7 +115,7 @@ func TestActualProgramLongStreamMotionWorkIsViewportBounded(t *testing.T) {
 	chunk := "Paragraph with **markdown**, `code`, Unicode λ界, and a [link](https://example.com).\n\n"
 	var earlyViews, earlyCompositions uint64
 	for i := range 240 {
-		program.Send(agentruntime.AgentChoice("root", "profile", chunk))
+		program.Send(contract.AgentChoice("root", "profile", chunk))
 		program.Send(tea.MouseMotionMsg{X: 50 + i%2, Y: 20})
 		if i == 39 || i == 199 {
 			ack := make(chan struct{})

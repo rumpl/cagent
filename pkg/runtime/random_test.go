@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -52,7 +53,7 @@ func TestRunStream_RepeatedRandomDraws(t *testing.T) {
 			sess.Title = "Unit Test"
 
 			for event := range rt.RunStream(t.Context(), sess) {
-				_, failed := event.(*ErrorEvent)
+				_, failed := event.(*contract.ErrorEvent)
 				assert.False(t, failed, "unexpected error event: %v", event)
 			}
 
@@ -139,13 +140,13 @@ func TestRunStream_FailedRandomDrawsTriggerLoopDetection(t *testing.T) {
 			if tc.denied {
 				sess.Permissions = &session.PermissionsConfig{Deny: []string{random.ToolNameRandomInt}}
 			}
-			var loopError *ErrorEvent
+			var loopError *contract.ErrorEvent
 			responses := 0
 			for event := range rt.RunStream(t.Context(), sess) {
-				if e, ok := event.(*ErrorEvent); ok && e.Code == ErrorCodeLoopDetected {
+				if e, ok := event.(*contract.ErrorEvent); ok && e.Code == contract.ErrorCodeLoopDetected {
 					loopError = e
 				}
-				if e, ok := event.(*ToolCallResponseEvent); ok {
+				if e, ok := event.(*contract.ToolCallResponseEvent); ok {
 					responses++
 					assert.Equal(t, !tc.collision, e.Result.IsError)
 				}

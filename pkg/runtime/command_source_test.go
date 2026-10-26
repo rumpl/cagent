@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -14,9 +15,9 @@ type lookupOnlySource struct {
 	calls int
 }
 
-func (s *lookupOnlySource) CurrentAgentInfo(context.Context) CurrentAgentInfo {
+func (s *lookupOnlySource) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
 	s.calls++
-	return CurrentAgentInfo{Commands: types.Commands{"test": {Instruction: "instruction"}}}
+	return contract.CurrentAgentInfo{Commands: types.Commands{"test": {Instruction: "instruction"}}}
 }
 
 func TestCommandLookupNeedsOnlyAgentInfo(t *testing.T) {
@@ -37,9 +38,9 @@ type recordingCommandSource struct {
 	calls    []string
 }
 
-func (s *recordingCommandSource) CurrentAgentInfo(context.Context) CurrentAgentInfo {
+func (s *recordingCommandSource) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
 	s.calls = append(s.calls, "info")
-	return CurrentAgentInfo{Commands: s.commands}
+	return contract.CurrentAgentInfo{Commands: s.commands}
 }
 
 func (s *recordingCommandSource) CurrentAgentTools(context.Context) ([]tools.Tool, error) {

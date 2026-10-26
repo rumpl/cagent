@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
@@ -119,7 +120,7 @@ func TestObserve_ToolStepChecks(t *testing.T) {
 
 	nonApprovals := map[string]tea.Msg{
 		"rejection":     dialog.RuntimeResumeMsg{Request: runtime.ResumeReject("not now")},
-		"auto-run tool": &runtime.ToolCallResponseEvent{},
+		"auto-run tool": &contract.ToolCallResponseEvent{},
 	}
 	for name, msg := range nonApprovals {
 		m := startedTour()

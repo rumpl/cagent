@@ -6,19 +6,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 func TestInMemoryMessageQueueCancel(t *testing.T) {
 	t.Parallel()
 	q := NewInMemoryMessageQueue(3).(*inMemoryMessageQueue)
-	require.True(t, q.Enqueue(t.Context(), QueuedMessage{ID: "first", Content: "one"}))
-	require.True(t, q.Enqueue(t.Context(), QueuedMessage{ID: "second", Content: "two"}))
-	require.True(t, q.Enqueue(t.Context(), QueuedMessage{ID: "third", Content: "three"}))
+	require.True(t, q.Enqueue(t.Context(), contract.QueuedMessage{ID: "first", Content: "one"}))
+	require.True(t, q.Enqueue(t.Context(), contract.QueuedMessage{ID: "second", Content: "two"}))
+	require.True(t, q.Enqueue(t.Context(), contract.QueuedMessage{ID: "third", Content: "three"}))
 
 	assert.True(t, q.Cancel("second"))
 	assert.False(t, q.Cancel("second"))
 	assert.False(t, q.Cancel(""))
-	assert.Equal(t, []QueuedMessage{
+	assert.Equal(t, []contract.QueuedMessage{
 		{ID: "first", Content: "one"},
 		{ID: "third", Content: "three"},
 	}, q.Drain(t.Context()))
@@ -30,7 +32,7 @@ func TestInMemoryMessageQueueRejectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	assert.False(t, q.Enqueue(ctx, QueuedMessage{Content: "nope"}))
+	assert.False(t, q.Enqueue(ctx, contract.QueuedMessage{Content: "nope"}))
 	_, ok := q.Dequeue(t.Context())
 	assert.False(t, ok)
 }

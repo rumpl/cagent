@@ -2,7 +2,7 @@ package leantui
 
 import (
 	"github.com/docker/docker-agent/pkg/leantui/ui"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // trackStreamStarted records a newly-started stream and refreshes the footer.
@@ -17,7 +17,7 @@ func (m *model) trackStreamStopped() {
 	m.applyUsageSnapshot()
 }
 
-func (m *model) setTokenUsage(sessionID string, usage *runtime.Usage) {
+func (m *model) setTokenUsage(sessionID string, usage *contract.Usage) {
 	if usage == nil {
 		return
 	}

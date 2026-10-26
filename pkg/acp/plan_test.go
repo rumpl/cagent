@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/todo"
@@ -35,10 +36,10 @@ func TestRunAgentEmptyPlanSnapshots(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			rt := &fakeRuntime{events: []runtime.Event{
-				runtime.ToolCallResponse("initial", tools.Tool{Name: todo.ToolNameCreateTodo}, &tools.ToolCallResult{Meta: []todo.Todo{{Description: "existing", Status: "pending"}}}, "initial", "root"),
-				runtime.ToolCallResponse("next", tools.Tool{Name: tc.tool}, tc.result, "transformed response", "root"),
-				runtime.AgentChoice("root", testSessionID, "continued"),
+			rt := &fakeRuntime{events: []contract.Event{
+				contract.ToolCallResponse("initial", tools.Tool{Name: todo.ToolNameCreateTodo}, &tools.ToolCallResult{Meta: []todo.Todo{{Description: "existing", Status: "pending"}}}, "initial", "root"),
+				contract.ToolCallResponse("next", tools.Tool{Name: tc.tool}, tc.result, "transformed response", "root"),
+				contract.AgentChoice("root", testSessionID, "continued"),
 			}}
 			f := newRunAgentFixture(t, rt, &captureWriter{})
 			require.NoError(t, f.runAgent(t.Context(), f.sess))

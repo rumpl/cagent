@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -20,8 +20,8 @@ func TestNestedStreamStopDoesNotFinalizeScrolledUpParentTail(t *testing.T) {
 	p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), queueTestRuntime{}, sess), service.NewSessionState(sess)).(*chatPage)
 	p.messages.SetSize(60, 8)
 
-	_, _ = p.handleRuntimeEvent(runtime.StreamStarted(sess.ID, "root"))
-	_, _ = p.handleRuntimeEvent(runtime.StreamStarted("child-session", "child"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStarted(sess.ID, "root"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStarted("child-session", "child"))
 	require.Equal(t, 2, p.streamDepth)
 
 	p.messages.AddUserMessage(strings.Repeat("history line\n", 40))
@@ -32,12 +32,12 @@ func TestNestedStreamStopDoesNotFinalizeScrolledUpParentTail(t *testing.T) {
 	p.messages.AppendToLastMessage("root", "deferred parent marker\n")
 	require.Positive(t, deferredTailLen(t, p), "fixture must be scrolled up with a deferred parent tail")
 
-	_, _ = p.handleRuntimeEvent(runtime.StreamStopped("child-session", "child", "normal"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStopped("child-session", "child", "normal"))
 	require.Equal(t, 1, p.streamDepth)
 	require.Positive(t, deferredTailLen(t, p), "a nested stop must not finalize the still-active parent response")
 	require.True(t, p.working)
 
-	_, _ = p.handleRuntimeEvent(runtime.StreamStopped(sess.ID, "root", "normal"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStopped(sess.ID, "root", "normal"))
 	require.Zero(t, p.streamDepth)
 	require.Zero(t, deferredTailLen(t, p), "the outermost stop is the exact-content finalization boundary")
 	require.False(t, p.working)

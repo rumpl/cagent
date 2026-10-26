@@ -7,10 +7,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
-func (s *testSidebar) feedBudget(ev *runtime.BudgetUsageEvent) {
+func (s *testSidebar) feedBudget(ev *contract.BudgetUsageEvent) {
 	updated, _ := s.Update(ev)
 	s.model = updated.(*model)
 }
@@ -30,10 +30,10 @@ func TestBudgetLine_ShowsCeilingsAtZero(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets: []contract.BudgetStatus{{
 			Name: "run", MaxCost: 0.50, MaxTokens: 100000, MaxTimeSeconds: 120,
 		}},
 	})
@@ -69,10 +69,10 @@ func TestBudgetLine_ShowsEachBudgetByName(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "developer"},
-		Budgets: []runtime.BudgetStatus{
+		AgentContext: contract.AgentContext{AgentName: "developer"},
+		Budgets: []contract.BudgetStatus{
 			{Name: "run", Cost: 0.12, MaxCost: 0.50},
 			{Name: "shell-work", Cost: 0.09, MaxCost: 0.10},
 		},
@@ -92,12 +92,12 @@ func TestBudgetLine_OmitsPerAgentBreakdown(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "developer"},
-		Budgets: []runtime.BudgetStatus{{
+		AgentContext: contract.AgentContext{AgentName: "developer"},
+		Budgets: []contract.BudgetStatus{{
 			Name: "run", Cost: 0.12, MaxCost: 0.50,
-			PerAgent: []runtime.AgentBudgetUsage{
+			PerAgent: []contract.AgentBudgetUsage{
 				{AgentName: "developer", Cost: 0.09, Tokens: 8000, ActiveSeconds: 72},
 				{AgentName: "solo-agent", Cost: 0.03, Tokens: 4300, ActiveSeconds: 62},
 			},
@@ -115,10 +115,10 @@ func TestBudgetLine_SubCentUsesPreciseFormat(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets:      []runtime.BudgetStatus{{Name: "run", Cost: 0.0012, MaxCost: 0.05}},
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets:      []contract.BudgetStatus{{Name: "run", Cost: 0.0012, MaxCost: 0.05}},
 	})
 
 	out := ansi.Strip(m.tokenUsage(60))
@@ -130,10 +130,10 @@ func TestBudgetLine_TokensOnlyBudgetOmitsCost(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets:      []runtime.BudgetStatus{{Name: "roomy", Tokens: 500, MaxTokens: 1000}},
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets:      []contract.BudgetStatus{{Name: "roomy", Tokens: 500, MaxTokens: 1000}},
 	})
 
 	var row string
@@ -153,10 +153,10 @@ func TestBudgetLine_MarksUnpricedSpend(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
+	m.feedBudget(&contract.BudgetUsageEvent{
 		SessionID:    "s1",
-		AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets:      []runtime.BudgetStatus{{Name: "run", Cost: 0, MaxCost: 0.50, Unpriced: true}},
+		AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets:      []contract.BudgetStatus{{Name: "run", Cost: 0, MaxCost: 0.50, Unpriced: true}},
 	})
 
 	assert.Contains(t, ansi.Strip(m.tokenUsage(80)), "unpriced spend")
@@ -167,15 +167,15 @@ func TestBudgetLine_UpdatesLive(t *testing.T) {
 
 	m := newTestSidebar(t)
 	m.startStream("s1", "root")
-	m.feedBudget(&runtime.BudgetUsageEvent{
-		SessionID: "s1", AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{Name: "run", Cost: 0.01, MaxCost: 0.50}},
+	m.feedBudget(&contract.BudgetUsageEvent{
+		SessionID: "s1", AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets: []contract.BudgetStatus{{Name: "run", Cost: 0.01, MaxCost: 0.50}},
 	})
 	assert.Contains(t, ansi.Strip(m.tokenUsage(60)), "$0.01/$0.50")
 
-	m.feedBudget(&runtime.BudgetUsageEvent{
-		SessionID: "s1", AgentContext: runtime.AgentContext{AgentName: "root"},
-		Budgets: []runtime.BudgetStatus{{Name: "run", Cost: 0.44, MaxCost: 0.50}},
+	m.feedBudget(&contract.BudgetUsageEvent{
+		SessionID: "s1", AgentContext: contract.AgentContext{AgentName: "root"},
+		Budgets: []contract.BudgetStatus{{Name: "run", Cost: 0.44, MaxCost: 0.50}},
 	})
 	out := ansi.Strip(m.tokenUsage(60))
 	assert.Contains(t, out, "$0.44/$0.50")

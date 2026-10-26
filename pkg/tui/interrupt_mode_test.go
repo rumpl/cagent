@@ -11,7 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/paths"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/commands"
@@ -31,7 +31,7 @@ func buildPageFromOpts(t *testing.T, m *appModel) chat.Page {
 	sess := session.New()
 	page := chat.New(animation.NewRuntime(), t.Context(),
 		app.New(t.Context(), stubRuntime{}, sess), service.NewSessionState(sess), m.chatPageOpts()...)
-	_, _ = page.Update(runtime.StreamStarted(sess.ID, "root"))
+	_, _ = page.Update(contract.StreamStarted(sess.ID, "root"))
 	t.Cleanup(func() { _, _ = page.Update(messages.StreamCancelledMsg{}) })
 	return page
 }
@@ -168,7 +168,7 @@ func TestNew_AppliesPersistedInterruptModeAtStartup(t *testing.T) {
 
 			assert.Equal(t, tt.want, m.interruptMode)
 
-			_, _ = m.activeTab.chatPage.Update(runtime.StreamStarted(sess.ID, "root"))
+			_, _ = m.activeTab.chatPage.Update(contract.StreamStarted(sess.ID, "root"))
 			t.Cleanup(func() { _, _ = m.activeTab.chatPage.Update(messages.StreamCancelledMsg{}) })
 			assert.Equal(t, tt.want == messages.InterruptModeAlways, opensInterruptDialog(m.activeTab.chatPage),
 				"the initial page must honor the persisted mode")

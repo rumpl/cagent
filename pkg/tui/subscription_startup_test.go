@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
 	"github.com/docker/docker-agent/pkg/tui/service/supervisor"
 )
@@ -26,7 +26,7 @@ func TestSupervisorRegistersBeforeProgramReadyWithOtherSubscriber(t *testing.T) 
 	witness := make(chan struct{}, 1)
 	ready := make(chan struct{})
 	go a.SubscribeReliable(ctx, func(msg tea.Msg) {
-		if _, ok := msg.(*runtime.StreamStoppedEvent); ok {
+		if _, ok := msg.(*contract.StreamStoppedEvent); ok {
 			witness <- struct{}{}
 		}
 	}, app.WithSubscriptionReady(func() { close(ready) }))
@@ -37,9 +37,9 @@ func TestSupervisorRegistersBeforeProgramReadyWithOtherSubscriber(t *testing.T) 
 	root.activeTab.state = nil
 	root.activeTab.chatPage = chat.New(root.ar, t.Context(), a, root.activeTab.sessionState, chat.WithHideSidebar())
 	root.handleWindowResize(120, 40)
-	rt.emit(runtime.StreamStarted("profile", "root"))
-	rt.emit(runtime.AgentChoice("root", "profile", "ANSWER-BEFORE-PROGRAM-READY", "answer"))
-	rt.emit(runtime.StreamStopped("profile", "root", "normal"))
+	rt.emit(contract.StreamStarted("profile", "root"))
+	rt.emit(contract.AgentChoice("root", "profile", "ANSWER-BEFORE-PROGRAM-READY", "answer"))
+	rt.emit(contract.StreamStopped("profile", "root", "normal"))
 	select {
 	case <-witness:
 	case <-time.After(5 * time.Second):

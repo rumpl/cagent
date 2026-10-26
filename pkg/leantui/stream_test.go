@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/leantui/ui"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	tuitypes "github.com/docker/docker-agent/pkg/tui/types"
 )
@@ -87,7 +87,7 @@ func TestToolConfirmationReplacesRunningTool(t *testing.T) {
 	m.screen.Transcript.UpsertTool("root", tv.Message().ToolCall, tv.Message().ToolDefinition, tuitypes.ToolStatusRunning)
 	require.Equal(t, 1, m.screen.Transcript.ToolCount())
 
-	event := runtime.ToolCallConfirmation(tv.Message().ToolCall, tv.Message().ToolDefinition, "root", nil)
+	event := contract.ToolCallConfirmation(tv.Message().ToolCall, tv.Message().ToolDefinition, "root", nil)
 	m.handleEvent(t.Context(), event)
 
 	assert.Zero(t, m.screen.Transcript.ToolCount())

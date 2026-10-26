@@ -19,6 +19,7 @@ import (
 
 	dagent "github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/servesafety"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
@@ -169,7 +170,7 @@ func runDockerAgent(ctx agent.InvocationContext, t *team.Team, agentName string,
 			}
 
 			switch e := event.(type) {
-			case *runtime.AgentChoiceEvent:
+			case *contract.AgentChoiceEvent:
 				// Accumulate content chunks
 				contentBuilder.WriteString(e.Content)
 
@@ -187,13 +188,13 @@ func runDockerAgent(ctx agent.InvocationContext, t *team.Team, agentName string,
 					return
 				}
 
-			case *runtime.ErrorEvent:
+			case *contract.ErrorEvent:
 				// Yield error and stop
 
 				yield(nil, fmt.Errorf("%s", e.Error))
 				return
 
-			case *runtime.StreamStoppedEvent:
+			case *contract.StreamStoppedEvent:
 				// Send final complete event with all accumulated content
 				if contentBuilder.Len() > 0 {
 					yield(finalEvent(), nil)

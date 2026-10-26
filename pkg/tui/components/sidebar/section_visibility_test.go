@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	todo "github.com/docker/docker-agent/pkg/tools/builtin/todo/types"
 )
@@ -20,7 +20,7 @@ func newVisibilityTestSidebar(tb testing.TB) *testSidebar {
 	tb.Helper()
 	s := newTestSidebar(tb)
 	s.sessionState.SetCurrentAgentName("root")
-	s.SetTeamInfo([]runtime.AgentDetails{{Name: "root", Provider: "openai", Model: "gpt-4"}})
+	s.SetTeamInfo([]contract.AgentDetails{{Name: "root", Provider: "openai", Model: "gpt-4"}})
 	s.SetToolsetInfo(12, false)
 	s.recordUsageTokens("session-1", "root", 500, 500)
 	return s
@@ -181,7 +181,7 @@ func TestCollapsedInfoLine_ShowsTeamRoster(t *testing.T) {
 
 	s := newTestSidebar(t)
 	s.sessionState.SetCurrentAgentName("root")
-	s.SetTeamInfo([]runtime.AgentDetails{
+	s.SetTeamInfo([]contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4"},
 		{Name: "planner", Provider: "openai", Model: "gpt-4"},
 		{Name: "reviewer", Provider: "openai", Model: "gpt-4"},

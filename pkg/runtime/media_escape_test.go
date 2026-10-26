@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/workspacemedia"
@@ -98,7 +99,7 @@ func TestRunStream_EscapingGeneratedMediaCompletesWithoutElicitation(t *testing.
 			rt, err := New(t.Context(), team.New(team.WithAgents(root)), WithSessionCompaction(false), WithSessionStore(store), WithModelStore(mockModelStore{}))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
-			rt.OnElicitationRequest(func(Event) { t.Error("generated media escape must not elicit") })
+			rt.OnElicitationRequest(func(contract.Event) { t.Error("generated media escape must not elicit") })
 			opts := []session.Opt{session.WithUserMessage("save the generated image")}
 			if nonInteractive {
 				opts = append(opts, session.WithNonInteractive(true))
@@ -112,9 +113,9 @@ func TestRunStream_EscapingGeneratedMediaCompletesWithoutElicitation(t *testing.
 			var stopped bool
 			for event := range rt.RunStream(ctx, sess) {
 				switch event.(type) {
-				case *WarningEvent:
+				case *contract.WarningEvent:
 					warnings++
-				case *StreamStoppedEvent:
+				case *contract.StreamStoppedEvent:
 					stopped = true
 				}
 			}

@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelinfo"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -107,7 +108,7 @@ func (r *LocalRuntime) handleStructuredOutputCalls(
 	res *streamResult,
 	agentTools []tools.Tool,
 	modelID string,
-	events EventSink,
+	events contract.EventSink,
 ) (dispatchCalls []tools.ToolCall, finalized bool) {
 	if !structuredOutputEnabled(sess, a) {
 		return res.Calls, false
@@ -183,7 +184,7 @@ func (r *LocalRuntime) runStructuredOutputCall(
 	a *agent.Agent,
 	tc tools.ToolCall,
 	tool tools.Tool,
-	events EventSink,
+	events contract.EventSink,
 ) *tools.ToolCallResult {
 	result := r.instrumentStructuredOutputCall(ctx, sess, a, tc, func(ctx context.Context) (*tools.ToolCallResult, error) {
 		return tool.Handler(ctx, tc, tools.NopRuntime{})
@@ -203,7 +204,7 @@ func (r *LocalRuntime) rejectStructuredOutputCall(
 	tc tools.ToolCall,
 	tool tools.Tool,
 	rejectMsg string,
-	events EventSink,
+	events contract.EventSink,
 ) {
 	result := r.instrumentStructuredOutputCall(ctx, sess, a, tc, func(context.Context) (*tools.ToolCallResult, error) {
 		return tools.ResultError(rejectMsg), nil
@@ -283,10 +284,10 @@ func (r *LocalRuntime) recordStructuredOutputResponse(
 	tc tools.ToolCall,
 	tool tools.Tool,
 	result *tools.ToolCallResult,
-	events EventSink,
+	events contract.EventSink,
 ) {
-	events.Emit(ToolCall(tc, tool, a.Name()))
-	events.Emit(ToolCallResponse(tc.ID, tool, result, result.Output, a.Name()))
+	events.Emit(contract.ToolCall(tc, tool, a.Name()))
+	events.Emit(contract.ToolCallResponse(tc.ID, tool, result, result.Output, a.Name()))
 	content := result.Output
 	if strings.TrimSpace(content) == "" {
 		content = "(no output)"
@@ -314,7 +315,7 @@ func (r *LocalRuntime) structuredOutputStop(
 	a *agent.Agent,
 	servingModel string,
 	ls *loopState,
-	events EventSink,
+	events contract.EventSink,
 ) (turnControl, string) {
 	_, rejectsPrefill := modelinfo.LookupClaude5(servingModel)
 	if !rejectsPrefill && ls.structuredOutputReminders < maxStructuredOutputReminders {
@@ -336,7 +337,7 @@ func (r *LocalRuntime) structuredOutputStop(
 	}
 	slog.WarnContext(ctx, "Structured output failed: reminders exhausted",
 		"agent", a.Name(), "session_id", sess.ID, "max", maxStructuredOutputReminders)
-	events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeStructuredOutputFailed, errMsg))
+	events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeStructuredOutputFailed, errMsg))
 	r.notifyError(ctx, a, sess.ID, errMsg)
 	// The non-conforming plain-text answer is the last assistant message at
 	// this point; record an explicit termination message so

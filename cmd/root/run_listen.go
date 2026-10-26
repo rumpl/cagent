@@ -13,7 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/cli"
 	"github.com/docker/docker-agent/pkg/httpsec"
 	"github.com/docker/docker-agent/pkg/runregistry"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/server"
 	"github.com/docker/docker-agent/pkg/session"
 )
@@ -34,7 +34,7 @@ import (
 // become first-class control-plane sessions: clients can snapshot them, tail
 // their events and send follow-ups, exactly like the initial session. Without
 // this, a board watching the run sees a green card while a tab is mid-turn.
-func (f *runExecFlags) recallCoordinatorOpt(ctx context.Context, rt runtime.Runtime, sess *session.Session) app.Opt {
+func (f *runExecFlags) recallCoordinatorOpt(ctx context.Context, rt contract.Runtime, sess *session.Session) app.Opt {
 	sm := f.listenSM
 	exposed := sm != nil
 	if !exposed {
@@ -55,7 +55,7 @@ func (f *runExecFlags) recallCoordinatorOpt(ctx context.Context, rt runtime.Runt
 func registerAppEventSource(sm *server.SessionManager, sessionID string, a *app.App) {
 	sm.RegisterEventSource(sessionID, func(ctx context.Context, send func(any)) {
 		a.SubscribeReliable(ctx, func(msg tea.Msg) {
-			if ev, ok := msg.(runtime.Event); ok {
+			if ev, ok := msg.(contract.Event); ok {
 				send(ev)
 			}
 		})
@@ -67,7 +67,7 @@ func registerAppEventSource(sm *server.SessionManager, sessionID string, a *app.
 // external processes can drive the running TUI (steer, followup, resume, ...).
 // It returns an app.Opt that registers the App as the attached session owner
 // (see recallCoordinatorOpt for the stream-guard wiring shared by both paths).
-func (f *runExecFlags) startSessionCoordinator(ctx context.Context, out *cli.Printer, rt runtime.Runtime, sess *session.Session) (app.Opt, error) {
+func (f *runExecFlags) startSessionCoordinator(ctx context.Context, out *cli.Printer, rt contract.Runtime, sess *session.Session) (app.Opt, error) {
 	if f.listenAddr == "" {
 		return f.recallCoordinatorOpt(ctx, rt, sess), nil
 	}

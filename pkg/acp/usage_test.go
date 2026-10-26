@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -28,8 +29,8 @@ import (
 	"github.com/docker/docker-agent/pkg/tools/builtin/transfertask"
 )
 
-func usageEvent(sid, agentName string, used, limit int64, cost float64) *runtime.TokenUsageEvent {
-	return runtime.NewTokenUsageEvent(sid, agentName, &runtime.Usage{ContextLength: used, ContextLimit: limit, Cost: cost}).(*runtime.TokenUsageEvent)
+func usageEvent(sid, agentName string, used, limit int64, cost float64) *contract.TokenUsageEvent {
+	return contract.NewTokenUsageEvent(sid, agentName, &contract.Usage{ContextLength: used, ContextLimit: limit, Cost: cost}).(*contract.TokenUsageEvent)
 }
 
 func usageUpdates(t *testing.T, out *captureWriter) []*acpsdk.SessionUsageUpdate {
@@ -49,7 +50,7 @@ func usageUpdates(t *testing.T, out *captureWriter) []*acpsdk.SessionUsageUpdate
 
 func TestUsageAggregatesSessionsWithoutReplacingRootContext(t *testing.T) {
 	t.Parallel()
-	events := []runtime.Event{
+	events := []contract.Event{
 		usageEvent("child-first", "worker", 800, 900, 0.1),
 		usageEvent(testSessionID, "root", 100, 1000, 0.2),
 		usageEvent("child-first", "worker", 810, 900, 0.15),
@@ -57,7 +58,7 @@ func TestUsageAggregatesSessionsWithoutReplacingRootContext(t *testing.T) {
 		usageEvent("child-two", "worker", 30, 50, 0.3),
 		usageEvent(testSessionID, "handoff", 200, 2000, 0.4),
 		usageEvent("", "indexer", 999, 999, 100),
-		runtime.NewTokenUsageEvent("child", "worker", nil),
+		contract.NewTokenUsageEvent("child", "worker", nil),
 	}
 	f := newRunAgentFixture(t, &fakeRuntime{events: events}, &captureWriter{})
 	require.NoError(t, f.runAgent(t.Context(), f.sess))
@@ -73,9 +74,9 @@ func TestUsageAggregatesSessionsWithoutReplacingRootContext(t *testing.T) {
 	}
 	assert.Equal(t, 200, updates[4].Used)
 	assert.Equal(t, 2000, updates[4].Size)
-	assert.Equal(t, int64(800), events[0].(*runtime.TokenUsageEvent).Usage.ContextLength)
-	assert.InDelta(t, 0.2, events[1].(*runtime.TokenUsageEvent).Usage.Cost, 1e-9, "shared runtime events must not be mutated")
-	f.rt.events = []runtime.Event{usageEvent(testSessionID, "handoff", 250, 2000, 0.5)}
+	assert.Equal(t, int64(800), events[0].(*contract.TokenUsageEvent).Usage.ContextLength)
+	assert.InDelta(t, 0.2, events[1].(*contract.TokenUsageEvent).Usage.Cost, 1e-9, "shared runtime events must not be mutated")
+	f.rt.events = []contract.Event{usageEvent(testSessionID, "handoff", 250, 2000, 0.5)}
 	require.NoError(t, f.runAgent(t.Context(), f.sess))
 	all := usageUpdates(t, f.out)
 	assert.InDelta(t, 0.95, all[len(all)-1].Cost.Amount, 1e-9, "child costs survive foreground turns")
@@ -83,7 +84,7 @@ func TestUsageAggregatesSessionsWithoutReplacingRootContext(t *testing.T) {
 
 func TestUsageUnknownAndInvalidSnapshots(t *testing.T) {
 	t.Parallel()
-	f := newRunAgentFixture(t, &fakeRuntime{events: []runtime.Event{
+	f := newRunAgentFixture(t, &fakeRuntime{events: []contract.Event{
 		usageEvent("child", "worker", 99, 100, 0.2),
 		usageEvent(testSessionID, "root", 20, 0, 0.1),
 		usageEvent("child", "worker", 100, 100, 0.3),
@@ -126,12 +127,12 @@ func TestUsageRestoredLiveChildrenAndCompaction(t *testing.T) {
 	root.AddLiveSubSession(child)
 	s.recordUsage(usageEvent(nested.ID, "worker", 999, 9999, 0.02))
 	s.recordUsage(usageEvent(child.ID, "worker", 555, 5555, 0.05))
-	s.recordUsage(runtime.NewTokenUsageEvent(root.ID, "root", runtime.SessionUsage(root, 1000)).(*runtime.TokenUsageEvent))
+	s.recordUsage(contract.NewTokenUsageEvent(root.ID, "root", contract.SessionUsage(root, 1000)).(*contract.TokenUsageEvent))
 	for range 2 {
 		root.ApplyCompaction(10, 2, session.Item{Summary: "root summary", Cost: 0.01})
 		child.ApplyCompaction(5, 1, session.Item{Summary: "child summary", Cost: 0.01})
-		s.recordUsage(runtime.NewTokenUsageEvent(child.ID, "worker", runtime.SessionUsage(child, 500)).(*runtime.TokenUsageEvent))
-		got := s.recordUsage(runtime.NewTokenUsageEvent(root.ID, "root", runtime.SessionUsage(root, 1000)).(*runtime.TokenUsageEvent))
+		s.recordUsage(contract.NewTokenUsageEvent(child.ID, "worker", contract.SessionUsage(child, 500)).(*contract.TokenUsageEvent))
+		got := s.recordUsage(contract.NewTokenUsageEvent(root.ID, "root", contract.SessionUsage(root, 1000)).(*contract.TokenUsageEvent))
 		assert.InDelta(t, root.TotalCost(), got.Cost, 1e-9)
 		assert.Equal(t, int64(12), got.ContextLength)
 		assert.InDelta(t, root.TotalCost(), s.currentUsage("root").Cost, 1e-9)
@@ -175,7 +176,7 @@ func TestUsageCommandUsesAggregateForTextAndUpdate(t *testing.T) {
 func TestUsageAccountingSurvivesCancellationAndSendFailure(t *testing.T) {
 	t.Parallel()
 	for _, cancelTurn := range []bool{false, true} {
-		rt := &fakeRuntime{events: []runtime.Event{usageEvent(testSessionID, "root", 12, 1000, 0.1), usageEvent("child", "worker", 999, 9999, 0.2)}}
+		rt := &fakeRuntime{events: []contract.Event{usageEvent(testSessionID, "root", 12, 1000, 0.1), usageEvent("child", "worker", 999, 9999, 0.2)}}
 		out := &captureWriter{}
 		f := newRunAgentFixture(t, rt, out)
 		ctx, cancel := context.WithCancel(t.Context())
@@ -328,8 +329,8 @@ func TestUsageCompactKeepsAccountingAfterError(t *testing.T) {
 	rt := &commandRuntime{current: "root", commands: map[string]types.Commands{"root": {}}}
 	a, s, _ := newPromptTestAgent(t, rt)
 	s.recordUsage(usageEvent(s.sess.ID, "root", 100, 1000, 0.1))
-	rt.summary = func(_ context.Context, _ *session.Session, _ string, sink runtime.EventSink) {
-		sink.Emit(runtime.ErrorForSession(s.sess.ID, "compaction failed"))
+	rt.summary = func(_ context.Context, _ *session.Session, _ string, sink contract.EventSink) {
+		sink.Emit(contract.ErrorForSession(s.sess.ID, "compaction failed"))
 		sink.Emit(usageEvent("child", "worker", 900, 9999, 0.2))
 		sink.Emit(usageEvent(s.sess.ID, "root", 20, 1000, 0.15))
 	}
@@ -365,9 +366,9 @@ func TestUsageEvaluatorSnapshotReplacesRatherThanAdds(t *testing.T) {
 	s.recordUsage(usageEvent(s.sess.ID, "root", 100, 1000, 0.1))
 	s.recordUsage(usageEvent("child", "worker", 500, 5000, 0.2))
 	s.sess.AddEvaluation(&session.Evaluation{Cost: new(0.03)})
-	usage := runtime.SessionUsage(s.sess, 1000)
+	usage := contract.SessionUsage(s.sess, 1000)
 	usage.SnapshotOnly = true
-	event := runtime.NewTokenUsageEvent(s.sess.ID, "root", usage).(*runtime.TokenUsageEvent)
+	event := contract.NewTokenUsageEvent(s.sess.ID, "root", usage).(*contract.TokenUsageEvent)
 	for range 2 {
 		assert.InDelta(t, 0.33, s.recordUsage(event).Cost, 1e-9)
 	}

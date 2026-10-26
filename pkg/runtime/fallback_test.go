@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -155,7 +156,7 @@ func TestFallbackOrder(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success from fallback2" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success from fallback2" {
 				gotContent = true
 			}
 		}
@@ -188,10 +189,10 @@ func TestFallbackNoRetryOnNonRetryableError(t *testing.T) {
 
 		var gotError, gotFallbackContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if _, ok := ev.(*ErrorEvent); ok {
+			if _, ok := ev.(*contract.ErrorEvent); ok {
 				gotError = true
 			}
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Should not see this" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Should not see this" {
 				gotFallbackContent = true
 			}
 		}
@@ -228,7 +229,7 @@ func TestFallbackRetriesWithBackoff(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success after retries" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success after retries" {
 				gotContent = true
 			}
 		}
@@ -270,7 +271,7 @@ func TestPrimaryRetriesWithBackoff(t *testing.T) {
 
 		var gotPrimaryContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Primary success after retries" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Primary success after retries" {
 				gotPrimaryContent = true
 			}
 		}
@@ -309,7 +310,7 @@ func TestNoFallbackWhenPrimarySucceeds(t *testing.T) {
 
 		var gotPrimaryContent, fallbackCalled bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok {
 				if choice.Content == "Primary success" {
 					gotPrimaryContent = true
 				}
@@ -353,7 +354,7 @@ func TestFallback429SkipsToNextModel(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
 				gotContent = true
 			}
 		}
@@ -461,7 +462,7 @@ func TestFallback429WithFallbacksSkipsToNextModel(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
 				gotContent = true
 			}
 		}
@@ -502,7 +503,7 @@ func TestFallback429WithoutFallbacksRetriesSameModel(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success after rate limit" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success after rate limit" {
 				gotContent = true
 			}
 		}
@@ -536,7 +537,7 @@ func TestFallback429WithoutFallbacksExhaustsRetries(t *testing.T) {
 
 		var gotError bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if _, ok := ev.(*ErrorEvent); ok {
+			if _, ok := ev.(*contract.ErrorEvent); ok {
 				gotError = true
 			}
 		}
@@ -575,7 +576,7 @@ func TestFallback500RetryableWithBackoff(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success after 500" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success after 500" {
 				gotContent = true
 			}
 		}
@@ -614,7 +615,7 @@ func TestRateLimitGate_DisabledNoFallbacks_FailsImmediately(t *testing.T) {
 
 		var gotError bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if _, ok := ev.(*ErrorEvent); ok {
+			if _, ok := ev.(*contract.ErrorEvent); ok {
 				gotError = true
 			}
 		}
@@ -655,7 +656,7 @@ func TestRateLimitGate_EnabledNoFallbacks_RetriesSameModel(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success after rate limit" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success after rate limit" {
 				gotContent = true
 			}
 		}
@@ -697,7 +698,7 @@ func TestRateLimitGate_EnabledWithFallbacks_SkipsToFallback(t *testing.T) {
 
 		var gotContent bool
 		for ev := range rt.RunStream(t.Context(), sess) {
-			if choice, ok := ev.(*AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
+			if choice, ok := ev.(*contract.AgentChoiceEvent); ok && choice.Content == "Success from fallback" {
 				gotContent = true
 			}
 		}
@@ -778,9 +779,9 @@ func TestFallbackExecutor_IdleRetryIsAdditionalImmediateRequest(t *testing.T) {
 	fallbacks := 0
 	for _, event := range sink.events {
 		switch event.(type) {
-		case *WarningEvent:
+		case *contract.WarningEvent:
 			warnings++
-		case *ModelFallbackEvent:
+		case *contract.ModelFallbackEvent:
 			fallbacks++
 		}
 	}

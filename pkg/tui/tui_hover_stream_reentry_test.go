@@ -8,21 +8,21 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 func TestBlurFocusDoesNotMaterializeStreamTail(t *testing.T) {
 	root, _, _ := wallClockRoot(t, 120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
 	chunk := "Paragraph with **markdown**, Unicode λ界, and a [link](https://example.com).\n\n"
 	for range 100 {
-		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
+		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", chunk)})
 		_ = root.View()
 	}
 	_, _ = root.Update(messages.WheelCoalescedMsg{Delta: -3, X: 40, Y: 20})
 	for range 20 {
-		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
+		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", chunk)})
 	}
 	before := root.View().Content
 	_, _ = root.Update(tea.BlurMsg{})
@@ -48,7 +48,7 @@ func programAck(t *testing.T, program *tea.Program) {
 
 func TestActualProgramPendingSpinnerHoverIsFrameIsolated(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	program := startStreamingMotionProgram(t, model, tea.WithOutput(&wallClockCountingWriter{}))
 
@@ -68,10 +68,10 @@ func TestActualProgramPendingSpinnerHoverIsFrameIsolated(t *testing.T) {
 
 func TestActualProgramVirtualSuffixKeyWheelPageMatrixNeverBlanks(t *testing.T) {
 	root, _, _ := wallClockRoot(t, 120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
 	chunk := "stream marker **bold** `code` λ界\n\n"
 	for range 200 {
-		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
+		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", chunk)})
 		_ = root.View()
 	}
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
@@ -100,10 +100,10 @@ func TestActualProgramVirtualSuffixKeyWheelPageMatrixNeverBlanks(t *testing.T) {
 
 func TestActualProgramHoverThenBottomReentryStaysBounded(t *testing.T) {
 	root, _, _ := wallClockRoot(t, 120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
 	chunk := "Paragraph with **markdown**, `code`, Unicode λ界, and a [link](https://example.com).\n\n"
 	for range 300 {
-		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
+		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", chunk)})
 		_ = root.View()
 	}
 	root.activeTab.chatPage.ScrollToBottom()
@@ -118,7 +118,7 @@ func TestActualProgramHoverThenBottomReentryStaysBounded(t *testing.T) {
 	program.Send(messages.WheelCoalescedMsg{Delta: -3, X: 40, Y: 20})
 	deferredChunk := "DEFERRED-REENTRY-MARKER **markdown**\n\n"
 	for range 100 {
-		program.Send(agentruntime.AgentChoice("root", "profile", deferredChunk))
+		program.Send(contract.AgentChoice("root", "profile", deferredChunk))
 	}
 	programAck(t, program)
 	scrolled := programFrame(t, program)
@@ -129,7 +129,7 @@ func TestActualProgramHoverThenBottomReentryStaysBounded(t *testing.T) {
 	reentry := programFrame(t, program)
 	require.Contains(t, ansi.Strip(reentry), "DEFERRED-REENTRY-MARKER", "bottom reentry materializes current tail")
 	for range 20 {
-		program.Send(agentruntime.AgentChoice("root", "profile", chunk))
+		program.Send(contract.AgentChoice("root", "profile", chunk))
 	}
 	programAck(t, program)
 	require.LessOrEqual(t, writer.writes.Load()-beforeWrites, uint64(30), "follow-tail renderer work remains bounded by events")

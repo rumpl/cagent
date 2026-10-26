@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -17,20 +18,20 @@ import (
 // event kinds relevant to compaction UX.
 func collectCompactionEvents(t *testing.T, rt *LocalRuntime, sess *session.Session) (kinds []string) {
 	t.Helper()
-	events := make(chan Event, 256) // ample headroom: a blocked sink would deadlock the test
+	events := make(chan contract.Event, 256) // ample headroom: a blocked sink would deadlock the test
 	rt.compactWithReason(t.Context(), sess, "", compactionReasonManual, NewChannelSink(events))
 	close(events)
 	for ev := range events {
 		switch e := ev.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" && e.Outcome != "" {
 				kinds = append(kinds, "compaction:completed:"+e.Outcome)
 			} else {
 				kinds = append(kinds, "compaction:"+e.Status)
 			}
-		case *SessionSummaryEvent:
+		case *contract.SessionSummaryEvent:
 			kinds = append(kinds, "summary")
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			kinds = append(kinds, "error")
 		}
 	}

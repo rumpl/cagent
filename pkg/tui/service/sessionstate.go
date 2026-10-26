@@ -2,7 +2,7 @@ package service
 
 import (
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 	"github.com/docker/docker-agent/pkg/tui/types"
@@ -36,8 +36,8 @@ type SessionStateReader interface {
 	CurrentAgentName() string
 	PreviousMessage() *types.Message
 	SessionTitle() string
-	AvailableAgents() []runtime.AgentDetails
-	GetCurrentAgent() runtime.AgentDetails
+	AvailableAgents() []contract.AgentDetails
+	GetCurrentAgent() contract.AgentDetails
 	PauseState() PauseState
 }
 
@@ -56,14 +56,14 @@ type SessionState struct {
 
 	previousMessage  *types.Message
 	currentAgentName string
-	availableAgents  []runtime.AgentDetails
+	availableAgents  []contract.AgentDetails
 	pauseState       PauseState
 
 	// agentUsage holds the latest token-usage snapshot per agent name,
 	// fed by TokenUsageEvents (including those of sub-sessions and
 	// background agent tasks). It backs the per-agent context display in
 	// the sidebar roster and the agent-details dialog.
-	agentUsage map[string]runtime.Usage
+	agentUsage map[string]contract.Usage
 
 	// sessionCost holds the latest cumulative cost snapshot per session ID,
 	// and sessionAgent attributes each of those sessions to the agent that
@@ -167,11 +167,11 @@ func (s *SessionState) SetSessionTitle(sessionTitle string) {
 	s.sessionTitle = sessionTitle
 }
 
-func (s *SessionState) AvailableAgents() []runtime.AgentDetails {
+func (s *SessionState) AvailableAgents() []contract.AgentDetails {
 	return s.availableAgents
 }
 
-func (s *SessionState) SetAvailableAgents(availableAgents []runtime.AgentDetails) {
+func (s *SessionState) SetAvailableAgents(availableAgents []contract.AgentDetails) {
 	s.availableAgents = availableAgents
 
 	names := make([]string, len(availableAgents))
@@ -192,14 +192,14 @@ func (s *SessionState) SetPauseState(state PauseState) {
 	s.pauseState = state
 }
 
-func (s *SessionState) GetCurrentAgent() runtime.AgentDetails {
+func (s *SessionState) GetCurrentAgent() contract.AgentDetails {
 	for _, agent := range s.availableAgents {
 		if agent.Name == s.currentAgentName {
 			return agent
 		}
 	}
 
-	return runtime.AgentDetails{}
+	return contract.AgentDetails{}
 }
 
 // SetAgentUsage records the latest token-usage snapshot for the named agent
@@ -213,12 +213,12 @@ func (s *SessionState) GetCurrentAgent() runtime.AgentDetails {
 // per-agent split of a shared session, so this keeps the total honest (never
 // double-counted) at the price of crediting the session's earlier spend to
 // the agent that finished it.
-func (s *SessionState) SetAgentUsage(sessionID, agentName string, usage runtime.Usage) {
+func (s *SessionState) SetAgentUsage(sessionID, agentName string, usage contract.Usage) {
 	if agentName == "" {
 		return
 	}
 	if s.agentUsage == nil {
-		s.agentUsage = make(map[string]runtime.Usage)
+		s.agentUsage = make(map[string]contract.Usage)
 	}
 	s.agentUsage[agentName] = usage
 	if sessionID == "" {
@@ -234,7 +234,7 @@ func (s *SessionState) SetAgentUsage(sessionID, agentName string, usage runtime.
 
 // AgentUsage returns the latest token-usage snapshot recorded for the named
 // agent, and whether one exists (an agent that has not run yet has none).
-func (s *SessionState) AgentUsage(agentName string) (runtime.Usage, bool) {
+func (s *SessionState) AgentUsage(agentName string) (contract.Usage, bool) {
 	usage, ok := s.agentUsage[agentName]
 	return usage, ok
 }

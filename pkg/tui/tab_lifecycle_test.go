@@ -11,7 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/paths"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
@@ -138,7 +138,7 @@ func TestCloseInactiveTabRemovesAllUIState(t *testing.T) {
 	m.ensureTab(closedID).editor = closedEditor
 	m.ensureTab(closedID).pendingRestore = new("saved")
 	m.ensureTab(closedID).pendingSidebarCollapsed = new(true)
-	m.ensureTab(closedID).attentionDialogs = map[tea.Msg]dialog.Dialog{&runtime.ElicitationRequestEvent{}: &stubDialog{id: "stashed"}}
+	m.ensureTab(closedID).attentionDialogs = map[tea.Msg]dialog.Dialog{&contract.ElicitationRequestEvent{}: &stubDialog{id: "stashed"}}
 	_, _ = m.handleSpawnSession("/second")
 	page, ed, state := m.activeTab.chatPage, m.activeTab.editor, m.activeTab.sessionState
 
@@ -363,7 +363,7 @@ func TestTabOwnsRuntimeAttentionState(t *testing.T) {
 	id := m.supervisor.ActiveID()
 	tab := m.tabs[id]
 	require.Same(t, m.supervisor.GetRunner(id).State, tab.state)
-	tab.state.Apply(&runtime.ElicitationRequestEvent{Message: "prompt"}, false)
+	tab.state.Apply(&contract.ElicitationRequestEvent{Message: "prompt"}, false)
 	tabs, _ := m.supervisor.GetTabs()
 	require.Len(t, tabs, 1)
 	assert.True(t, tabs[0].NeedsAttention)
@@ -386,14 +386,14 @@ func TestRestoredTabStreamUsesConversationIdentity(t *testing.T) {
 	_, _ = m.replaceActiveSession(t.Context(), saved)
 	tab := m.activeTab
 	require.NotEqual(t, tabID, saved.ID)
-	tab.state.Apply(&runtime.StreamStartedEvent{SessionID: saved.ID}, true)
+	tab.state.Apply(&contract.StreamStartedEvent{SessionID: saved.ID}, true)
 	_, running, _ := tab.state.Snapshot()
 	assert.True(t, running, "restored conversation is the root stream, not a child")
-	own := &runtime.ElicitationRequestEvent{SessionID: saved.ID}
-	detached := &runtime.ElicitationRequestEvent{SessionID: "detached"}
+	own := &contract.ElicitationRequestEvent{SessionID: saved.ID}
+	detached := &contract.ElicitationRequestEvent{SessionID: "detached"}
 	tab.state.Apply(own, false)
 	tab.state.Apply(detached, false)
-	tab.state.Apply(&runtime.StreamStoppedEvent{SessionID: saved.ID}, false)
+	tab.state.Apply(&contract.StreamStoppedEvent{SessionID: saved.ID}, false)
 	_, running, attention := tab.state.Snapshot()
 	assert.False(t, running)
 	assert.True(t, attention)
@@ -408,7 +408,7 @@ func TestClearSessionDiscardsPreviousAttention(t *testing.T) {
 	id := m.supervisor.ActiveID()
 	tab := m.activeTab
 	oldID := m.application.Session().ID
-	event := &runtime.ElicitationRequestEvent{SessionID: "old-detached-job"}
+	event := &contract.ElicitationRequestEvent{SessionID: "old-detached-job"}
 	tab.state.Apply(event, false)
 	tab.attentionDialogs = map[tea.Msg]dialog.Dialog{event: &stubDialog{}}
 
@@ -422,10 +422,10 @@ func TestClearSessionDiscardsPreviousAttention(t *testing.T) {
 	assert.False(t, attention)
 	newID := m.application.Session().ID
 	require.NotEqual(t, oldID, newID)
-	tab.state.Apply(&runtime.StreamStartedEvent{SessionID: newID}, true)
+	tab.state.Apply(&contract.StreamStartedEvent{SessionID: newID}, true)
 	_, running, _ = tab.state.Snapshot()
 	assert.True(t, running)
-	tab.state.Apply(&runtime.StreamStoppedEvent{SessionID: oldID}, true)
+	tab.state.Apply(&contract.StreamStoppedEvent{SessionID: oldID}, true)
 	_, running, _ = tab.state.Snapshot()
 	assert.True(t, running, "late stop from previous conversation is not the new root")
 	assert.Equal(t, id, m.supervisor.ActiveID())

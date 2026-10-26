@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -23,18 +23,18 @@ func TestReplacementDiscardsOldThrottledContentAndLateStop(t *testing.T) {
 		go a.SubscribeReliable(ctx, func(msg tea.Msg) { got = append(got, msg) }, WithSubscriptionReady(func() { close(ready) }))
 		<-ready
 		oldCtx := a.eventContext(ctx)
-		a.sendEvent(oldCtx, runtime.AgentChoice("root", a.session.ID, "OLD-ANSWER", "old"))
+		a.sendEvent(oldCtx, contract.AgentChoice("root", a.session.ID, "OLD-ANSWER", "old"))
 		synctest.Wait()
 		require.Empty(t, got, "fixture must leave text in the throttle buffer")
 		a.ReplaceSession(ctx, session.New())
-		a.sendEvent(context.WithoutCancel(oldCtx), runtime.StreamStopped("old-session", "root", "canceled"))
-		want := runtime.AgentChoice("root", a.session.ID, "NEW-ANSWER", "new")
+		a.sendEvent(context.WithoutCancel(oldCtx), contract.StreamStopped("old-session", "root", "canceled"))
+		want := contract.AgentChoice("root", a.session.ID, "NEW-ANSWER", "new")
 		a.sendEvent(ctx, want)
-		a.sendEvent(ctx, runtime.StreamStopped(a.session.ID, "root", "normal"))
+		a.sendEvent(ctx, contract.StreamStopped(a.session.ID, "root", "normal"))
 		synctest.Wait()
 		require.Len(t, got, 2)
 		require.Same(t, want, got[0])
-		require.Equal(t, "normal", got[1].(*runtime.StreamStoppedEvent).Reason)
+		require.Equal(t, "normal", got[1].(*contract.StreamStoppedEvent).Reason)
 	})
 }
 
@@ -45,14 +45,14 @@ func TestRetireEventsDiscardsRawAndThrottledDeliveries(t *testing.T) {
 		defer cancel()
 		a := New(ctx, &mockRuntime{}, session.New())
 		oldCtx := a.eventContext(ctx)
-		a.sendEvent(oldCtx, runtime.AgentChoice("root", a.session.ID, "RAW-OLD-ANSWER", "old"))
+		a.sendEvent(oldCtx, contract.AgentChoice("root", a.session.ID, "RAW-OLD-ANSWER", "old"))
 		a.RetireEvents()
 		var got []tea.Msg
 		ready := make(chan struct{})
 		go a.SubscribeReliable(ctx, func(msg tea.Msg) { got = append(got, msg) }, WithSubscriptionReady(func() { close(ready) }))
 		<-ready
 		synctest.Wait()
-		marker := runtime.StreamStopped(a.session.ID, "root", "normal")
+		marker := contract.StreamStopped(a.session.ID, "root", "normal")
 		a.sendEvent(ctx, marker)
 		synctest.Wait()
 		require.Equal(t, []tea.Msg{marker}, got)
@@ -80,7 +80,7 @@ func TestRoutingRetainsOriginWhenRetirementRacesMapping(t *testing.T) {
 			return delivery{generation: generation}
 		}))
 		<-ready
-		a.sendEvent(ctx, runtime.StreamStopped(a.session.ID, "root", "normal"))
+		a.sendEvent(ctx, contract.StreamStopped(a.session.ID, "root", "normal"))
 		<-mapping
 		a.RetireEvents()
 		close(resume)
@@ -93,15 +93,15 @@ func TestRoutingRetainsOriginWhenRetirementRacesMapping(t *testing.T) {
 type contextualEventsRuntime struct {
 	mockRuntime
 
-	background  func(context.Context, runtime.Event)
-	elicitation func(context.Context, runtime.Event)
+	background  func(context.Context, contract.Event)
+	elicitation func(context.Context, contract.Event)
 }
 
-func (r *contextualEventsRuntime) OnBackgroundEventWithContext(handler func(context.Context, runtime.Event)) {
+func (r *contextualEventsRuntime) OnBackgroundEventWithContext(handler func(context.Context, contract.Event)) {
 	r.background = handler
 }
 
-func (r *contextualEventsRuntime) OnElicitationRequestWithContext(handler func(context.Context, runtime.Event)) {
+func (r *contextualEventsRuntime) OnElicitationRequestWithContext(handler func(context.Context, contract.Event)) {
 	r.elicitation = handler
 }
 
@@ -119,10 +119,10 @@ func TestDetachedCallbacksKeepOriginAcrossReplacement(t *testing.T) {
 		<-ready
 		old := a.eventContext(ctx)
 		a.ReplaceSession(ctx, session.New())
-		rt.background(old, runtime.StreamStopped("old-child", "root", "normal"))
-		rt.elicitation(old, runtime.ElicitationRequest("OLD REQUEST", "form", nil, "", "old", "", "old-child", nil, "root"))
+		rt.background(old, contract.StreamStopped("old-child", "root", "normal"))
+		rt.elicitation(old, contract.ElicitationRequest("OLD REQUEST", "form", nil, "", "old", "", "old-child", nil, "root"))
 		current := a.eventContext(ctx)
-		request := runtime.ElicitationRequest("CURRENT REQUEST", "form", nil, "", "new", "", "new-child", nil, "root")
+		request := contract.ElicitationRequest("CURRENT REQUEST", "form", nil, "", "new", "", "new-child", nil, "root")
 		rt.elicitation(current, request)
 		synctest.Wait()
 		require.Equal(t, []tea.Msg{request}, got)
@@ -144,12 +144,12 @@ func TestCanceledDetachedAccountingStillDeliversWithOriginalGeneration(t *testin
 		origin, stop := context.WithCancel(a.eventContext(ctx))
 		stop()
 		for range 100 {
-			rt.background(origin, runtime.NewTokenUsageEvent("child", "root", &runtime.Usage{}))
+			rt.background(origin, contract.NewTokenUsageEvent("child", "root", &contract.Usage{}))
 		}
 		synctest.Wait()
 		require.Len(t, got, 100)
 		a.RetireEvents()
-		rt.background(origin, runtime.NewTokenUsageEvent("child", "root", &runtime.Usage{}))
+		rt.background(origin, contract.NewTokenUsageEvent("child", "root", &contract.Usage{}))
 		synctest.Wait()
 		require.Len(t, got, 100)
 	})

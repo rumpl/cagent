@@ -15,7 +15,8 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/artifacts"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
@@ -42,18 +43,18 @@ type resolverTestRuntime struct {
 
 	mu      sync.Mutex
 	results map[string]resolverResult
-	refs    []runtime.GeneratedFileRef
+	refs    []artifacts.GeneratedFileRef
 }
 
-func (r *resolverTestRuntime) ResolveGeneratedFile(_ context.Context, ref runtime.GeneratedFileRef) (*runtime.ResolvedGeneratedFile, error) {
+func (r *resolverTestRuntime) ResolveGeneratedFile(_ context.Context, ref artifacts.GeneratedFileRef) (*artifacts.ResolvedGeneratedFile, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.refs = append(r.refs, ref)
 	res, ok := r.results[ref.Path]
 	if !ok || res.err != nil {
-		return nil, runtime.ErrGeneratedFileUnavailable
+		return nil, artifacts.ErrGeneratedFileUnavailable
 	}
-	return &runtime.ResolvedGeneratedFile{Data: res.data, Path: res.path}, nil
+	return &artifacts.ResolvedGeneratedFile{Data: res.data, Path: res.path}, nil
 }
 
 func (r *resolverTestRuntime) resolveCalls() int {
@@ -91,7 +92,7 @@ func (r *mediaRecordingMessages) UpdateAssistantMedia(media []types.AssistantMed
 	return r.Model.UpdateAssistantMedia(media)
 }
 
-func newGeneratedMediaTestPage(t *testing.T, rt runtime.Runtime) (*chatPage, *mediaRecordingMessages) {
+func newGeneratedMediaTestPage(t *testing.T, rt contract.Runtime) (*chatPage, *mediaRecordingMessages) {
 	t.Helper()
 	return newGeneratedMediaTestPageWithSession(t, rt, session.New())
 }
@@ -105,7 +106,7 @@ func testPNGBytes(t *testing.T) []byte {
 	return data.Bytes()
 }
 
-func newGeneratedMediaTestPageWithSession(t *testing.T, rt runtime.Runtime, sess *session.Session) (*chatPage, *mediaRecordingMessages) {
+func newGeneratedMediaTestPageWithSession(t *testing.T, rt contract.Runtime, sess *session.Session) (*chatPage, *mediaRecordingMessages) {
 	t.Helper()
 	p := New(animation.NewRuntime(), t.Context(), app.New(t.Context(), rt, sess), service.NewSessionState(sess)).(*chatPage)
 	rec := &mediaRecordingMessages{Model: p.messages}
@@ -132,7 +133,7 @@ func workspaceImagePart(name, relPath, owner string) chat.MessagePart {
 
 // assistantMessageAdded builds the event the run loop emits after
 // persisting the "root" agent's assistant message.
-func assistantMessageAdded(sessionID string, parts ...chat.MessagePart) *runtime.MessageAddedEvent {
+func assistantMessageAdded(sessionID string, parts ...chat.MessagePart) *contract.MessageAddedEvent {
 	msg := &session.Message{
 		AgentName: "root",
 		Message: chat.Message{
@@ -140,7 +141,7 @@ func assistantMessageAdded(sessionID string, parts ...chat.MessagePart) *runtime
 			MultiContent: parts,
 		},
 	}
-	return runtime.MessageAdded(sessionID, msg, "root").(*runtime.MessageAddedEvent)
+	return contract.MessageAdded(sessionID, msg, "root").(*contract.MessageAddedEvent)
 }
 
 // resolveMedia runs the returned command and extracts its media result.
@@ -166,9 +167,9 @@ func TestMessageAdded_TextAndWorkspaceImageJoinSameTurn(t *testing.T) {
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
 	rec.AddUserMessage("draw a cat")
-	handled, _ := p.handleRuntimeEvent(runtime.StreamStarted(owner, "root"))
+	handled, _ := p.handleRuntimeEvent(contract.StreamStarted(owner, "root"))
 	require.True(t, handled)
-	handled, _ = p.handleRuntimeEvent(runtime.AgentChoice("root", owner, "Here is your cat:"))
+	handled, _ = p.handleRuntimeEvent(contract.AgentChoice("root", owner, "Here is your cat:"))
 	require.True(t, handled)
 	require.Equal(t, 1, rec.MessageTypeCount(types.MessageTypeAssistant))
 
@@ -268,7 +269,7 @@ func TestMessageAdded_MediaOnlyTurnReplacesSpinner(t *testing.T) {
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
 	rec.AddUserMessage("draw a cat")
-	_, _ = p.handleRuntimeEvent(runtime.StreamStarted(owner, "root"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStarted(owner, "root"))
 	require.Equal(t, 1, rec.MessageTypeCount(types.MessageTypeSpinner),
 		"a real pending spinner must exist before the media arrives")
 
@@ -325,12 +326,12 @@ func TestMessageAdded_NilMessageIsNoOp(t *testing.T) {
 	t.Parallel()
 
 	p, rec := newGeneratedMediaTestPage(t, &resolverTestRuntime{})
-	_, _ = p.handleRuntimeEvent(runtime.StreamStarted("sess-remote", "root"))
+	_, _ = p.handleRuntimeEvent(contract.StreamStarted("sess-remote", "root"))
 	spinners := rec.MessageTypeCount(types.MessageTypeSpinner)
 
 	var handled bool
 	require.NotPanics(t, func() {
-		handled, _ = p.handleRuntimeEvent(runtime.MessageAdded("sess-remote", nil, "root"))
+		handled, _ = p.handleRuntimeEvent(contract.MessageAdded("sess-remote", nil, "root"))
 	})
 	assert.True(t, handled)
 	assert.Empty(t, rec.mediaCalls, "a payload-less event must not produce media")
@@ -522,7 +523,7 @@ func TestMessageAdded_NonAssistantRoleIsNoOp(t *testing.T) {
 		Role:         chat.MessageRoleTool,
 		MultiContent: []chat.MessagePart{workspaceImagePart("cat.png", "cat.png", owner)},
 	}}
-	handled, cmd := p.handleRuntimeEvent(runtime.MessageAdded(owner, msg, "root"))
+	handled, cmd := p.handleRuntimeEvent(contract.MessageAdded(owner, msg, "root"))
 	assert.True(t, handled)
 	assert.Nil(t, cmd)
 	assert.Empty(t, rec.mediaCalls)
@@ -587,7 +588,7 @@ func TestInit_RestoredSessionResolvesGeneratedMedia(t *testing.T) {
 	_, _ = p.update(resolveMedia(t, cmd))
 
 	assert.Equal(t, 1, rt.resolveCalls())
-	assert.Equal(t, []runtime.GeneratedFileRef{{
+	assert.Equal(t, []artifacts.GeneratedFileRef{{
 		OwnerSessionID: owner,
 		Root:           chat.ArtifactRootWorkspace,
 		Path:           "cat.png",
@@ -687,7 +688,7 @@ func TestCanonicalMediaReplayReusesRestoredPlaceholder(t *testing.T) {
 	p, rec := newGeneratedMediaTestPageWithSession(t, &resolverTestRuntime{}, sess)
 	p.Init()
 	before := rec.MessageTypeCount(types.MessageTypeAssistant)
-	_, effects := p.UpdateEffects(runtime.MessageAdded(sess.ID, sess.Messages[2].Message, "root"))
+	_, effects := p.UpdateEffects(contract.MessageAdded(sess.ID, sess.Messages[2].Message, "root"))
 	require.Equal(t, before, rec.MessageTypeCount(types.MessageTypeAssistant))
 	require.Nil(t, effects.Local, "queued canonical replay must not resolve a second placeholder")
 }
@@ -696,8 +697,8 @@ func TestCanonicalMediaJoinsInterleavedLogicalAnswer(t *testing.T) {
 	t.Parallel()
 	p, rec := newGeneratedMediaTestPage(t, &resolverTestRuntime{})
 	p.messages.SetSize(100, 40)
-	_, _ = p.handleRuntimeEvent(runtime.AgentChoice("root", "owner", "answer A", "a"))
-	_, _ = p.handleRuntimeEvent(runtime.AgentChoice("root", "owner", "answer B", "b"))
+	_, _ = p.handleRuntimeEvent(contract.AgentChoice("root", "owner", "answer A", "a"))
+	_, _ = p.handleRuntimeEvent(contract.AgentChoice("root", "owner", "answer B", "b"))
 	added := assistantMessageAdded("owner", workspaceImagePart("a.png", "a.png", "owner"))
 	added.Message.Message.MessageID = "a"
 	added.Message.Message.Content = "answer A"
@@ -728,7 +729,7 @@ func TestCanonicalLegacyMediaReplayJoinsRestoredMessage(t *testing.T) {
 	p, rec := newGeneratedMediaTestPageWithSession(t, &resolverTestRuntime{}, sess)
 	p.Init()
 	before := rec.MessageTypeCount(types.MessageTypeAssistant)
-	_, effects := p.UpdateEffects(runtime.MessageAdded(sess.ID, sess.Messages[2].Message, "root"))
+	_, effects := p.UpdateEffects(contract.MessageAdded(sess.ID, sess.Messages[2].Message, "root"))
 	require.Equal(t, before, rec.MessageTypeCount(types.MessageTypeAssistant))
 	require.Nil(t, effects.Local)
 }

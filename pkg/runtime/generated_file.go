@@ -6,18 +6,10 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/runtime/artifacts"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/workspacemedia"
 )
-
-// ErrGeneratedFileUnavailable indicates an unauthorized or unavailable artifact.
-var ErrGeneratedFileUnavailable = artifacts.ErrGeneratedFileUnavailable
-
-// GeneratedFileRef identifies a generated artifact owned by a session.
-type GeneratedFileRef = artifacts.GeneratedFileRef
-
-// ResolvedGeneratedFile carries validated artifact bytes and a display path.
-type ResolvedGeneratedFile = artifacts.ResolvedGeneratedFile
 
 func (r *LocalRuntime) artifacts() *artifacts.Service {
 	r.artifactsOnce.Do(func() {
@@ -31,14 +23,14 @@ func (r *LocalRuntime) artifacts() *artifacts.Service {
 }
 
 // ResolveGeneratedFile reads an artifact only after revalidating its manifest.
-func (r *LocalRuntime) ResolveGeneratedFile(ctx context.Context, ref GeneratedFileRef) (*ResolvedGeneratedFile, error) {
+func (r *LocalRuntime) ResolveGeneratedFile(ctx context.Context, ref artifacts.GeneratedFileRef) (*artifacts.ResolvedGeneratedFile, error) {
 	return r.artifacts().ResolveGeneratedFile(ctx, ref)
 }
 
-func (r *LocalRuntime) materializeGeneratedMedia(ctx context.Context, sess *session.Session, media []chat.MediaDelta, agentName string, events EventSink) []chat.MessagePart {
+func (r *LocalRuntime) materializeGeneratedMedia(ctx context.Context, sess *session.Session, media []chat.MediaDelta, agentName string, events contract.EventSink) []chat.MessagePart {
 	var warn func(string)
 	if events != nil {
-		warn = func(message string) { events.Emit(Warning(message, agentName)) }
+		warn = func(message string) { events.Emit(contract.Warning(message, agentName)) }
 	}
 	return r.artifacts().Materialize(ctx, sess, media, agentName, warn)
 }

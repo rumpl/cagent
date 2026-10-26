@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -162,7 +163,7 @@ func TestEvalStructuredOutputFromRuntime(t *testing.T) {
 	live := session.New(session.WithUserMessage("Answer me"), session.WithNonInteractive(true))
 	var events []map[string]any
 	for event := range rt.RunStream(t.Context(), live) {
-		if event, ok := event.(*runtime.ErrorEvent); ok {
+		if event, ok := event.(*contract.ErrorEvent); ok {
 			t.Errorf("runtime error: %s", event.Error)
 		}
 		data, err := json.Marshal(event)

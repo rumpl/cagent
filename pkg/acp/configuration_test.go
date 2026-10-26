@@ -25,7 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -306,7 +306,7 @@ func TestSessionConfigurationPersistsMatchingRuntimeSelection(t *testing.T) {
 }
 
 type activeConfigRuntime struct {
-	runtime.Runtime
+	contract.Runtime
 
 	active bool
 }

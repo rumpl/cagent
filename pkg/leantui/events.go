@@ -6,7 +6,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/leantui/ui"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/sound"
 	"github.com/docker/docker-agent/pkg/tools"
 	builtinshell "github.com/docker/docker-agent/pkg/tools/builtin/shell"
@@ -40,7 +40,7 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		} else {
 			m.submitFollowUp(ctx, e.Content)
 		}
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		m.contentIdentity.Finish(m.contentSession(e.SessionID))
 		if m.streamDepth == 0 {
 			m.streamStartTime = time.Now()
@@ -48,9 +48,9 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		m.streamDepth++
 		m.busy = true
 		m.trackStreamStarted(e.SessionID)
-	case *runtime.UserMessageEvent:
+	case *contract.UserMessageEvent:
 		m.handleUserMessageEvent(e)
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		if e.SessionID != "" && e.SessionID != m.contentSession("") {
 			return
 		}
@@ -65,7 +65,7 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		m.screen.Confirm = nil
 		m.status.Compacting = false
 		m.contentIdentity.Finish(m.contentSession(e.SessionID))
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		m.contentIdentity.Finish(m.contentSession(e.SessionID))
 		m.trackStreamStopped()
 		m.streamDepth = max(0, m.streamDepth-1)
@@ -75,11 +75,11 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		m.statusSession.FinishSetup(m.contentSession(""), e.Reason)
 		m.notifyStreamStopped(ctx, e.Reason)
 		m.handleStreamStopped(ctx)
-	case *runtime.AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		m.screen.Transcript.AppendReasoningContent(m.contentIdentity.Resolve(m.contentSession(e.SessionID), e.MessageID), e.Content)
-	case *runtime.AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		m.screen.Transcript.AppendAssistantContent(m.contentIdentity.Resolve(m.contentSession(e.SessionID), e.MessageID), e.Content)
-	case *runtime.MessageAddedEvent:
+	case *contract.MessageAddedEvent:
 		if e.Message == nil || e.Message.Implicit || e.Message.Message.Role != chat.MessageRoleAssistant {
 			return
 		}
@@ -87,17 +87,17 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		identity := m.contentIdentity.Resolve(sessionID, e.Message.Message.MessageID)
 		m.screen.Transcript.ReconcileAssistantContent(identity, chat.VisibleAssistantContent(e.Message.Message.Content))
 		m.contentIdentity.Finish(sessionID)
-	case *runtime.PartialToolCallEvent:
+	case *contract.PartialToolCallEvent:
 		m.screen.Transcript.FlushPending()
 		toolDef := tools.Tool{Name: e.ToolCall.Function.Name}
 		if e.ToolDefinition != nil {
 			toolDef = *e.ToolDefinition
 		}
 		m.screen.Transcript.UpsertTool(e.GetAgentName(), e.ToolCall, toolDef, tuitypes.ToolStatusPending)
-	case *runtime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		m.screen.Transcript.FlushPending()
 		m.screen.Transcript.UpsertTool(e.GetAgentName(), e.ToolCall, e.ToolDefinition, tuitypes.ToolStatusRunning)
-	case *runtime.ToolCallOutputEvent:
+	case *contract.ToolCallOutputEvent:
 		if tv := m.screen.Transcript.Tool(e.ToolCallID); tv != nil && tv.Message() != nil {
 			tv.Message().AppendToolOutput(e.Output)
 			if tv.Message().ToolStatus == tuitypes.ToolStatusPending {
@@ -108,13 +108,13 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 				}
 			}
 		}
-	case *runtime.ToolCallResponseEvent:
+	case *contract.ToolCallResponseEvent:
 		var images []ui.InlineImage
 		if m.renderImages {
 			images = inlineImagesFromToolResult(e.Result)
 		}
 		m.screen.Transcript.FinishTool(e.ToolCallID, ui.ToolResult{Response: e.Response, Result: e.Result, AgentName: e.GetAgentName(), ToolDefinition: e.ToolDefinition, Images: images}, m.sessionState)
-	case *runtime.ToolCallConfirmationEvent:
+	case *contract.ToolCallConfirmationEvent:
 		m.confirmationEvent = e
 		m.screen.Transcript.RemoveTool(ui.ToolViewID(e.ToolCall))
 		toolDef := ui.EnsureToolDefinition(e.ToolCall, e.ToolDefinition)
@@ -122,9 +122,9 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 			Tool: toolDef.Name,
 			View: *ui.NewToolView(e.GetAgentName(), e.ToolCall, toolDef, tuitypes.ToolStatusConfirmation),
 		}
-	case *runtime.TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		m.setTokenUsage(e.SessionID, e.Usage)
-	case *runtime.AgentInfoEvent:
+	case *contract.AgentInfoEvent:
 		m.status.Agent = e.AgentName
 		if m.sessionState != nil {
 			m.sessionState.SetCurrentAgentName(e.AgentName)
@@ -135,19 +135,19 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 		if e.ContextLimit > 0 {
 			m.status.ContextLimit = e.ContextLimit
 		}
-	case *runtime.TeamInfoEvent:
+	case *contract.TeamInfoEvent:
 		m.applyTeamInfo(ctx, e)
-	case *runtime.SessionCompactionEvent:
+	case *contract.SessionCompactionEvent:
 		m.handleSessionCompaction(ctx, e)
-	case *runtime.ErrorEvent:
+	case *contract.ErrorEvent:
 		if m.playSound != nil && userconfig.Get().GetSound() {
 			m.playSound(ctx, sound.Failure)
 		}
 		m.screen.Transcript.FlushPending()
 		m.addNotice("✗ ", e.Error, ui.StError())
-	case *runtime.WarningEvent:
+	case *contract.WarningEvent:
 		m.addNotice("⚠ ", e.Message, ui.StWarning())
-	case *runtime.ShellOutputEvent:
+	case *contract.ShellOutputEvent:
 		if e.CommandID == "" {
 			output := e.Output
 			m.screen.Transcript.AddBlock(func(w int) []string { return ui.RenderToolOutput(output, w) })
@@ -174,20 +174,20 @@ func (m *model) handleEvent(ctx context.Context, ev any) {
 			Result:         &tools.ToolCallResult{Output: response, IsError: e.Error != ""},
 			ToolDefinition: toolDef,
 		}, m.sessionState)
-	case *runtime.AgentSwitchingEvent:
+	case *contract.AgentSwitchingEvent:
 		if e.Switching && e.ToAgent != "" {
 			m.addNotice("→ ", "Switching to "+e.ToAgent, ui.StMuted())
 		}
-	case *runtime.AgentRouteEvent:
+	case *contract.AgentRouteEvent:
 		m.addNotice("→ ", "Routing to "+e.ToAgent, ui.StMuted())
-	case *runtime.MaxIterationsReachedEvent:
+	case *contract.MaxIterationsReachedEvent:
 		m.addNotice("⚠ ", "Maximum iterations reached.", ui.StWarning())
-	case *runtime.ModelFallbackEvent:
+	case *contract.ModelFallbackEvent:
 		m.addNotice("⚠ ", "Model "+e.FailedModel+" failed, falling back to "+e.FallbackModel+".", ui.StWarning())
 	}
 }
 
-func (m *model) handleUserMessageEvent(e *runtime.UserMessageEvent) {
+func (m *model) handleUserMessageEvent(e *contract.UserMessageEvent) {
 	if m.consumeIgnoredUserEcho(e.Message) {
 		return
 	}
@@ -215,7 +215,7 @@ func (m *model) handleStreamStopped(ctx context.Context) {
 	}
 }
 
-func (m *model) handleSessionCompaction(ctx context.Context, e *runtime.SessionCompactionEvent) {
+func (m *model) handleSessionCompaction(ctx context.Context, e *contract.SessionCompactionEvent) {
 	switch e.Status {
 	case "started":
 		m.busy = true
@@ -253,7 +253,7 @@ func (m *model) finishBusy(ctx context.Context) bool {
 	return false
 }
 
-func (m *model) applyTeamInfo(ctx context.Context, e *runtime.TeamInfoEvent) {
+func (m *model) applyTeamInfo(ctx context.Context, e *contract.TeamInfoEvent) {
 	if m.sessionState != nil {
 		m.sessionState.SetAvailableAgents(e.AvailableAgents)
 		m.sessionState.SetCurrentAgentName(e.CurrentAgent)

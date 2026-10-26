@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
@@ -76,7 +76,7 @@ func TestStreamChunkRendersBeforeRecoveryClick(t *testing.T) {
 			root.viewCacheValid = false
 			_ = root.View()
 
-			_, _ = root.Update(tc.wrap(agentruntime.AgentChoice("root", "profile", " STREAM-IDLE-MARKER")))
+			_, _ = root.Update(tc.wrap(contract.AgentChoice("root", "profile", " STREAM-IDLE-MARKER")))
 			immediate := root.View().Content
 			_, _ = root.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: root.height - 1})
 			afterClick := root.View().Content
@@ -144,7 +144,7 @@ func TestActualProgramWritesAfterEffectiveIdleInput(t *testing.T) {
 
 	program.Send(messages.WheelCoalescedMsg{Delta: 1_000_000, X: 1, Y: 1})
 	ack()
-	program.Send(agentruntime.AgentChoice("root", "profile", " PROGRAM-STREAM-MARKER"))
+	program.Send(contract.AgentChoice("root", "profile", " PROGRAM-STREAM-MARKER"))
 	ack()
 	require.Eventually(t, func() bool {
 		return strings.Contains(ansi.Strip(writer.snapshot()), "PROGRAM-STREAM-MARKER")

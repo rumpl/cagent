@@ -43,16 +43,7 @@ import (
 // ToolHandlerFunc handles a runtime-managed tool call. rt is the dispatcher's
 // per-call handle, used by handlers that need to talk back to the in-flight
 // call (streaming output, asking the user to approve an action).
-type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events EventSink, rt tools.Runtime) (*tools.ToolCallResult, error)
-
-// Runtime is the shared local and remote execution contract.
-type Runtime = contract.Runtime
-
-// PermissionsInfo contains the team's allow, ask, and deny patterns.
-type PermissionsInfo = contract.PermissionsInfo
-
-// CurrentAgentInfo describes the active agent.
-type CurrentAgentInfo = contract.CurrentAgentInfo
+type ToolHandlerFunc func(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, events contract.EventSink, rt tools.Runtime) (*tools.ToolCallResult, error)
 
 type ModelStore interface {
 	GetModel(ctx context.Context, id modelsdev.ID) (*modelsdev.Model, error)
@@ -86,15 +77,15 @@ type LocalRuntime struct {
 	// arrive from background-job goroutines (runCollecting) concurrently with
 	// the sink being (re)registered.
 	elicitationSinkMu    sync.RWMutex
-	onElicitationRequest func(Event)
-	onElicitationContext func(context.Context, Event)
+	onElicitationRequest func(contract.Event)
+	onElicitationContext func(context.Context, contract.Event)
 	sessionStore         session.Store
 	// artifactService shares workspace provenance between materialization and reads.
 	artifactsOnce    sync.Once
 	artifactService  *artifacts.Service
 	workingDir       string   // Working directory for hooks execution
 	env              []string // Environment variables for hooks execution
-	modelSwitcherCfg *ModelSwitcherConfig
+	modelSwitcherCfg *modelcatalog.Config
 	providerRegistry *provider.Registry
 	catalogOnce      sync.Once
 	modelCatalog     *modelcatalog.Catalog
@@ -184,7 +175,7 @@ type LocalRuntime struct {
 	// this runtime's subscriptions on ChangeSubscriber toolsets, released
 	// on re-registration and at Close.
 	toolsChangedMu     sync.RWMutex
-	onToolsChanged     func(Event)
+	onToolsChanged     func(contract.Event)
 	toolsChangedUnsubs []func()
 
 	// onBackgroundEvent is called for events surfaced from detached
@@ -192,8 +183,8 @@ type LocalRuntime struct {
 	// backgroundEventMu because background tasks read it from their own
 	// goroutines.
 	backgroundEventMu   sync.RWMutex
-	onBackgroundEvent   func(Event)
-	onBackgroundContext func(context.Context, Event)
+	onBackgroundEvent   func(contract.Event)
+	onBackgroundContext func(context.Context, contract.Event)
 
 	bgAgents *agenttool.Handler
 
@@ -507,14 +498,9 @@ func WithHooksRegistry(reg *hooks.Registry) Opt {
 	}
 }
 
-// New creates a runtime ready to drive an agent loop. It is a thin
-// alias for [NewLocalRuntime] returning the [Runtime] interface, kept
-// for source compatibility with callers written before persistence
-// became an [EventObserver]. Persistence is auto-registered against
-// the configured (or default in-memory) session store; pass
-// [WithSessionStore] to override and [WithEventObserver] to layer
-// additional observers (telemetry, audit, ...).
-func New(ctx context.Context, agents *team.Team, opts ...Opt) (Runtime, error) {
+// New creates a local runtime through the shared execution contract.
+// Persistence uses the configured store, defaulting to an in-memory store.
+func New(ctx context.Context, agents *team.Team, opts ...Opt) (contract.Runtime, error) {
 	return NewLocalRuntime(ctx, agents, opts...)
 }
 
@@ -711,10 +697,10 @@ func (r *LocalRuntime) setCurrentAgent(name string) {
 	r.agents.Set(name)
 }
 
-func (r *LocalRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
+func (r *LocalRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
 	currentAgent := r.CurrentAgent()
 
-	return CurrentAgentInfo{
+	return contract.CurrentAgentInfo{
 		Name:        currentAgent.Name(),
 		Description: currentAgent.Description(),
 		Commands:    currentAgent.Commands(),
@@ -741,23 +727,8 @@ func (r *LocalRuntime) CurrentAgentTools(ctx context.Context) ([]tools.Tool, err
 	return bindSkillRuntime(agentTools, skillRuntime{runtime: r, agent: a}), nil
 }
 
-// ToolsetState is the inspector's coarse lifecycle bucket.
-type ToolsetState = inspection.ToolsetState
-
-const (
-	ToolsetStarted = inspection.ToolsetStarted
-	ToolsetStopped = inspection.ToolsetStopped
-	ToolsetError   = inspection.ToolsetError
-)
-
-// ToolsetDetail describes one toolset in the agent inspector.
-type ToolsetDetail = inspection.ToolsetDetail
-
-// AgentConfigInfo describes agent configuration and live toolset status.
-type AgentConfigInfo = inspection.AgentConfigInfo
-
 // AgentConfigInfo inspects an agent without starting tools or drivers.
-func (r *LocalRuntime) AgentConfigInfo(ctx context.Context, name string) AgentConfigInfo {
+func (r *LocalRuntime) AgentConfigInfo(ctx context.Context, name string) inspection.AgentConfigInfo {
 	current := ""
 	if r.agents != nil {
 		current = r.agents.Name()
@@ -1024,18 +995,18 @@ func (r *LocalRuntime) getEffectiveModelID(ctx context.Context, a *agent.Agent) 
 // agentDetailsFromTeam converts team agent info to AgentDetails for events.
 // It accounts for active fallback cooldowns, returning the effective model
 // instead of the configured model when a fallback is in effect.
-func (r *LocalRuntime) agentDetailsFromTeam(ctx context.Context) []AgentDetails {
+func (r *LocalRuntime) agentDetailsFromTeam(ctx context.Context) []contract.AgentDetails {
 	agentsInfo := r.team.AgentsInfo(ctx)
-	details := make([]AgentDetails, len(agentsInfo))
+	details := make([]contract.AgentDetails, len(agentsInfo))
 	for i, info := range agentsInfo {
 		providerName := info.Provider
 		modelName := info.Model
 		var thinking string
-		var capabilities *ExecutionCapabilities
+		var capabilities *inspection.ExecutionCapabilities
 
 		// Get the agent to access fallbacks and the effective thinking level.
 		if a, err := r.team.Agent(info.Name); err == nil && a != nil {
-			capabilities = executionCapabilities(a)
+			capabilities = inspection.Capabilities(a)
 			// Check if this agent has an active fallback cooldown
 			cooldownState := r.fallback.cooldowns.Get(info.Name)
 			if cooldownState != nil {
@@ -1049,7 +1020,7 @@ func (r *LocalRuntime) agentDetailsFromTeam(ctx context.Context) []AgentDetails 
 			thinking = r.agentThinkingLabel(ctx, a)
 		}
 
-		details[i] = AgentDetails{
+		details[i] = contract.AgentDetails{
 			Name:                  info.Name,
 			Description:           info.Description,
 			Provider:              providerName,
@@ -1120,12 +1091,12 @@ func (r *LocalRuntime) UpdateSessionTitle(ctx context.Context, sess *session.Ses
 
 // PermissionsInfo returns the team-level permission patterns.
 // Returns nil if no permissions are configured.
-func (r *LocalRuntime) PermissionsInfo() *PermissionsInfo {
+func (r *LocalRuntime) PermissionsInfo() *contract.PermissionsInfo {
 	permChecker := r.team.Permissions()
 	if permChecker == nil || permChecker.IsEmpty() {
 		return nil
 	}
-	return &PermissionsInfo{
+	return &contract.PermissionsInfo{
 		Allow: permChecker.AllowPatterns(),
 		Ask:   permChecker.AskPatterns(),
 		Deny:  permChecker.DenyPatterns(),
@@ -1145,7 +1116,7 @@ func (r *LocalRuntime) ResetStartupInfo() {
 // team's toolsets on behalf of the handler, replacing only its own previous
 // subscriptions so runtimes sharing a toolset do not displace each other;
 // a nil handler unsubscribes.
-func (r *LocalRuntime) OnToolsChanged(handler func(Event)) {
+func (r *LocalRuntime) OnToolsChanged(handler func(contract.Event)) {
 	r.toolsChangedMu.Lock()
 	r.onToolsChanged = handler
 	previous := r.toolsChangedUnsubs
@@ -1176,11 +1147,11 @@ func (r *LocalRuntime) emitToolsChanged() {
 	if err != nil {
 		return
 	}
-	handler(ToolsetInfo(len(agentTools), false, r.currentAgentName()))
+	handler(contract.ToolsetInfo(len(agentTools), false, r.currentAgentName()))
 }
 
 // OnBackgroundEvent receives lifecycle and usage events from detached agent tasks.
-func (r *LocalRuntime) OnBackgroundEvent(handler func(Event)) {
+func (r *LocalRuntime) OnBackgroundEvent(handler func(contract.Event)) {
 	r.backgroundEventMu.Lock()
 	defer r.backgroundEventMu.Unlock()
 	r.onBackgroundEvent = handler
@@ -1188,7 +1159,7 @@ func (r *LocalRuntime) OnBackgroundEvent(handler func(Event)) {
 }
 
 // OnBackgroundEventWithContext preserves detached producer ownership.
-func (r *LocalRuntime) OnBackgroundEventWithContext(handler func(context.Context, Event)) {
+func (r *LocalRuntime) OnBackgroundEventWithContext(handler func(context.Context, contract.Event)) {
 	r.backgroundEventMu.Lock()
 	defer r.backgroundEventMu.Unlock()
 	r.onBackgroundContext = handler
@@ -1197,7 +1168,7 @@ func (r *LocalRuntime) OnBackgroundEventWithContext(handler func(context.Context
 
 // emitBackgroundEvent forwards an event from detached background work to the
 // registered handler, if any.
-func (r *LocalRuntime) emitBackgroundEvent(ctx context.Context, event Event) {
+func (r *LocalRuntime) emitBackgroundEvent(ctx context.Context, event contract.Event) {
 	r.backgroundEventMu.RLock()
 	handler := r.onBackgroundEvent
 	contextual := r.onBackgroundContext
@@ -1271,7 +1242,7 @@ var (
 // Steer enqueues a user message for urgent mid-turn injection into the
 // running agent loop. The message will be picked up after the current batch
 // of tool calls finishes but before the loop checks whether to stop.
-func (r *LocalRuntime) Steer(ctx context.Context, msg QueuedMessage) error {
+func (r *LocalRuntime) Steer(ctx context.Context, msg contract.QueuedMessage) error {
 	if !r.steerQueue.Enqueue(ctx, msg) {
 		return ErrSteerQueueFull
 	}
@@ -1281,7 +1252,7 @@ func (r *LocalRuntime) Steer(ctx context.Context, msg QueuedMessage) error {
 // FollowUp enqueues a message to be processed after the current agent turn
 // finishes. Unlike Steer, follow-ups are popped one at a time and each gets
 // a full undivided agent turn.
-func (r *LocalRuntime) FollowUp(ctx context.Context, msg QueuedMessage) error {
+func (r *LocalRuntime) FollowUp(ctx context.Context, msg contract.QueuedMessage) error {
 	if !r.followUpQueue.Enqueue(ctx, msg) {
 		return ErrFollowUpQueueFull
 	}
@@ -1307,7 +1278,7 @@ func (r *LocalRuntime) SetRecallHandler(handler RecallHandler) {
 	r.recallHandler = handler
 }
 
-func (r *LocalRuntime) recall(ctx context.Context, msg QueuedMessage) error {
+func (r *LocalRuntime) recall(ctx context.Context, msg contract.QueuedMessage) error {
 	if r.activeRootStreams.Load() > 0 {
 		return r.Steer(ctx, msg)
 	}
@@ -1324,8 +1295,8 @@ func (r *LocalRuntime) recall(ctx context.Context, msg QueuedMessage) error {
 	return nil
 }
 
-func (r *LocalRuntime) QueueStatus() QueueStatus {
-	status := QueueStatus{}
+func (r *LocalRuntime) QueueStatus() contract.QueueStatus {
+	status := contract.QueueStatus{}
 	if steerQ, ok := r.steerQueue.(*inMemoryMessageQueue); ok {
 		status.SteerDepth, status.SteerCapacity = steerQ.status()
 	}
@@ -1353,7 +1324,7 @@ func (r *LocalRuntime) startSpan(ctx context.Context, name string, opts ...trace
 // and "manual" to PreCompact hooks.
 // Internal callers (proactive threshold, overflow recovery) use
 // [LocalRuntime.compactWithReason] directly to forward a more specific reason.
-func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events EventSink) {
+func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, additionalPrompt string, events contract.EventSink) {
 	// Manual compaction bypasses RunStream, but native compaction may start tools.
 	ctx = genai.WithConversationID(ctx, sess.ID)
 	ctx = tools.WithHandlerScope(ctx, tools.HandlerScope{
@@ -1361,7 +1332,7 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 		Sampling:          r.samplingHandler,
 		SamplingWithTools: r.samplingWithToolsHandler,
 		OAuthSuccess: func() {
-			events.Emit(Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
+			events.Emit(contract.Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
 		},
 	})
 	r.configureToolsetHandlers(r.resolveSessionAgent(sess))
@@ -1383,7 +1354,7 @@ func (r *LocalRuntime) Summarize(ctx context.Context, sess *session.Session, add
 // compaction or contribute additional steering text. BeforeCompaction
 // hooks then fire inside [LocalRuntime.doCompact] with [Input.CompactionReason]
 // set to the canonical reason; they may veto or supply a custom summary.
-func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events EventSink) {
+func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Session, additionalPrompt, reason string, events contract.EventSink) {
 	// Stamp the session ID on ctx so the compaction LLM call carries
 	// `X-Cagent-Session-Id` to the gateway. Manual compaction
 	// (via `Summarize` from the App) bypasses `runStreamLoop`'s seed;
@@ -1398,7 +1369,7 @@ func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Sess
 		slog.WarnContext(ctx, "pre_compact hook signalled skip",
 			"agent", a.Name(), "session_id", sess.ID, "source", source, "reason", msg)
 		if msg != "" {
-			events.Emit(Warning(msg, a.Name()))
+			events.Emit(contract.Warning(msg, a.Name()))
 		}
 		return
 	}
@@ -1411,7 +1382,7 @@ func (r *LocalRuntime) compactWithReason(ctx context.Context, sess *session.Sess
 	// cost increases by the summary generation cost.
 	modelID := r.getEffectiveModelID(ctx, a)
 	contextLimit := r.effectiveContextLimit(ctx, a, r.resolveContextLimit(ctx, a.Model(ctx), modelID))
-	events.Emit(NewTokenUsageEvent(sess.ID, a.Name(), SessionUsage(sess, contextLimit, a.CompactionThreshold())))
+	events.Emit(contract.NewTokenUsageEvent(sess.ID, a.Name(), contract.SessionUsage(sess, contextLimit, a.CompactionThreshold())))
 }
 
 // preCompactSourceFor maps the canonical compaction reason

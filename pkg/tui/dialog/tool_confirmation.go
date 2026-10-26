@@ -1,7 +1,7 @@
 package dialog
 
 import (
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
 	"github.com/docker/docker-agent/pkg/tui/components/tool"
@@ -21,7 +21,7 @@ var (
 	_ ConfirmationSessionState = (*service.EmbeddedSessionState)(nil)
 )
 
-func NewToolConfirmationDialog(ar *animation.Runtime, msg *runtime.ToolCallConfirmationEvent, sessionState ConfirmationSessionState, registries ...*tool.Registry) Dialog {
+func NewToolConfirmationDialog(ar *animation.Runtime, msg *contract.ToolCallConfirmationEvent, sessionState ConfirmationSessionState, registries ...*tool.Registry) Dialog {
 	registry := tooldefaults.NewRegistry()
 	if len(registries) > 0 && registries[0] != nil {
 		registry = registries[0]

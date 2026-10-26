@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -61,7 +61,7 @@ func TestToolRendererOptionReachesMessagesAndConfirmation(t *testing.T) {
 			other = "second-renderer"
 		}
 		assert.NotContains(t, out, other)
-		event := runtime.ToolCallConfirmation(call, def, "root", nil)
+		event := contract.ToolCallConfirmation(call, def, "root", nil)
 		cmd := pages[i].attentionDialogCmd(event)
 		require.NotNil(t, cmd)
 		open, ok := cmd().(dialog.OpenDialogMsg)

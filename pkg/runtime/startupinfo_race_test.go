@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -35,7 +36,7 @@ func TestStartupInfoEmittedConcurrentStartAndReEmit(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			events := make(chan Event, 16)
+			events := make(chan contract.Event, 16)
 			rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 			close(events)
 			for range events {
@@ -69,7 +70,7 @@ func TestStartupInfoEmittedSingleEmissionWithoutReset(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			events := make(chan Event, 16)
+			events := make(chan contract.Event, 16)
 			rt.EmitStartupInfo(t.Context(), sess, NewChannelSink(events))
 			close(events)
 			n := 0

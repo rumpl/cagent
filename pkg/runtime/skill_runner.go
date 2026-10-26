@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -18,7 +19,7 @@ import (
 
 // handleRunSkill unmarshals the run_skill tool arguments and delegates to
 // runSkillFork.
-func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts contract.EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
 	var args skills.RunSkillArgs
 	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
@@ -31,14 +32,14 @@ func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session
 // agent's own system prompt is preserved. Entry point for callers outside a
 // tool call (the App's slash-command path); run_skill goes through
 // [LocalRuntime.handleRunSkill].
-func (r *LocalRuntime) RunSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts EventSink) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) RunSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts contract.EventSink) (*tools.ToolCallResult, error) {
 	return r.runSkillFork(ctx, sess, args, evts, nil, r.resolveSessionAgent(sess))
 }
 
 // runSkillFork prepares and runs the fork sub-session. rt is the in-flight
 // tool call's runtime handle. Standalone invocations pass nil and skip embedded
 // commands because no tool call exists to own an approval prompt.
-func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
+func (r *LocalRuntime) runSkillFork(ctx context.Context, sess *session.Session, args skills.RunSkillArgs, evts contract.EventSink, rt tools.Runtime, caller *agent.Agent) (*tools.ToolCallResult, error) {
 	// Tool calls retain the caller captured before approval; slash commands resolve it once.
 	if caller == nil {
 		return nil, errors.New("no agent resolved for the calling session")

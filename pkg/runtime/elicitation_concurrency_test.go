@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -298,14 +299,14 @@ func TestElicitationBridge_SendBlocksUntilCtxDone(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		var b elicitationBridge
-		ch := make(chan Event) // unbuffered, nobody ever reads it
+		ch := make(chan contract.Event) // unbuffered, nobody ever reads it
 		b.swap(ch)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		start := time.Now()
-		err := b.send(ctx, Warning("hello", "agent"))
+		err := b.send(ctx, contract.Warning("hello", "agent"))
 		elapsed := time.Since(start)
 
 		require.ErrorIs(t, err, context.DeadlineExceeded, "send on a full/abandoned channel must release via ctx, not block forever")
@@ -327,11 +328,11 @@ func TestElicitationBridge_SendNeverBlocksReliableSink(t *testing.T) {
 
 		// Wedge the bridge: swap in an unbuffered channel with no reader, as if
 		// a concurrent RunStream's swap left a dead consumer behind.
-		wedged := make(chan Event)
+		wedged := make(chan contract.Event)
 		rt.elicitation.swap(wedged)
 
-		sinkCalled := make(chan Event, 1)
-		rt.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
+		sinkCalled := make(chan contract.Event, 1)
+		rt.OnElicitationRequest(func(ev contract.Event) { sinkCalled <- ev })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
@@ -347,10 +348,10 @@ func TestElicitationBridge_SendNeverBlocksReliableSink(t *testing.T) {
 		}()
 
 		// The sink must fire almost immediately, regardless of the wedged bridge.
-		var ev *ElicitationRequestEvent
+		var ev *contract.ElicitationRequestEvent
 		select {
 		case e := <-sinkCalled:
-			ev = e.(*ElicitationRequestEvent)
+			ev = e.(*contract.ElicitationRequestEvent)
 		case <-time.After(1 * time.Second):
 			t.Fatal("the reliable sink must not be blocked by a wedged bridge channel")
 		}
@@ -400,8 +401,8 @@ func TestElicitationHandler_BackgroundWithSinkStillWaitsForResponse(t *testing.T
 	synctest.Test(t, func(t *testing.T) {
 		rt := newElicitationTestRuntime(t)
 
-		received := make(chan Event, 1)
-		rt.OnElicitationRequest(func(ev Event) { received <- ev })
+		received := make(chan contract.Event, 1)
+		rt.OnElicitationRequest(func(ev contract.Event) { received <- ev })
 
 		ctx := mcptools.WithoutInteractivePrompts(t.Context())
 		ctx = genai.WithConversationID(ctx, "bg-sess-2")
@@ -416,10 +417,10 @@ func TestElicitationHandler_BackgroundWithSinkStillWaitsForResponse(t *testing.T
 			done <- handlerResult{result, err}
 		}()
 
-		var ev *ElicitationRequestEvent
+		var ev *contract.ElicitationRequestEvent
 		select {
 		case e := <-received:
-			ev = e.(*ElicitationRequestEvent)
+			ev = e.(*contract.ElicitationRequestEvent)
 		case <-time.After(2 * time.Second):
 			t.Fatal("sink never received the elicitation request")
 		}
@@ -451,12 +452,12 @@ func TestElicitationHandler_TOCTOU_ResolveImmediatelyAfterRegister(t *testing.T)
 	rt := newElicitationTestRuntime(t)
 
 	sinkDone := make(chan struct{})
-	rt.OnElicitationRequest(func(ev Event) {
+	rt.OnElicitationRequest(func(ev contract.Event) {
 		// Resolve from inside the sink callback itself, i.e. before
 		// elicitationHandler's goroutine has any chance to reach its
 		// `select` on the waiter channel. This is the tightest possible
 		// version of the TOCTOU window.
-		e := ev.(*ElicitationRequestEvent)
+		e := ev.(*contract.ElicitationRequestEvent)
 		ok := rt.elicitationWaiters.resolve(e.ElicitationID, ElicitationResult{Action: tools.ElicitationActionAccept, Content: map[string]any{"answered": true}})
 		assert.True(t, ok, "resolve issued synchronously from the sink callback must still find the just-registered waiter")
 		close(sinkDone)
@@ -565,9 +566,9 @@ func TestConcurrentBackgroundElicitations_AllSurfaceAndRouteToCorrectWaiter(t *t
 		// duplicates any more.
 		var mu sync.Mutex
 		deliveries := make(map[string]int)
-		requests := make(map[string]*ElicitationRequestEvent)
-		rt.OnElicitationRequest(func(ev Event) {
-			req := ev.(*ElicitationRequestEvent)
+		requests := make(map[string]*contract.ElicitationRequestEvent)
+		rt.OnElicitationRequest(func(ev contract.Event) {
+			req := ev.(*contract.ElicitationRequestEvent)
 			mu.Lock()
 			defer mu.Unlock()
 			deliveries[req.ElicitationID]++

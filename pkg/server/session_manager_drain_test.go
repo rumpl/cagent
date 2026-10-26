@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/api"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -21,17 +21,17 @@ type drainingSessionRuntime struct {
 	stopped chan struct{}
 }
 
-func (r *drainingSessionRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *drainingSessionRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	close(r.started)
 	go func() {
 		defer close(events)
 		defer close(r.stopped)
 		<-ctx.Done()
-		events <- runtime.Warning("teardown started", "root")
+		events <- contract.Warning("teardown started", "root")
 		<-r.release
 		for range 256 {
-			events <- runtime.Warning("teardown still running", "root")
+			events <- contract.Warning("teardown still running", "root")
 		}
 	}()
 	return events

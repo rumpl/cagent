@@ -19,6 +19,8 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/teamloader"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -153,7 +155,7 @@ func loadCLIRuntimeConfig(t *testing.T, f *runExecFlags, yaml string) *teamloade
 	return loaded
 }
 
-func createCLIRuntimeConfig(t *testing.T, f *runExecFlags, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (runtime.Runtime, *session.Session) {
+func createCLIRuntimeConfig(t *testing.T, f *runExecFlags, loaded *teamloader.LoadResult, req runtime.CreateSessionRequest) (contract.Runtime, *session.Session) {
 	t.Helper()
 	store := session.NewInMemorySessionStore()
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -165,10 +167,10 @@ func createCLIRuntimeConfig(t *testing.T, f *runExecFlags, loaded *teamloader.Lo
 	return rt, sess
 }
 
-func cliRuntimeModelChoice(t *testing.T, rt runtime.Runtime, ref string) runtime.ModelChoice {
+func cliRuntimeModelChoice(t *testing.T, rt contract.Runtime, ref string) modelcatalog.ModelChoice {
 	t.Helper()
 	choices := rt.AvailableModels(t.Context())
-	index := slices.IndexFunc(choices, func(choice runtime.ModelChoice) bool { return choice.Ref == ref })
+	index := slices.IndexFunc(choices, func(choice modelcatalog.ModelChoice) bool { return choice.Ref == ref })
 	require.NotEqual(t, -1, index, "model %q missing from CLI runtime picker", ref)
 	return choices[index]
 }
@@ -253,7 +255,7 @@ func TestCLIRuntimeConfig_ModelSwitchingPropagatesLoadedConfiguration(t *testing
 
 			sess.AddMessage(session.UserMessage("Reply offline"))
 			for event := range rt.RunStream(t.Context(), sess) {
-				if failure, ok := event.(*runtime.ErrorEvent); ok {
+				if failure, ok := event.(*contract.ErrorEvent); ok {
 					t.Errorf("runtime error: %s", failure.Error)
 				}
 			}
@@ -331,17 +333,17 @@ func TestCLIRuntimeConfig_EnforcesManifestRunAndNamedBudgets(t *testing.T) {
 			}
 			loaded := loadCLIRuntimeConfig(t, f, yaml)
 			rt, sess := createCLIRuntimeConfig(t, f, loaded, runtime.CreateSessionRequest{AgentName: "reviewer", WorkingDir: f.runConfig.WorkingDir})
-			var statuses []runtime.BudgetStatus
-			var stops []*runtime.BudgetExceededEvent
+			var statuses []contract.BudgetStatus
+			var stops []*contract.BudgetExceededEvent
 			for range 2 {
 				sess.AddMessage(session.UserMessage("Reply offline"))
 				for event := range rt.RunStream(t.Context(), sess) {
 					switch e := event.(type) {
-					case *runtime.BudgetUsageEvent:
+					case *contract.BudgetUsageEvent:
 						statuses = e.Budgets
-					case *runtime.BudgetExceededEvent:
+					case *contract.BudgetExceededEvent:
 						stops = append(stops, e)
-					case *runtime.ErrorEvent:
+					case *contract.ErrorEvent:
 						t.Errorf("runtime error: %s", e.Error)
 					}
 				}

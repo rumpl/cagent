@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	tuibanner "github.com/docker/docker-agent/pkg/tui/banner"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
@@ -114,7 +114,7 @@ func TestEmptyAgentInfoDoesNotReactivateStartupBanner(t *testing.T) {
 
 	p := newLayoutTestPage(t, msgtypes.SidebarRight)
 	p.showStartupBanner = false
-	handled, _ := p.handleRuntimeEvent(runtime.AgentInfo("root", "model", "", ""))
+	handled, _ := p.handleRuntimeEvent(contract.AgentInfo("root", "model", "", ""))
 
 	require.True(t, handled)
 	assert.False(t, p.showStartupBanner)
@@ -135,7 +135,7 @@ func TestAgentWelcomeMessageControlsStartupBanner(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newLayoutTestPage(t, msgtypes.SidebarRight)
-			event := runtime.AgentInfo("root", "model", "", tt.welcomeMessage)
+			event := contract.AgentInfo("root", "model", "", tt.welcomeMessage)
 			handled, _ := p.handleRuntimeEvent(event)
 
 			require.True(t, handled)
@@ -313,7 +313,7 @@ func TestSetLayoutSettingsForwardsInfoModeToSidebar(t *testing.T) {
 
 	p := newLayoutTestPage(t, msgtypes.SidebarRight)
 	p.sessionState.SetCurrentAgentName("root")
-	p.sidebar.SetTeamInfo([]runtime.AgentDetails{
+	p.sidebar.SetTeamInfo([]contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4", Thinking: "high"},
 	})
 	p.SetSize(160, 40)
@@ -343,7 +343,7 @@ func TestWithLayoutSettingsAppliesInfoMode(t *testing.T) {
 		sessionState: sessionState,
 	}
 	WithLayoutSettings(msgtypes.LayoutSettings{SidebarInfoMode: msgtypes.InfoModeDetailed})(p)
-	p.sidebar.SetTeamInfo([]runtime.AgentDetails{
+	p.sidebar.SetTeamInfo([]contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4", Thinking: "high"},
 	})
 	p.SetSize(160, 40)
@@ -361,7 +361,7 @@ func TestSetLayoutSettingsForwardsActiveAgentsOnlyToSidebar(t *testing.T) {
 
 	p := newLayoutTestPage(t, msgtypes.SidebarRight)
 	p.sessionState.SetCurrentAgentName("root")
-	p.sidebar.SetTeamInfo([]runtime.AgentDetails{
+	p.sidebar.SetTeamInfo([]contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4"},
 		{Name: "idle", Provider: "openai", Model: "gpt-4o"},
 	})

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tools/builtin/todo"
 )
@@ -165,13 +165,13 @@ func TestBuildToolCallComplete(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		event      *runtime.ToolCallResponseEvent
+		event      *contract.ToolCallResponseEvent
 		wantStatus acpsdk.ToolCallStatus
 		wantDiff   bool
 	}{
 		{
 			name: "nil result completes with text content",
-			event: &runtime.ToolCallResponseEvent{
+			event: &contract.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "shell"},
 				Response:       "file.txt",
@@ -180,7 +180,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 		},
 		{
 			name: "error result fails",
-			event: &runtime.ToolCallResponseEvent{
+			event: &contract.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "shell"},
 				Response:       "denied",
@@ -190,7 +190,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 		},
 		{
 			name: "successful edit_file uses diff content",
-			event: &runtime.ToolCallResponseEvent{
+			event: &contract.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
 				Response:       "edited",
@@ -201,7 +201,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 		},
 		{
 			name: "failed edit_file keeps text content",
-			event: &runtime.ToolCallResponseEvent{
+			event: &contract.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
 				Response:       "failed",
@@ -211,7 +211,7 @@ func TestBuildToolCallComplete(t *testing.T) {
 		},
 		{
 			name: "edit_file without snapshot metadata falls back to text",
-			event: &runtime.ToolCallResponseEvent{
+			event: &contract.ToolCallResponseEvent{
 				ToolCallID:     "call-1",
 				ToolDefinition: tools.Tool{Name: "edit_file"},
 				Response:       "edited",

@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/input"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/jscommands"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry"
@@ -81,7 +82,7 @@ type Config struct {
 // Run executes an agent in non-TUI mode, handling user input and runtime events.
 // userMessages contains the user messages to send. If a single message is "-",
 // input is read from stdin. If empty, an interactive prompt loop is started.
-func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess *session.Session, userMessages []string) error {
+func Run(ctx context.Context, out *Printer, cfg Config, rt contract.Runtime, sess *session.Session, userMessages []string) error {
 	// Enable ${...} JavaScript expressions in slash-command instructions.
 	jscommands.Register()
 
@@ -138,15 +139,15 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 					last.observe(event)
 				}
 				switch e := event.(type) {
-				case *runtime.ToolCallConfirmationEvent:
+				case *contract.ToolCallConfirmationEvent:
 					// JSON mode has no user at stdin — reject unconditionally.
 					// A confirmation event under AutoApprove means a
 					// preempt-yolo hook overrode --yolo; the safe answer is
 					// still Reject (the hook said Ask, not Approve).
 					rt.Resume(runCtx, runtime.ResumeReject(""))
-				case *runtime.ElicitationRequestEvent:
+				case *contract.ElicitationRequestEvent:
 					_ = rt.ResumeElicitation(runCtx, "decline", nil, e.ElicitationID)
-				case *runtime.MaxIterationsReachedEvent:
+				case *contract.MaxIterationsReachedEvent:
 					switch handleMaxIterationsAutoApprove(cfg.AutoApprove, &autoExtensions, e.MaxIterations) {
 					case maxIterContinue:
 						rt.Resume(runCtx, runtime.ResumeApprove())
@@ -157,7 +158,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 						}
 						return nil
 					}
-				case *runtime.ErrorEvent:
+				case *contract.ErrorEvent:
 					return fmt.Errorf("%s", e.Error)
 				}
 
@@ -194,7 +195,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 				lastAgent = agentName
 			}
 			switch e := event.(type) {
-			case *runtime.AgentChoiceEvent:
+			case *contract.AgentChoiceEvent:
 				if e.Content != "" {
 					if printingReasoning {
 						out.Print("\n\n")
@@ -202,12 +203,12 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 					out.Print(e.Content)
 					printingReasoning = false
 				}
-			case *runtime.AgentChoiceReasoningEvent:
+			case *contract.AgentChoiceReasoningEvent:
 				if e.Content != "" {
 					out.Print(e.Content)
 					printingReasoning = true
 				}
-			case *runtime.ToolCallConfirmationEvent:
+			case *contract.ToolCallConfirmationEvent:
 				printingReasoning = false
 				result := out.PrintToolCallWithConfirmation(ctx, e.ToolCall, rd)
 				// If interrupted, skip resuming; the runtime will notice context cancellation and stop
@@ -232,7 +233,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 					cancel()
 					continue
 				}
-			case *runtime.ToolCallEvent:
+			case *contract.ToolCallEvent:
 				if cfg.HideToolCalls {
 					continue
 				}
@@ -241,7 +242,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 					out.PrintToolCall(e.ToolCall)
 					printingReasoning = false
 				}
-			case *runtime.ToolCallResponseEvent:
+			case *contract.ToolCallResponseEvent:
 				if cfg.HideToolCalls {
 					continue
 				}
@@ -251,13 +252,13 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 				if e.ToolCallID == lastConfirmedToolCallID {
 					lastConfirmedToolCallID = ""
 				}
-			case *runtime.WarningEvent:
+			case *contract.WarningEvent:
 				// Surface warnings (e.g. a refusal, or a turn that produced only
 				// reasoning / an empty response) in non-TUI runs, where they would
 				// otherwise be dropped. The TUI renders these as notifications.
 				out.PrintWarning(e.Message)
 				printingReasoning = false
-			case *runtime.ErrorEvent:
+			case *contract.ErrorEvent:
 				lowerErr := strings.ToLower(e.Error)
 				if strings.Contains(lowerErr, "context cancel") && ctx.Err() != nil { // treat Ctrl+C cancellations as non-errors
 					lastErr = nil
@@ -267,7 +268,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 					// failure twice in --exec runs.
 					lastErr = fmt.Errorf("%s", e.Error)
 				}
-			case *runtime.MaxIterationsReachedEvent:
+			case *contract.MaxIterationsReachedEvent:
 				switch handleMaxIterationsAutoApprove(cfg.AutoApprove, &autoExtensions, e.MaxIterations) {
 				case maxIterContinue:
 					rt.Resume(runCtx, runtime.ResumeApprove())
@@ -288,7 +289,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 						return nil
 					}
 				}
-			case *runtime.ElicitationRequestEvent:
+			case *contract.ElicitationRequestEvent:
 				serverURL, ok := e.Meta["docker-agent/server_url"].(string)
 				if !ok || serverURL == "" {
 					// Keep draining after declining forms so follow-up events cannot stall the turn.
@@ -415,7 +416,7 @@ func Run(ctx context.Context, out *Printer, cfg Config, rt runtime.Runtime, sess
 // attachment was used), and an error if agent switching fails. Callers should
 // pass the attachment path to session.Session.AddAttachedFile so sub-agents
 // inherit the file context.
-func PrepareUserMessage(ctx context.Context, rt runtime.Runtime, userInput, globalAttachPath string) (*session.Message, string, error) {
+func PrepareUserMessage(ctx context.Context, rt contract.Runtime, userInput, globalAttachPath string) (*session.Message, string, error) {
 	// Resolve any /command to its prompt text BEFORE switching agents.
 	// This ensures the command is looked up in the original agent's command table.
 	resolvedContent := runtime.ResolveCommand(ctx, rt, userInput)

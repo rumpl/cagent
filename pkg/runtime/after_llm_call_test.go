@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/runtime/pricing"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
@@ -360,7 +361,7 @@ func TestMalformedToolCallNameSanitizedBeforeStore(t *testing.T) {
 
 	var assistantMsg *session.Message
 	for _, ev := range events {
-		if e, ok := ev.(*MessageAddedEvent); ok && e.Message != nil && e.Message.Message.Role == chat.MessageRoleAssistant {
+		if e, ok := ev.(*contract.MessageAddedEvent); ok && e.Message != nil && e.Message.Message.Role == chat.MessageRoleAssistant {
 			assistantMsg = e.Message
 		}
 	}

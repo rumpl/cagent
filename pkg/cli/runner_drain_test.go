@@ -9,7 +9,7 @@ import (
 
 	"gotest.tools/v3/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -17,9 +17,9 @@ import (
 // cancelled, then floods more events than any buffer holds before closing.
 // done is closed only once every event has been consumed, so Run can only
 // observe it closed if it cancelled the producer and drained the stream.
-func stallingRunStream(triggers []runtime.Event, done chan<- struct{}) func(context.Context, *session.Session) <-chan runtime.Event {
-	return func(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-		ch := make(chan runtime.Event)
+func stallingRunStream(triggers []contract.Event, done chan<- struct{}) func(context.Context, *session.Session) <-chan contract.Event {
+	return func(ctx context.Context, _ *session.Session) <-chan contract.Event {
+		ch := make(chan contract.Event)
 		go func() {
 			defer close(ch)
 			defer close(done)
@@ -28,15 +28,15 @@ func stallingRunStream(triggers []runtime.Event, done chan<- struct{}) func(cont
 			}
 			<-ctx.Done()
 			for range 256 {
-				ch <- runtime.Warning("trailing", "test")
+				ch <- contract.Warning("trailing", "test")
 			}
 		}()
 		return ch
 	}
 }
 
-func repeatMaxIterEvents(n int) []runtime.Event {
-	events := make([]runtime.Event, n)
+func repeatMaxIterEvents(n int) []contract.Event {
+	events := make([]contract.Event, n)
 	for i := range events {
 		events[i] = maxIterEvent(10)
 	}
@@ -51,13 +51,13 @@ func TestRunEarlyReturnCancelsAndDrainsStream(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		cfg      Config
-		triggers []runtime.Event
+		triggers []contract.Event
 		wantErr  string
 	}{
 		{
 			name:     "last error",
 			cfg:      Config{Last: true},
-			triggers: []runtime.Event{runtime.Error("model failed")},
+			triggers: []contract.Event{contract.Error("model failed")},
 			wantErr:  "model failed",
 		},
 		{
@@ -75,7 +75,7 @@ func TestRunEarlyReturnCancelsAndDrainsStream(t *testing.T) {
 		{
 			name:     "json error",
 			cfg:      Config{OutputJSON: true},
-			triggers: []runtime.Event{runtime.Error("model failed")},
+			triggers: []contract.Event{contract.Error("model failed")},
 			wantErr:  "model failed",
 		},
 		{
@@ -123,16 +123,16 @@ func TestRunEarlyReturnKeepsFollowUpTurnsAlive(t *testing.T) {
 	var turns int
 	var secondTurnCtxErr error
 	rt := &mockRuntime{
-		runStreamFn: func(ctx context.Context, _ *session.Session) <-chan runtime.Event {
+		runStreamFn: func(ctx context.Context, _ *session.Session) <-chan contract.Event {
 			turns++
-			ch := make(chan runtime.Event, maxAutoExtensions+1)
+			ch := make(chan contract.Event, maxAutoExtensions+1)
 			if turns == 1 {
 				for _, e := range repeatMaxIterEvents(maxAutoExtensions + 1) {
 					ch <- e
 				}
 			} else {
 				secondTurnCtxErr = ctx.Err()
-				ch <- runtime.AgentChoice("test", "sess", "second turn answer")
+				ch <- contract.AgentChoice("test", "sess", "second turn answer")
 			}
 			close(ch)
 			return ch

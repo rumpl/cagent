@@ -34,6 +34,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
@@ -42,7 +43,7 @@ import (
 
 // fakeRuntime is a minimal Runtime that records concurrent RunStream calls.
 type fakeRuntime struct {
-	runtime.Runtime
+	contract.Runtime
 
 	concurrentStreams atomic.Int32
 	maxConcurrent     atomic.Int32
@@ -51,7 +52,7 @@ type fakeRuntime struct {
 	release chan struct{}
 }
 
-func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
+func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
 	cur := f.concurrentStreams.Add(1)
 	for {
 		old := f.maxConcurrent.Load()
@@ -60,7 +61,7 @@ func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan 
 		}
 	}
 
-	ch := make(chan runtime.Event)
+	ch := make(chan contract.Event)
 	go func() {
 		if f.release != nil {
 			select {
@@ -76,9 +77,9 @@ func (f *fakeRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan 
 
 func (f *fakeRuntime) Resume(_ context.Context, _ runtime.ResumeRequest) {}
 
-func (f *fakeRuntime) Steer(_ context.Context, _ runtime.QueuedMessage) error { return nil }
+func (f *fakeRuntime) Steer(_ context.Context, _ contract.QueuedMessage) error { return nil }
 
-func (f *fakeRuntime) FollowUp(_ context.Context, _ runtime.QueuedMessage) error { return nil }
+func (f *fakeRuntime) FollowUp(_ context.Context, _ contract.QueuedMessage) error { return nil }
 
 func (f *fakeRuntime) ResumeElicitation(_ context.Context, _ tools.ElicitationAction, _ map[string]any, _ ...string) error {
 	return nil
@@ -86,9 +87,9 @@ func (f *fakeRuntime) ResumeElicitation(_ context.Context, _ tools.ElicitationAc
 
 // OnElicitationRequest is a no-op: DeleteSession/BatchDeleteSessions call it
 // (with nil) on server-owned runtimes to silence the manager's sink.
-func (f *fakeRuntime) OnElicitationRequest(func(runtime.Event)) {}
+func (f *fakeRuntime) OnElicitationRequest(func(contract.Event)) {}
 
-func (f *fakeRuntime) OnBackgroundEvent(func(runtime.Event)) {}
+func (f *fakeRuntime) OnBackgroundEvent(func(contract.Event)) {}
 
 func (f *fakeRuntime) CurrentAgentName(context.Context) string { return "root" }
 
@@ -134,7 +135,7 @@ func (s *delayedTitleStream) Close() {}
 // the /models endpoints embed fakeRuntime and override this.
 func (f *fakeRuntime) SupportsModelSwitching() bool { return false }
 
-func newTestSessionManager(t *testing.T, sess *session.Session, fake runtime.Runtime) *SessionManager {
+func newTestSessionManager(t *testing.T, sess *session.Session, fake contract.Runtime) *SessionManager {
 	t.Helper()
 
 	ctx := t.Context()
@@ -237,7 +238,7 @@ func TestSendStreamEvent_CancellationUnblocks(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		result := make(chan bool)
 		go func() {
-			result <- sendStreamEvent(ctx, make(chan runtime.Event), runtime.SessionTitle("session", "title"))
+			result <- sendStreamEvent(ctx, make(chan contract.Event), contract.SessionTitle("session", "title"))
 		}()
 		cancel()
 
@@ -754,7 +755,7 @@ type recordingFollowUpRuntime struct {
 	followUps []string
 }
 
-func (r *recordingFollowUpRuntime) FollowUp(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *recordingFollowUpRuntime) FollowUp(_ context.Context, msg contract.QueuedMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.followUps = append(r.followUps, msg.Content)
@@ -831,7 +832,7 @@ func TestRecallSession_DeleteCancelsRecalledRunAndDoesNotResurrect(t *testing.T)
 	fake := &fakeRuntime{release: make(chan struct{})}
 	sm := newTestSessionManager(t, sess, fake)
 
-	recall := runtime.QueuedMessage{Content: "background job finished"}
+	recall := contract.QueuedMessage{Content: "background job finished"}
 	require.NoError(t, sm.recallSession(ctx, sess.ID, recall))
 	require.Eventually(t, func() bool {
 		return fake.concurrentStreams.Load() == 1
@@ -1284,11 +1285,11 @@ func storedToolResultContent(t *testing.T, sess *session.Session, toolCallID str
 type scriptedStreamRuntime struct {
 	fakeRuntime
 
-	events []runtime.Event
+	events []contract.Event
 }
 
-func (s *scriptedStreamRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event, len(s.events))
+func (s *scriptedStreamRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event, len(s.events))
 	for _, ev := range s.events {
 		ch <- ev
 	}
@@ -1367,7 +1368,7 @@ func TestSessionElicitationSink_MakesSessionEventSourceReplayable(t *testing.T) 
 			"a session that was never attached and produced no out-of-band event must have no event source")
 
 		sink := sm.sessionElicitationSink("sess-1")
-		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
+		ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
 		sink(ev)
 
 		require.True(t, sm.HasEventSource("sess-1"),
@@ -1390,8 +1391,8 @@ func TestSessionElicitationSink_AccumulatesAcrossCalls(t *testing.T) {
 		sm := NewSessionManager(ctx, config.Sources{}, session.NewInMemorySessionStore(), 0, &config.RuntimeConfig{})
 
 		sink := sm.sessionElicitationSink("sess-2")
-		first := runtime.ElicitationRequest("first", "form", nil, "", "eid-1", "", "bg-child-1", nil, "agent")
-		second := runtime.ElicitationRequest("second", "form", nil, "", "eid-2", "", "bg-child-2", nil, "agent")
+		first := contract.ElicitationRequest("first", "form", nil, "", "eid-1", "", "bg-child-1", nil, "agent")
+		second := contract.ElicitationRequest("second", "form", nil, "", "eid-2", "", "bg-child-2", nil, "agent")
 		sink(first)
 		sink(second)
 
@@ -1435,7 +1436,7 @@ func TestSessionElicitationSink_ReusesAttachedEventLog(t *testing.T) {
 		attached, ok := sm.eventLogs.Load("sess-3")
 		require.True(t, ok)
 
-		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
+		ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
 		sm.sessionElicitationSink("sess-3")(ev)
 
 		current, ok := sm.eventLogs.Load("sess-3")
@@ -1497,7 +1498,7 @@ func TestRuntimeForSession_RegistersSessionScopedElicitationSink(t *testing.T) {
 	// Simulate what elicitationHandler does when it raises a background
 	// elicitation, but through the sink runtimeForSession actually registered
 	// on this specific runtime instance, not a freshly built one.
-	lr.EmitElicitationRequestForTesting(runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
+	lr.EmitElicitationRequestForTesting(contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
 	require.True(t, sm.HasEventSource(sess.ID),
 		"runtimeForSession must leave the session able to surface out-of-band elicitations")
 }
@@ -1590,15 +1591,15 @@ func TestRecallSession_SkipsMirroredElicitationOnRunStream(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := t.Context()
 		sess := session.New()
-		elicit := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "root")
-		other := runtime.Warning("heads up", "root")
-		fake := &mirroredScriptedStreamRuntime{scriptedStreamRuntime{events: []runtime.Event{elicit, other}}}
+		elicit := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "root")
+		other := contract.Warning("heads up", "root")
+		fake := &mirroredScriptedStreamRuntime{scriptedStreamRuntime{events: []contract.Event{elicit, other}}}
 		sm := newTestSessionManager(t, sess, fake)
 
 		// Reliable path: the sink already delivered the request exactly once.
 		sm.sessionElicitationSink(sess.ID)(elicit)
 
-		require.NoError(t, sm.recallSession(ctx, sess.ID, runtime.QueuedMessage{Content: "wake up"}))
+		require.NoError(t, sm.recallSession(ctx, sess.ID, contract.QueuedMessage{Content: "wake up"}))
 		waitSessionIdle(t, sm, sess.ID)
 
 		seq, ok := sm.LastEventSeq(sess.ID)
@@ -1623,14 +1624,14 @@ func TestRecallSession_KeepsElicitationFromNonMirroringRuntime(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := t.Context()
 		sess := session.New()
-		elicit := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "root")
-		fake := &scriptedStreamRuntime{events: []runtime.Event{elicit}}
+		elicit := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "root")
+		fake := &scriptedStreamRuntime{events: []contract.Event{elicit}}
 		sm := newTestSessionManager(t, sess, fake)
 
 		// Pre-create the session's event log (as an attached session would have).
 		sm.ensureEventLog(sess.ID)
 
-		require.NoError(t, sm.recallSession(ctx, sess.ID, runtime.QueuedMessage{Content: "wake up"}))
+		require.NoError(t, sm.recallSession(ctx, sess.ID, contract.QueuedMessage{Content: "wake up"}))
 		waitSessionIdle(t, sm, sess.ID)
 
 		seq, ok := sm.LastEventSeq(sess.ID)
@@ -1666,7 +1667,7 @@ func TestDeleteSession_ClosesLazyElicitationEventLog(t *testing.T) {
 		// Lazily create the session's event log the way runtimeForSession's
 		// sessionElicitationSink does for a background job's elicitation — no
 		// runtime/RegisterEventSource pump is ever registered for this session.
-		sm.sessionElicitationSink(sess.ID)(runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
+		sm.sessionElicitationSink(sess.ID)(contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
 		require.True(t, sm.HasEventSource(sess.ID))
 
 		streamCtx, cancelStream := context.WithCancel(ctx)
@@ -1719,7 +1720,7 @@ func TestBatchDeleteSessions_ClosesLazyElicitationEventLog(t *testing.T) {
 		sess := session.New()
 		require.NoError(t, store.AddSession(ctx, sess))
 
-		sm.sessionElicitationSink(sess.ID)(runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
+		sm.sessionElicitationSink(sess.ID)(contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
 		require.True(t, sm.HasEventSource(sess.ID))
 
 		streamCtx, cancelStream := context.WithCancel(ctx)
@@ -1782,7 +1783,7 @@ func TestDeleteSession_StaleSinkAfterDeleteCannotResurrectEventLog(t *testing.T)
 	// The exact closure runtimeForSession registers on the runtime; deletion
 	// cannot revoke copies already held by in-flight elicitations.
 	sink := sm.sessionElicitationSink(sess.ID)
-	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root")
+	ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root")
 	sink(ev)
 	require.True(t, sm.HasEventSource(sess.ID))
 
@@ -1822,7 +1823,7 @@ func TestBatchDeleteSessions_StaleSinkAfterDeleteCannotResurrectEventLog(t *test
 
 	sinkWithLog := sm.sessionElicitationSink(withLog.ID)
 	sinkWithoutLog := sm.sessionElicitationSink(withoutLog.ID)
-	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", withLog.ID, nil, "root")
+	ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", withLog.ID, nil, "root")
 	sinkWithLog(ev)
 	require.True(t, sm.HasEventSource(withLog.ID))
 
@@ -1855,7 +1856,7 @@ func testConcurrentSinkVsDelete(t *testing.T, del func(*SessionManager, *session
 	require.NoError(t, store.AddSession(ctx, sess))
 
 	sink := sm.sessionElicitationSink(sess.ID)
-	ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root")
+	ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root")
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -1906,21 +1907,21 @@ type sinkRegistrationRecordingRuntime struct {
 	fakeRuntime
 
 	mu    sync.Mutex
-	sinks []func(runtime.Event)
+	sinks []func(contract.Event)
 }
 
-func (s *sinkRegistrationRecordingRuntime) OnElicitationRequest(handler func(runtime.Event)) {
+func (s *sinkRegistrationRecordingRuntime) OnElicitationRequest(handler func(contract.Event)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sinks = append(s.sinks, handler)
 }
 
-func (s *sinkRegistrationRecordingRuntime) registrations() []func(runtime.Event) {
+func (s *sinkRegistrationRecordingRuntime) registrations() []func(contract.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := slices.Clone(s.sinks)
 	if out == nil {
-		out = []func(runtime.Event){}
+		out = []func(contract.Event){}
 	}
 	return out
 }
@@ -2028,7 +2029,7 @@ func TestDeleteSession_SilencesLiveRuntimeElicitationDelivery(t *testing.T) {
 	sm.runtimeSessions.Store(sess.ID, &activeRuntimes{runtime: run, cancel: func() {}, session: sess})
 	require.NoError(t, sm.DeleteSession(ctx, sess.ID))
 
-	lr.EmitElicitationRequestForTesting(runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
+	lr.EmitElicitationRequestForTesting(contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", sess.ID, nil, "root"))
 	assert.False(t, sm.HasEventSource(sess.ID),
 		"an elicitation raised through the deleted session's runtime must not recreate its event log")
 }
@@ -2048,7 +2049,7 @@ func TestRegisterEventSource_AdoptsLazyEventLog(t *testing.T) {
 		ctx := t.Context()
 		sm := NewSessionManager(ctx, config.Sources{}, session.NewInMemorySessionStore(), 0, &config.RuntimeConfig{})
 
-		ev := runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
+		ev := contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", "bg-child", nil, "agent")
 		sm.sessionElicitationSink("sess-adopt")(ev)
 
 		lazyPE, ok := sm.eventLogs.Load("sess-adopt")
@@ -2132,7 +2133,7 @@ func testRegisterEventSourceAfterDelete(t *testing.T, del func(sm *SessionManage
 
 	// Give one session a lazily-created log so the deletion also exercises
 	// the torn-down-then-register ordering, not just register-after-nothing.
-	sm.sessionElicitationSink(hadLog.ID)(runtime.ElicitationRequest("need input", "form", nil, "", "eid-1", "", hadLog.ID, nil, "root"))
+	sm.sessionElicitationSink(hadLog.ID)(contract.ElicitationRequest("need input", "form", nil, "", "eid-1", "", hadLog.ID, nil, "root"))
 	require.True(t, sm.HasEventSource(hadLog.ID))
 
 	del(sm, []string{hadLog.ID, neverHadLog.ID})
@@ -2270,14 +2271,14 @@ func (r *commandFakeRuntime) CurrentAgentName(context.Context) string {
 	return r.currentAgent
 }
 
-func (r *commandFakeRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
+func (r *commandFakeRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cmds := r.commands
 	if per, ok := r.commandsByAgent[r.currentAgent]; ok {
 		cmds = per
 	}
-	return runtime.CurrentAgentInfo{Name: r.currentAgent, Commands: cmds}
+	return contract.CurrentAgentInfo{Name: r.currentAgent, Commands: cmds}
 }
 
 func (r *commandFakeRuntime) SetCurrentAgent(_ context.Context, name string) error {

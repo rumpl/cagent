@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -25,7 +25,7 @@ type delayedQueueRuntime struct {
 	err     error
 }
 
-func (r *delayedQueueRuntime) enqueue(ctx context.Context, msg runtime.QueuedMessage, followUp bool) error {
+func (r *delayedQueueRuntime) enqueue(ctx context.Context, msg contract.QueuedMessage, followUp bool) error {
 	close(r.started)
 	<-r.release
 	if r.err != nil {
@@ -37,11 +37,11 @@ func (r *delayedQueueRuntime) enqueue(ctx context.Context, msg runtime.QueuedMes
 	return r.steerRecordingRuntime.Steer(ctx, msg)
 }
 
-func (r *delayedQueueRuntime) Steer(ctx context.Context, msg runtime.QueuedMessage) error {
+func (r *delayedQueueRuntime) Steer(ctx context.Context, msg contract.QueuedMessage) error {
 	return r.enqueue(ctx, msg, false)
 }
 
-func (r *delayedQueueRuntime) FollowUp(ctx context.Context, msg runtime.QueuedMessage) error {
+func (r *delayedQueueRuntime) FollowUp(ctx context.Context, msg contract.QueuedMessage) error {
 	return r.enqueue(ctx, msg, true)
 }
 
@@ -164,7 +164,7 @@ func TestStaleInputResultDoesNotRedispatchTimers(t *testing.T) {
 	Cleanup(old)
 	p := New(animation.NewRuntime(), t.Context(), a, service.NewSessionState(sess)).(*chatPage)
 	t.Cleanup(func() { Cleanup(p) })
-	_, prior := p.UpdateEffects(runtime.AgentSwitching(true, "root", "child"))
+	_, prior := p.UpdateEffects(contract.AgentSwitching(true, "root", "child"))
 	require.NotNil(t, prior.Local)
 	_, effects := p.UpdateEffects(result)
 	assert.Nil(t, effects.Cmd(true))

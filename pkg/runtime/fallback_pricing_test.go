@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -100,21 +101,21 @@ func TestFallbackPricing(t *testing.T) {
 				fallback.stream = newStreamBuilder().AddContent("ok").AddStopWithUsage(300_000, 100_000).Build()
 				captured = nil
 				var message *chat.Message
-				var usage *MessageUsage
-				var budget *BudgetStatus
+				var usage *contract.MessageUsage
+				var budget *contract.BudgetStatus
 				for ev := range rt.RunStream(t.Context(), sess) {
 					switch ev := ev.(type) {
-					case *ErrorEvent:
+					case *contract.ErrorEvent:
 						t.Errorf("unexpected runtime error: %s", ev.Error)
-					case *MessageAddedEvent:
+					case *contract.MessageAddedEvent:
 						if ev.Message != nil && ev.Message.Message.Role == chat.MessageRoleAssistant {
 							message = &ev.Message.Message
 						}
-					case *TokenUsageEvent:
+					case *contract.TokenUsageEvent:
 						if ev.Usage != nil && ev.Usage.LastMessage != nil {
 							usage = ev.Usage.LastMessage
 						}
-					case *BudgetUsageEvent:
+					case *contract.BudgetUsageEvent:
 						for _, b := range ev.Budgets {
 							if b.Name == runBudgetName {
 								budget = &b

@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -84,13 +85,13 @@ func TestForceHandoff_RoutesToTargetOnNaturalStop(t *testing.T) {
 	sess := session.New(session.WithUserMessage("Summarize this article"))
 	sess.Title = "Unit Test"
 
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
 
 	for _, ev := range events {
-		errEv, isErr := ev.(*ErrorEvent)
+		errEv, isErr := ev.(*contract.ErrorEvent)
 		require.False(t, isErr, "unexpected error event: %+v", errEv)
 	}
 

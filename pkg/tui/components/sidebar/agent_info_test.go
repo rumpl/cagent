@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -81,7 +81,7 @@ func TestSetAgentInfo_UpdatesProviderAndModel(t *testing.T) {
 			m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
 			// Set up initial availableAgents
-			m.availableAgents = []runtime.AgentDetails{
+			m.availableAgents = []contract.AgentDetails{
 				{
 					Name:        tt.agentName,
 					Provider:    tt.initialProvider,
@@ -111,7 +111,7 @@ func TestSetAgentInfo_OnlyUpdatesMatchingAgent(t *testing.T) {
 	m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
 	// Set up multiple agents
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "agent1", Provider: "openai", Model: "gpt-4o"},
 		{Name: "agent2", Provider: "anthropic", Model: "claude-sonnet-4-0"},
 		{Name: "agent3", Provider: "google", Model: "gemini-2.0-flash"},
@@ -139,7 +139,7 @@ func TestSetAgentInfo_EmptyModelIDNoUpdate(t *testing.T) {
 	m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
 	// Set up initial agent
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "root", Provider: "openai", Model: "gpt-4o"},
 	}
 
@@ -159,7 +159,7 @@ func TestSetAgentInfo_NonexistentAgent(t *testing.T) {
 	m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
 	// Set up agents without the target
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "agent1", Provider: "openai", Model: "gpt-4o"},
 	}
 

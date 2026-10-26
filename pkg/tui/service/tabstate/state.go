@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
@@ -87,19 +87,19 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch ev := msg.(type) {
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		if !isTopLevelStream(s.sessionID, ev.SessionID) {
 			return false, false
 		}
 		s.running = true
 		s.retainDetachedElicitations()
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		if !isTopLevelStream(s.sessionID, ev.SessionID) {
 			return false, false
 		}
 		s.running = false
 		s.retainDetachedElicitations()
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		if !isTopLevelStream(s.sessionID, ev.SessionID) {
 			return false, false
 		}
@@ -108,15 +108,15 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 	case messages.StreamCancelledMsg:
 		s.running = false
 		s.retainDetachedElicitations()
-	case *runtime.ElicitationClosedEvent:
+	case *contract.ElicitationClosedEvent:
 		s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-			prompt, ok := msg.(*runtime.ElicitationRequestEvent)
+			prompt, ok := msg.(*contract.ElicitationRequestEvent)
 			return ok && prompt.ElicitationID == ev.ElicitationID
 		})
 		s.needsAttention = len(s.pending) > 0 && !active
-	case *runtime.SessionTitleEvent:
+	case *contract.SessionTitleEvent:
 		s.title = ev.Title
-	case *runtime.ToolCallConfirmationEvent, *runtime.MaxIterationsReachedEvent, *runtime.ElicitationRequestEvent:
+	case *contract.ToolCallConfirmationEvent, *contract.MaxIterationsReachedEvent, *contract.ElicitationRequestEvent:
 		s.pending = append(s.pending, msg)
 		if !active {
 			s.needsAttention = true
@@ -154,18 +154,18 @@ func (s *State) RetiresAttention(boundary, event tea.Msg) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch msg := boundary.(type) {
-	case *runtime.ElicitationClosedEvent:
-		prompt, ok := event.(*runtime.ElicitationRequestEvent)
+	case *contract.ElicitationClosedEvent:
+		prompt, ok := event.(*contract.ElicitationRequestEvent)
 		return ok && prompt.ElicitationID == msg.ElicitationID
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		if !isTopLevelStream(s.sessionID, msg.SessionID) {
 			return false
 		}
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		if !isTopLevelStream(s.sessionID, msg.SessionID) {
 			return false
 		}
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		return isTopLevelStream(s.sessionID, msg.SessionID) && !isDetachedElicitation(s.sessionID, event)
 	case messages.StreamCancelledMsg:
 	default:
@@ -175,6 +175,6 @@ func (s *State) RetiresAttention(boundary, event tea.Msg) bool {
 }
 
 func isDetachedElicitation(sessionID string, msg tea.Msg) bool {
-	ev, ok := msg.(*runtime.ElicitationRequestEvent)
+	ev, ok := msg.(*contract.ElicitationRequestEvent)
 	return ok && !isTopLevelStream(sessionID, ev.SessionID)
 }

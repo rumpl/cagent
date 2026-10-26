@@ -26,6 +26,7 @@ import (
 	evaluatorprovider "github.com/docker/docker-agent/pkg/evaluator/provider"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -119,13 +120,13 @@ func TestEvaluatorUsageAccounting(t *testing.T) {
 				assert.InDelta(t, wantCost, snapshot.Cost, 1e-12)
 				assert.Equal(t, tc.wantCost == nil, snapshot.Unpriced)
 			}
-			var usage *TokenUsageEvent
+			var usage *contract.TokenUsageEvent
 			var evaluationEvents int
 			for _, event := range sink.events {
 				switch e := event.(type) {
-				case *TokenUsageEvent:
+				case *contract.TokenUsageEvent:
 					usage = e
-				case *EvaluationUsageEvent:
+				case *contract.EvaluationUsageEvent:
 					evaluationEvents++
 				}
 			}
@@ -202,10 +203,10 @@ func TestEvaluatorBudgetStopsRun(t *testing.T) {
 	sess := session.New(session.WithUserMessage("run"), session.WithTitle("test"), session.WithSafetyPolicy(session.SafetyPolicyAutonomous), session.WithNonInteractive(true))
 	var stops int
 	for event := range rt.RunStream(t.Context(), sess) {
-		if _, ok := event.(*BudgetExceededEvent); ok {
+		if _, ok := event.(*contract.BudgetExceededEvent); ok {
 			stops++
 		}
-		if e, ok := event.(*ErrorEvent); ok {
+		if e, ok := event.(*contract.ErrorEvent); ok {
 			t.Errorf("unexpected runtime error: %s", e.Error)
 		}
 	}
@@ -232,7 +233,7 @@ func TestEvaluatorUsageConcurrentSessions(t *testing.T) {
 	for i := range 10 {
 		wg.Go(func() {
 			sess := session.New()
-			ch := make(chan Event, 100)
+			ch := make(chan contract.Event, 100)
 			ctx := context.WithValue(t.Context(), evaluatorAccountingKey{}, &evaluatorAccounting{r: rt, sess: sess, a: root, events: NewChannelSink(ch)})
 			var calls sync.WaitGroup
 			for range 5 {
@@ -244,7 +245,7 @@ func TestEvaluatorUsageConcurrentSessions(t *testing.T) {
 			assert.InDelta(t, float64(5*(i+1))/1e6, sess.TotalCost(), 1e-12)
 			var last float64
 			for event := range ch {
-				if e, ok := event.(*TokenUsageEvent); ok {
+				if e, ok := event.(*contract.TokenUsageEvent); ok {
 					assert.GreaterOrEqual(t, e.Usage.Cost, last)
 					last = e.Usage.Cost
 				}
@@ -265,10 +266,10 @@ func TestEvaluatorUsagePersistenceAndSSE(t *testing.T) {
 	observer := newPersistenceObserver(store)
 	observer.OnRunStart(t.Context(), sess)
 	evaluation := &session.Evaluation{ID: "request", Evaluator: "safety", AgentName: "root", Model: "jev", Usage: &chat.Usage{InputTokens: 12}, Cost: new(0.25), CreatedAt: time.Now().Format(time.RFC3339)}
-	event := &EvaluationUsageEvent{Type: "evaluation_usage", SessionID: sess.ID, AgentContext: newAgentContext("root"), Evaluation: evaluation}
+	event := &contract.EvaluationUsageEvent{Type: "evaluation_usage", SessionID: sess.ID, AgentContext: newAgentContext("root"), Evaluation: evaluation}
 	sess.AddEvaluation(evaluation)
 	observer.OnEvent(t.Context(), sess, event)
-	observer.OnEvent(t.Context(), sess, NewTokenUsageEvent(sess.ID, "root", SessionUsage(sess, 1000)))
+	observer.OnEvent(t.Context(), sess, contract.NewTokenUsageEvent(sess.ID, "root", contract.SessionUsage(sess, 1000)))
 	reloaded, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
 	require.Len(t, evaluationItems(reloaded), 1)
@@ -294,9 +295,9 @@ func TestEvaluatorUsagePersistenceAndSSE(t *testing.T) {
 	client := newTestClient(t, server.URL)
 	stream, err := client.StreamSessionEvents(t.Context(), sess.ID)
 	require.NoError(t, err)
-	var received []*EvaluationUsageEvent
+	var received []*contract.EvaluationUsageEvent
 	for e := range stream {
-		if usage, ok := e.(*EvaluationUsageEvent); ok {
+		if usage, ok := e.(*contract.EvaluationUsageEvent); ok {
 			received = append(received, usage)
 		}
 	}
@@ -320,8 +321,8 @@ func TestEvaluatorAccountingPersistsAfterCancellation(t *testing.T) {
 	cancel()
 	e := &session.Evaluation{ID: "request", Model: "jev", Cost: new(0.1)}
 	sess.AddEvaluation(e)
-	observer.OnEvent(ctx, sess, &EvaluationUsageEvent{SessionID: sess.ID, Evaluation: e})
-	observer.OnEvent(ctx, sess, NewTokenUsageEvent(sess.ID, "root", SessionUsage(sess, 1000)))
+	observer.OnEvent(ctx, sess, &contract.EvaluationUsageEvent{SessionID: sess.ID, Evaluation: e})
+	observer.OnEvent(ctx, sess, contract.NewTokenUsageEvent(sess.ID, "root", contract.SessionUsage(sess, 1000)))
 	got, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
 	require.Len(t, evaluationItems(got), 1)
@@ -398,7 +399,7 @@ func TestEvaluatorInvalidAccountingFailsClosed(t *testing.T) {
 					_, err = json.Marshal(event)
 					require.NoError(t, err, "accounting events must be JSON/SSE-safe")
 					observer.OnEvent(t.Context(), sess, event)
-					if e, ok := event.(*HookBlockedEvent); ok {
+					if e, ok := event.(*contract.HookBlockedEvent); ok {
 						blocked = true
 						assert.Contains(t, e.Message, "invalid accounting")
 					}
@@ -584,7 +585,7 @@ func TestEvaluatorSharedSessionCostOverflow(t *testing.T) {
 	assert.InDelta(t, math.MaxFloat64, parent.TotalCost(), 0)
 	assert.InDelta(t, math.MaxFloat64, parent.OwnCost(), 0)
 	assert.InDelta(t, math.MaxFloat64, parent.EmbeddedSubSessionCost(), 0)
-	_, err = json.Marshal(SessionUsage(parent, 1000))
+	_, err = json.Marshal(contract.SessionUsage(parent, 1000))
 	require.NoError(t, err)
 	_, err = json.Marshal(parent)
 	require.NoError(t, err)

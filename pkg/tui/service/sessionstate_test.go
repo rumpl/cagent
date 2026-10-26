@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -20,17 +20,17 @@ func TestSessionState_AgentUsage(t *testing.T) {
 	_, ok := s.AgentUsage("root")
 	assert.False(t, ok, "no snapshot before any usage is recorded")
 
-	s.SetAgentUsage("session-1", "root", runtime.Usage{ContextLength: 1000, ContextLimit: 10000})
+	s.SetAgentUsage("session-1", "root", contract.Usage{ContextLength: 1000, ContextLimit: 10000})
 	usage, ok := s.AgentUsage("root")
 	assert.True(t, ok)
 	assert.Equal(t, int64(1000), usage.ContextLength)
 
-	s.SetAgentUsage("session-1", "root", runtime.Usage{ContextLength: 2000, ContextLimit: 10000})
+	s.SetAgentUsage("session-1", "root", contract.Usage{ContextLength: 2000, ContextLimit: 10000})
 	usage, ok = s.AgentUsage("root")
 	assert.True(t, ok)
 	assert.Equal(t, int64(2000), usage.ContextLength, "latest snapshot wins")
 
-	s.SetAgentUsage("session-1", "", runtime.Usage{ContextLength: 3000})
+	s.SetAgentUsage("session-1", "", contract.Usage{ContextLength: 3000})
 	_, ok = s.AgentUsage("")
 	assert.False(t, ok, "snapshots without an agent name are dropped")
 }
@@ -48,26 +48,26 @@ func TestSessionState_AgentCost(t *testing.T) {
 	assert.False(t, ok, "no cost attributable before any usage is recorded")
 
 	// Repeated cumulative snapshots of one session replace, not add.
-	s.SetAgentUsage("session-1", "root", runtime.Usage{Cost: 0.10})
-	s.SetAgentUsage("session-1", "root", runtime.Usage{Cost: 0.30})
+	s.SetAgentUsage("session-1", "root", contract.Usage{Cost: 0.10})
+	s.SetAgentUsage("session-1", "root", contract.Usage{Cost: 0.30})
 	cost, ok := s.AgentCost("root")
 	assert.True(t, ok)
 	assert.InDelta(t, 0.30, cost, 1e-9)
 
 	// A second session for the same agent (sub-session or background task) adds.
-	s.SetAgentUsage("session-2", "root", runtime.Usage{Cost: 0.05})
+	s.SetAgentUsage("session-2", "root", contract.Usage{Cost: 0.05})
 	cost, ok = s.AgentCost("root")
 	assert.True(t, ok)
 	assert.InDelta(t, 0.35, cost, 1e-9)
 
 	// Other agents stay independent.
-	s.SetAgentUsage("session-3", "developer", runtime.Usage{Cost: 0.02})
+	s.SetAgentUsage("session-3", "developer", contract.Usage{Cost: 0.02})
 	cost, ok = s.AgentCost("developer")
 	assert.True(t, ok)
 	assert.InDelta(t, 0.02, cost, 1e-9)
 
 	// An agent that ran at zero cost is attributed with $0, not unknown.
-	s.SetAgentUsage("session-4", "local", runtime.Usage{Cost: 0})
+	s.SetAgentUsage("session-4", "local", contract.Usage{Cost: 0})
 	cost, ok = s.AgentCost("local")
 	assert.True(t, ok)
 	assert.Zero(t, cost)
@@ -86,8 +86,8 @@ func TestSessionState_AgentCost_SessionHandoffMovesAttribution(t *testing.T) {
 
 	s := NewSessionState(nil)
 
-	s.SetAgentUsage("session-1", "root", runtime.Usage{Cost: 0.10})
-	s.SetAgentUsage("session-1", "developer", runtime.Usage{Cost: 0.25})
+	s.SetAgentUsage("session-1", "root", contract.Usage{Cost: 0.10})
+	s.SetAgentUsage("session-1", "developer", contract.Usage{Cost: 0.25})
 
 	cost, ok := s.AgentCost("developer")
 	assert.True(t, ok)
@@ -139,7 +139,7 @@ func TestSessionState_SeedRestoredCosts(t *testing.T) {
 
 	s := NewSessionState(nil)
 	// Live state from a previously shown session must not survive the seed.
-	s.SetAgentUsage("old-session", "stale", runtime.Usage{ContextLength: 1000, ContextLimit: 10_000, Cost: 0.50})
+	s.SetAgentUsage("old-session", "stale", contract.Usage{ContextLength: 1000, ContextLimit: 10_000, Cost: 0.50})
 
 	s.SeedRestoredCosts(sess)
 
@@ -204,7 +204,7 @@ func TestSessionState_SeedRestoredCosts_LiveSnapshotsAddOnlyNewSpend(t *testing.
 
 	// The root session resumes: its live snapshot is cumulative over the
 	// restored tree plus $0.02 of new spend.
-	s.SetAgentUsage(sess.ID, "root", runtime.Usage{Cost: 0.18})
+	s.SetAgentUsage(sess.ID, "root", contract.Usage{Cost: 0.18})
 	cost, ok := s.AgentCost("root")
 	assert.True(t, ok)
 	assert.InDelta(t, 0.12, cost, 1e-9, "restored total plus only the new spend")
@@ -214,12 +214,12 @@ func TestSessionState_SeedRestoredCosts_LiveSnapshotsAddOnlyNewSpend(t *testing.
 	assert.InDelta(t, 0.05, cost, 1e-9, "restored sub-session spend keeps its agent")
 
 	// A later cumulative snapshot of the same session replaces, not adds.
-	s.SetAgentUsage(sess.ID, "root", runtime.Usage{Cost: 0.20})
+	s.SetAgentUsage(sess.ID, "root", contract.Usage{Cost: 0.20})
 	cost, _ = s.AgentCost("root")
 	assert.InDelta(t, 0.14, cost, 1e-9)
 
 	// A fresh live sub-session is new spend in full.
-	s.SetAgentUsage("live-sub", "developer", runtime.Usage{Cost: 0.03})
+	s.SetAgentUsage("live-sub", "developer", contract.Usage{Cost: 0.03})
 	cost, _ = s.AgentCost("developer")
 	assert.InDelta(t, 0.08, cost, 1e-9)
 }

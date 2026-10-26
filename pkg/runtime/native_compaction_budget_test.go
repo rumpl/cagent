@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -59,15 +60,15 @@ func TestNativeCompactionSharesBudgets(t *testing.T) {
 	var skipped, warned bool
 	for _, event := range sink.events {
 		switch e := event.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" {
-				assert.Equal(t, CompactionOutcomeSkipped, e.Outcome)
+				assert.Equal(t, contract.CompactionOutcomeSkipped, e.Outcome)
 				skipped = true
 			}
-		case *WarningEvent:
+		case *contract.WarningEvent:
 			assert.Contains(t, e.Message, "budgets.work.max_tokens")
 			warned = true
-		case *ErrorEvent, *SessionSummaryEvent, *BudgetExceededEvent:
+		case *contract.ErrorEvent, *contract.SessionSummaryEvent, *contract.BudgetExceededEvent:
 			t.Errorf("unexpected event: %T", event)
 		}
 	}
@@ -85,9 +86,9 @@ func TestNativeCompactionBudgetRecordsUnappliedSummaries(t *testing.T) {
 		unpriced    bool
 		wantOutcome string
 	}{
-		{name: "empty summary", empty: true, wantOutcome: CompactionOutcomeSkipped},
-		{name: "persistence failure", storeError: true, wantOutcome: CompactionOutcomeFailed},
-		{name: "unpriced summary", unpriced: true, wantOutcome: CompactionOutcomeApplied},
+		{name: "empty summary", empty: true, wantOutcome: contract.CompactionOutcomeSkipped},
+		{name: "persistence failure", storeError: true, wantOutcome: contract.CompactionOutcomeFailed},
+		{name: "unpriced summary", unpriced: true, wantOutcome: contract.CompactionOutcomeApplied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -121,11 +122,11 @@ func TestNativeCompactionBudgetRecordsUnappliedSummaries(t *testing.T) {
 			var unpricedWarnings int
 			for _, event := range sink.events {
 				switch e := event.(type) {
-				case *SessionCompactionEvent:
+				case *contract.SessionCompactionEvent:
 					if e.Status == "completed" {
 						assert.Equal(t, tc.wantOutcome, e.Outcome)
 					}
-				case *WarningEvent:
+				case *contract.WarningEvent:
 					if tc.unpriced {
 						assert.Contains(t, e.Message, "cannot price")
 						unpricedWarnings++

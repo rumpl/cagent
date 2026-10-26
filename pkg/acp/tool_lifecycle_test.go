@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -40,10 +41,10 @@ func TestToolLifecyclePendingRunningCompletion(t *testing.T) {
 		changed := call
 		changed.Function.Arguments = `{"file":"after.txt"}`
 		tool := tools.Tool{Name: "edit_file", Annotations: tools.ToolAnnotations{Title: "Edit", DestructiveHint: new(true)}}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCallConfirmation(call, tool, "root", nil),
-			runtime.ToolCall(changed, tool, "root"),
-			runtime.ToolCallResponse(call.ID, tool, tools.ResultSuccess("done"), "done", "root"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.ToolCallConfirmation(call, tool, "root", nil),
+			contract.ToolCall(changed, tool, "root"),
+			contract.ToolCallResponse(call.ID, tool, tools.ResultSuccess("done"), "done", "root"),
 		}}
 		f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any { return permissionSelected("allow") })
 		f.sess.workingDir = wd
@@ -78,10 +79,10 @@ func TestToolLifecycleSuppressesRejectedSyntheticStart(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				call := tools.ToolCall{ID: "nested", Function: tools.FunctionCall{Name: "shell", Arguments: `{"cmd":"never execute"}`}}
 				tool := tools.Tool{Name: "shell"}
-				rt := &fakeRuntime{events: []runtime.Event{
-					runtime.ToolCallConfirmation(call, tool, "root", nil),
-					runtime.ToolCall(call, tool, "root"),
-					runtime.ToolCallResponse(call.ID, tool, tools.ResultError("rejected"), "rejected", "root"),
+				rt := &fakeRuntime{events: []contract.Event{
+					contract.ToolCallConfirmation(call, tool, "root", nil),
+					contract.ToolCall(call, tool, "root"),
+					contract.ToolCallResponse(call.ID, tool, tools.ResultError("rejected"), "rejected", "root"),
 				}}
 				f := newRunAgentFixtureWithPermissions(t, rt, &captureWriter{}, func(acpsdk.RequestPermissionRequest) any {
 					if outcome == "cancelled" {
@@ -107,11 +108,11 @@ func TestToolLifecycleScopesAndReusesRuntimeIDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		call := tools.ToolCall{ID: "same", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}
 		tool := tools.Tool{Name: "shell"}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.ToolCall(call, tool, "root"), runtime.ToolCall(call, tool, "worker"),
-			runtime.ToolCallResponse("same", tool, tools.ResultSuccess("worker"), "worker", "worker"),
-			runtime.ToolCallResponse("same", tool, tools.ResultSuccess("root"), "root", "root"),
-			runtime.ToolCall(call, tool, "root"), runtime.ToolCallResponse("same", tool, tools.ResultSuccess("reused"), "reused", "root"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.ToolCall(call, tool, "root"), contract.ToolCall(call, tool, "worker"),
+			contract.ToolCallResponse("same", tool, tools.ResultSuccess("worker"), "worker", "worker"),
+			contract.ToolCallResponse("same", tool, tools.ResultSuccess("root"), "root", "root"),
+			contract.ToolCall(call, tool, "root"), contract.ToolCallResponse("same", tool, tools.ResultSuccess("reused"), "reused", "root"),
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 		require.NoError(t, f.runAgent(t.Context(), f.sess))
@@ -188,15 +189,15 @@ type lateToolResultRuntime struct {
 	finish      chan struct{}
 }
 
-func (r *lateToolResultRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *lateToolResultRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	go func() {
 		defer close(events)
 		call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}
-		events <- runtime.ToolCall(call, tools.Tool{Name: "shell"}, "root")
+		events <- contract.ToolCall(call, tools.Tool{Name: "shell"}, "root")
 		close(r.started)
 		<-r.resultReady
-		events <- runtime.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("actual result"), "actual result", "root")
+		events <- contract.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("actual result"), "actual result", "root")
 		close(r.resultSent)
 		<-r.finish
 	}()
@@ -238,7 +239,7 @@ func TestToolCompletionSurvivesCancellationBeforeSend(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		err = tracker.complete(ctx, f.agent, f.sess, runtime.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("actual result"), "actual result", "root").(*runtime.ToolCallResponseEvent))
+		err = tracker.complete(ctx, f.agent, f.sess, contract.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("actual result"), "actual result", "root").(*contract.ToolCallResponseEvent))
 		require.NoError(t, err)
 		updates := toolUpdates(f.sessionUpdates(t))
 		require.Len(t, updates, 2)
@@ -262,7 +263,7 @@ func TestToolCompletionWriteFailureIsNotRetried(t *testing.T) {
 		call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}
 		_, err := tracker.report(t.Context(), f.agent, f.sess, "root", call, tools.Tool{Name: "shell"}, acpsdk.ToolCallStatusInProgress)
 		require.NoError(t, err)
-		err = tracker.complete(t.Context(), f.agent, f.sess, runtime.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("done"), "done", "root").(*runtime.ToolCallResponseEvent))
+		err = tracker.complete(t.Context(), f.agent, f.sess, contract.ToolCallResponse("call", tools.Tool{Name: "shell"}, tools.ResultSuccess("done"), "done", "root").(*contract.ToolCallResponseEvent))
 		require.Error(t, err)
 		require.NoError(t, tracker.interrupt(t.Context(), f.agent, f.sess))
 		assert.Equal(t, 2, out.writes)
@@ -277,15 +278,15 @@ type interruptedToolRuntime struct {
 	fail    bool
 }
 
-func (r *interruptedToolRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan runtime.Event {
-	events := make(chan runtime.Event)
+func (r *interruptedToolRuntime) RunStream(ctx context.Context, _ *session.Session) <-chan contract.Event {
+	events := make(chan contract.Event)
 	go func() {
 		defer close(events)
 		call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}
-		events <- runtime.ToolCall(call, tools.Tool{Name: "shell"}, "root")
+		events <- contract.ToolCall(call, tools.Tool{Name: "shell"}, "root")
 		close(r.started)
 		if r.fail {
-			events <- &runtime.ToolCallResponseEvent{}
+			events <- &contract.ToolCallResponseEvent{}
 		}
 		<-ctx.Done()
 		<-r.release
@@ -343,9 +344,9 @@ func TestToolLifecycleDoesNotExposePartialArgumentsOrOutput(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: `{"secret":"partial`}}
-		rt := &fakeRuntime{events: []runtime.Event{
-			runtime.PartialToolCall(call, tools.Tool{Name: "shell"}, "root"),
-			runtime.ToolCallOutput(call.ID, tools.Tool{Name: "shell"}, "unbuffered-secret", "root"),
+		rt := &fakeRuntime{events: []contract.Event{
+			contract.PartialToolCall(call, tools.Tool{Name: "shell"}, "root"),
+			contract.ToolCallOutput(call.ID, tools.Tool{Name: "shell"}, "unbuffered-secret", "root"),
 		}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 		require.NoError(t, f.runAgent(t.Context(), f.sess))
@@ -360,9 +361,9 @@ func TestToolLifecycleRepeatedStartUpdatesExistingCall(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		call := tools.ToolCall{ID: "call", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}}
 		tool := tools.Tool{Name: "shell"}
-		start := runtime.ToolCall(call, tool, "root")
-		response := runtime.ToolCallResponse("call", tool, tools.ResultSuccess("private result"), "transformed result", "root")
-		rt := &fakeRuntime{events: []runtime.Event{start, start, response}}
+		start := contract.ToolCall(call, tool, "root")
+		response := contract.ToolCallResponse("call", tool, tools.ResultSuccess("private result"), "transformed result", "root")
+		rt := &fakeRuntime{events: []contract.Event{start, start, response}}
 		f := newRunAgentFixture(t, rt, &captureWriter{})
 		require.NoError(t, f.runAgent(t.Context(), f.sess))
 		updates := toolUpdates(f.sessionUpdates(t))
@@ -372,7 +373,7 @@ func TestToolLifecycleRepeatedStartUpdatesExistingCall(t *testing.T) {
 		assert.Equal(t, acpsdk.ToolCallStatusInProgress, *updates[1].ToolCallUpdate.Status)
 		assert.Equal(t, map[string]any{"content": "transformed result"}, updates[2].ToolCallUpdate.RawOutput)
 		assert.NotContains(t, strings.Join(f.out.lines(), "\n"), "private result")
-		assert.Equal(t, "call", start.(*runtime.ToolCallEvent).ToolCall.ID)
-		assert.Equal(t, "call", response.(*runtime.ToolCallResponseEvent).ToolCallID)
+		assert.Equal(t, "call", start.(*contract.ToolCallEvent).ToolCall.ID)
+		assert.Equal(t, "call", response.(*contract.ToolCallResponseEvent).ToolCallID)
 	})
 }

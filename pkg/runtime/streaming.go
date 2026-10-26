@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/model/provider"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -96,7 +97,7 @@ type streamResult struct {
 // It is intentionally a free function rather than a method on *LocalRuntime
 // so the dependency direction is explicit (the loop calls into the chunker,
 // never the reverse).
-func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, events EventSink, idleTimeout time.Duration) (streamResult, error) {
+func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, stream chat.MessageStream, a *agent.Agent, agentTools []tools.Tool, sess *session.Session, events contract.EventSink, idleTimeout time.Duration) (streamResult, error) {
 	// done is closed when handleStream exits (for any reason) so the reader
 	// goroutine below can detect it and stop trying to send on recvCh.
 	done := make(chan struct{})
@@ -175,11 +176,11 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 		if !xmlToolCallGate {
 			tagIdx := strings.Index(content, "<tool_call>")
 			if tagIdx < 0 {
-				events.Emit(AgentChoice(a.Name(), sess.ID, content, messageID))
+				events.Emit(contract.AgentChoice(a.Name(), sess.ID, content, messageID))
 			} else {
 				xmlToolCallGate = true
 				if tagIdx > 0 {
-					events.Emit(AgentChoice(a.Name(), sess.ID, content[:tagIdx], messageID))
+					events.Emit(contract.AgentChoice(a.Name(), sess.ID, content[:tagIdx], messageID))
 				}
 			}
 		}
@@ -217,7 +218,7 @@ func handleStream(ctx context.Context, cancelStream context.CancelCauseFunc, str
 		fullContent.WriteString(textBefore)
 		for _, tc := range toolCalls {
 			toolDef := toolDefMap[tc.Function.Name]
-			events.Emit(PartialToolCall(tc, toolDef, a.Name()))
+			events.Emit(contract.PartialToolCall(tc, toolDef, a.Name()))
 		}
 	}
 
@@ -343,7 +344,7 @@ mainLoop:
 							if !emittedPartial[delta.ID] {
 								toolDef = toolDefMap[tc.Function.Name]
 							}
-							events.Emit(PartialToolCall(partial, toolDef, a.Name()))
+							events.Emit(contract.PartialToolCall(partial, toolDef, a.Name()))
 							emittedPartial[delta.ID] = true
 						}
 					}
@@ -405,7 +406,7 @@ mainLoop:
 
 			if choice.Delta.ReasoningContent != "" {
 				responseStarted = true
-				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent, messageID))
+				events.Emit(contract.AgentChoiceReasoning(a.Name(), sess.ID, choice.Delta.ReasoningContent, messageID))
 				fullReasoningContent.WriteString(choice.Delta.ReasoningContent)
 			}
 

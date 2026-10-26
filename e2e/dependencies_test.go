@@ -258,6 +258,17 @@ func listImports(t *testing.T, pkg string) map[string]bool {
 	return imports
 }
 
+func TestLocalAndRemoteRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+	const prefix = "github.com/docker/docker-agent/pkg/runtime"
+	local := listTransitiveDeps(t, "./pkg/runtime")
+	assert.NotContains(t, local, prefix+"/remote", "local execution must not link remote transport")
+	remote := listTransitiveDeps(t, "./pkg/runtime/remote")
+	assert.NotContains(t, remote, prefix, "remote execution must depend on contracts, not the local loop")
+	assert.Contains(t, local, prefix+"/contract")
+	assert.Contains(t, remote, prefix+"/contract")
+}
+
 func TestReusableTUIDependencies(t *testing.T) {
 	t.Parallel()
 

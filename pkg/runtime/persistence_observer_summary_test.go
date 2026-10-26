@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -23,7 +24,7 @@ func TestPersistenceObserver_PersistsSummaryCost(t *testing.T) {
 	sess := session.New(session.WithID("s1"), session.WithUserMessage("hi"))
 	require.NoError(t, store.AddSession(t.Context(), sess))
 
-	obs.OnEvent(t.Context(), sess, SessionSummary(sess.ID, "the summary", "root", 1, 0.002, "openai/gpt-4o-mini", &chat.Usage{InputTokens: 100, OutputTokens: 20}))
+	obs.OnEvent(t.Context(), sess, contract.SessionSummary(sess.ID, "the summary", "root", 1, 0.002, "openai/gpt-4o-mini", &chat.Usage{InputTokens: 100, OutputTokens: 20}))
 
 	reloaded, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)

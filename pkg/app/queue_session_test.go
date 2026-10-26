@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
@@ -17,15 +17,15 @@ import (
 type queueSessionRuntime struct {
 	mockRuntime
 
-	submitted []runtime.QueuedMessage
+	submitted []contract.QueuedMessage
 }
 
-func (r *queueSessionRuntime) Steer(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *queueSessionRuntime) Steer(_ context.Context, msg contract.QueuedMessage) error {
 	r.submitted = append(r.submitted, msg)
 	return nil
 }
 
-func (r *queueSessionRuntime) FollowUp(_ context.Context, msg runtime.QueuedMessage) error {
+func (r *queueSessionRuntime) FollowUp(_ context.Context, msg contract.QueuedMessage) error {
 	r.submitted = append(r.submitted, msg)
 	return nil
 }

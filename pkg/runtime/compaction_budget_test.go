@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -82,7 +83,7 @@ func TestCompactionSharesBudgets(t *testing.T) {
 
 			shared := rt.currentBudget()
 			for event := range rt.RunStream(t.Context(), sess) {
-				if e, ok := event.(*ErrorEvent); ok {
+				if e, ok := event.(*contract.ErrorEvent); ok {
 					t.Errorf("runtime error: %s", e.Error)
 				}
 			}
@@ -163,12 +164,12 @@ func TestCompactionBudgetStopsNextModelCall(t *testing.T) {
 			} else {
 				rt.Summarize(t.Context(), sess, "", &collectSink{})
 			}
-			var stops []*BudgetExceededEvent
+			var stops []*contract.BudgetExceededEvent
 			for event := range rt.RunStream(t.Context(), sess) {
 				switch e := event.(type) {
-				case *BudgetExceededEvent:
+				case *contract.BudgetExceededEvent:
 					stops = append(stops, e)
-				case *ErrorEvent:
+				case *contract.ErrorEvent:
 					t.Errorf("runtime error: %s", e.Error)
 				}
 			}
@@ -205,15 +206,15 @@ func TestCompactionExhaustedBudgetPreservesHistory(t *testing.T) {
 	var skipped, warned bool
 	for _, event := range sink.events {
 		switch e := event.(type) {
-		case *SessionCompactionEvent:
+		case *contract.SessionCompactionEvent:
 			if e.Status == "completed" {
-				assert.Equal(t, CompactionOutcomeSkipped, e.Outcome)
+				assert.Equal(t, contract.CompactionOutcomeSkipped, e.Outcome)
 				skipped = true
 			}
-		case *WarningEvent:
+		case *contract.WarningEvent:
 			assert.Contains(t, e.Message, "budgets.work.max_cost")
 			warned = true
-		case *ErrorEvent, *SessionSummaryEvent, *BudgetExceededEvent:
+		case *contract.ErrorEvent, *contract.SessionSummaryEvent, *contract.BudgetExceededEvent:
 			t.Errorf("unexpected event: %T", event)
 		}
 	}
@@ -231,9 +232,9 @@ func TestCompactionBudgetRecordsUnappliedSummaries(t *testing.T) {
 		unpriced    bool
 		wantOutcome string
 	}{
-		{name: "empty summary", wantOutcome: CompactionOutcomeSkipped},
-		{name: "persistence failure", content: "summary", storeError: true, wantOutcome: CompactionOutcomeFailed},
-		{name: "unpriced summary", content: "summary", unpriced: true, wantOutcome: CompactionOutcomeApplied},
+		{name: "empty summary", wantOutcome: contract.CompactionOutcomeSkipped},
+		{name: "persistence failure", content: "summary", storeError: true, wantOutcome: contract.CompactionOutcomeFailed},
+		{name: "unpriced summary", content: "summary", unpriced: true, wantOutcome: contract.CompactionOutcomeApplied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -268,11 +269,11 @@ func TestCompactionBudgetRecordsUnappliedSummaries(t *testing.T) {
 			var unpricedWarnings int
 			for _, event := range sink.events {
 				switch e := event.(type) {
-				case *SessionCompactionEvent:
+				case *contract.SessionCompactionEvent:
 					if e.Status == "completed" {
 						assert.Equal(t, tc.wantOutcome, e.Outcome)
 					}
-				case *WarningEvent:
+				case *contract.WarningEvent:
 					if tc.unpriced {
 						assert.Contains(t, e.Message, "cannot price")
 						unpricedWarnings++

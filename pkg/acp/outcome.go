@@ -6,7 +6,7 @@ import (
 	"github.com/coder/acp-go-sdk"
 
 	"github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 func sessionNotFound(sid string) *acp.RequestError {
@@ -20,31 +20,31 @@ type promptOutcome struct {
 	fatal        *acp.RequestError
 }
 
-func (o *promptOutcome) observe(event runtime.Event) {
-	scoped, ok := event.(runtime.SessionScoped)
+func (o *promptOutcome) observe(event contract.Event) {
+	scoped, ok := event.(contract.SessionScoped)
 	if !ok || scoped.GetSessionID() != o.sessionID {
 		return
 	}
 	switch e := event.(type) {
-	case *runtime.MessageAddedEvent:
+	case *contract.MessageAddedEvent:
 		if e.Message != nil && e.Message.Message.Role == chat.MessageRoleAssistant {
 			o.finishReason = e.Message.Message.FinishReason
 		}
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		o.streamReason = e.Reason
 		if e.FinishReason != "" {
 			o.finishReason = e.FinishReason
 		}
-	case *runtime.ErrorEvent:
+	case *contract.ErrorEvent:
 		// Uncoded compaction errors and unscoped RAG errors can be recoverable.
 		switch e.Code {
-		case runtime.ErrorCodeModelError, runtime.ErrorCodeRateLimited,
-			runtime.ErrorCodeContextExceeded, runtime.ErrorCodeRequestTooLarge, runtime.ErrorCodeMediaTooLarge,
-			runtime.ErrorCodeToolFailed, runtime.ErrorCodeHookBlocked, runtime.ErrorCodeLoopDetected,
-			runtime.ErrorCodeStructuredOutputFailed, runtime.ErrorCodeRoutingFailed:
+		case contract.ErrorCodeModelError, contract.ErrorCodeRateLimited,
+			contract.ErrorCodeContextExceeded, contract.ErrorCodeRequestTooLarge, contract.ErrorCodeMediaTooLarge,
+			contract.ErrorCodeToolFailed, contract.ErrorCodeHookBlocked, contract.ErrorCodeLoopDetected,
+			contract.ErrorCodeStructuredOutputFailed, contract.ErrorCodeRoutingFailed:
 			o.fatal = runtimePromptError(o.sessionID, e.Code, e.Error)
 		}
-	case *runtime.BudgetExceededEvent:
+	case *contract.BudgetExceededEvent:
 		o.fatal = runtimePromptError(o.sessionID, "budget_exceeded", e.Message)
 	}
 }
@@ -57,7 +57,7 @@ func (o *promptOutcome) result() (acp.StopReason, error) {
 		return "", o.fatal
 	}
 	switch o.streamReason {
-	case runtime.StreamStopReasonMaxIterations:
+	case contract.StreamStopReasonMaxIterations:
 		return acp.StopReasonMaxTurnRequests, nil
 	case "error", "hook_blocked", "loop_detected", "budget_exceeded":
 		return "", runtimePromptError(o.sessionID, o.streamReason, "agent execution stopped: "+o.streamReason)

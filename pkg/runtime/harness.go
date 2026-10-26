@@ -17,18 +17,19 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/harness"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Session, a *agent.Agent, events EventSink) string {
+func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Session, a *agent.Agent, events contract.EventSink) string {
 	ctx, span := r.startSpan(ctx, "runtime.harness", trace.WithAttributes(traceAttributesForHarness(sess, a)...))
 	defer span.End()
 
 	provider, err := r.newHarnessProvider(a.Harness())
 	if err != nil {
 		msg := fmt.Sprintf("failed to configure harness: %v", err)
-		events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeModelError, msg))
+		events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeModelError, msg))
 		r.notifyError(ctx, a, sess.ID, msg)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "harness configuration error")
@@ -36,7 +37,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 	}
 
 	modelID := agentModelLabel(ctx, a)
-	events.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
+	events.Emit(contract.AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
 
 	endReason := turnEndReasonNormal
 	defer func() {
@@ -67,7 +68,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 	prompt := strings.TrimSpace(harnessPrompt(messages))
 	if prompt == "" {
 		msg := "cannot run external harness without a user prompt"
-		events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeModelError, msg))
+		events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeModelError, msg))
 		r.notifyError(ctx, a, sess.ID, msg)
 		span.SetStatus(codes.Error, "harness prompt is empty")
 		endReason = turnEndReasonError
@@ -85,7 +86,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 		toolCallSeq++
 		pending := newHarnessToolCall(toolCallSeq, ev, "")
 		pendingToolCalls[pending.key] = pending
-		events.Emit(PartialToolCall(pending.call, pending.definition, a.Name()))
+		events.Emit(contract.PartialToolCall(pending.call, pending.definition, a.Name()))
 		return pending
 	}
 	emitToolCallDelta := func(ev harness.Event) {
@@ -99,7 +100,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 			}
 			pending = startToolCall(ev)
 		}
-		events.Emit(PartialToolCall(tools.ToolCall{
+		events.Emit(contract.PartialToolCall(tools.ToolCall{
 			ID:   pending.call.ID,
 			Type: pending.call.Type,
 			Function: tools.FunctionCall{
@@ -114,7 +115,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 			return
 		}
 		result := harnessToolResult(ev)
-		events.Emit(ToolCallResponse(pending.call.ID, pending.definition, result, result.Output, a.Name()))
+		events.Emit(contract.ToolCallResponse(pending.call.ID, pending.definition, result, result.Output, a.Name()))
 		delete(pendingToolCalls, pending.key)
 	}
 	completeRemainingToolCalls := func(result *tools.ToolCallResult) {
@@ -122,7 +123,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 			return
 		}
 		for key, pending := range pendingToolCalls {
-			events.Emit(ToolCallResponse(pending.call.ID, pending.definition, result, result.Output, a.Name()))
+			events.Emit(contract.ToolCallResponse(pending.call.ID, pending.definition, result, result.Output, a.Name()))
 			delete(pendingToolCalls, key)
 		}
 	}
@@ -140,11 +141,11 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 				return
 			}
 			streamed.WriteString(ev.Text)
-			events.Emit(AgentChoice(a.Name(), sess.ID, ev.Text, messageID))
+			events.Emit(contract.AgentChoice(a.Name(), sess.ID, ev.Text, messageID))
 		case harness.EventReasoning:
 			if ev.Reasoning != "" {
 				reasoning.WriteString(ev.Reasoning)
-				events.Emit(AgentChoiceReasoning(a.Name(), sess.ID, ev.Reasoning, messageID))
+				events.Emit(contract.AgentChoiceReasoning(a.Name(), sess.ID, ev.Reasoning, messageID))
 			}
 		case harness.EventToolCallStart:
 			startToolCall(ev)
@@ -159,13 +160,13 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 					pending.call.Function.Arguments = arguments
 					pendingToolCalls[pending.key] = pending
 				}
-				events.Emit(ToolCall(pending.call, pending.definition, a.Name()))
+				events.Emit(contract.ToolCall(pending.call, pending.definition, a.Name()))
 				return
 			}
 			toolCallSeq++
 			pending := newHarnessToolCall(toolCallSeq, ev, harnessToolCallArguments(ev))
 			pendingToolCalls[pending.key] = pending
-			events.Emit(ToolCall(pending.call, pending.definition, a.Name()))
+			events.Emit(contract.ToolCall(pending.call, pending.definition, a.Name()))
 		case harness.EventToolResult:
 			completeToolCall(ev)
 		case harness.EventResult:
@@ -197,7 +198,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 		}
 		msg := fmt.Sprintf("harness %s failed: %v", provider.Name(), err)
 		completeRemainingToolCalls(tools.ResultError(msg))
-		events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeModelError, msg))
+		events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeModelError, msg))
 		r.notifyError(ctx, a, sess.ID, msg)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "harness run error")
@@ -209,7 +210,7 @@ func (r *LocalRuntime) runHarnessAgent(ctx context.Context, sess *session.Sessio
 	content := strings.TrimSpace(streamed.String())
 	if content == "" && strings.TrimSpace(finalResult) != "" {
 		content = strings.TrimSpace(finalResult)
-		events.Emit(AgentChoice(a.Name(), sess.ID, content, messageID))
+		events.Emit(contract.AgentChoice(a.Name(), sess.ID, content, messageID))
 	}
 	if content == "" {
 		content = strings.TrimSpace(finalResult)
@@ -368,7 +369,7 @@ func harnessUsage(u *harness.Usage) *chat.Usage {
 	}
 }
 
-func (r *LocalRuntime) recordHarnessAssistantMessage(sess *session.Session, a *agent.Agent, content, reasoning, messageID, modelID string, usage *chat.Usage, cost float64, events EventSink) {
+func (r *LocalRuntime) recordHarnessAssistantMessage(sess *session.Session, a *agent.Agent, content, reasoning, messageID, modelID string, usage *chat.Usage, cost float64, events contract.EventSink) {
 	if strings.TrimSpace(content) == "" && reasoning == "" && usage == nil {
 		return
 	}
@@ -391,17 +392,17 @@ func (r *LocalRuntime) recordHarnessAssistantMessage(sess *session.Session, a *a
 	}
 	input := usage.InputTokens + usage.CachedInputTokens + usage.CacheWriteTokens
 	sess.SetUsage(input, usage.OutputTokens)
-	msgUsage := &MessageUsage{
+	msgUsage := &contract.MessageUsage{
 		Usage:        *usage,
 		Cost:         cost,
 		Model:        modelID,
 		FinishReason: chat.FinishReasonStop,
 	}
-	usageEvent := SessionUsage(sess, 0, a.CompactionThreshold())
+	usageEvent := contract.SessionUsage(sess, 0, a.CompactionThreshold())
 	usageEvent.LastMessage = msgUsage
-	events.Emit(NewTokenUsageEvent(sess.ID, a.Name(), usageEvent))
+	events.Emit(contract.NewTokenUsageEvent(sess.ID, a.Name(), usageEvent))
 	if shouldWarnOnCacheMiss(sess, msgUsage) {
-		events.Emit(Warning("This agent turn did not use the prompt cache.", a.Name()))
+		events.Emit(contract.Warning("This agent turn did not use the prompt cache.", a.Name()))
 	}
 }
 

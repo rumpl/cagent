@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
 // activeAgentsRoster is a 3-agent team whose current agent is "root" (set by
 // the panel-sidebar constructors), used across the active-agents-only tests.
-func activeAgentsRoster() []runtime.AgentDetails {
-	return []runtime.AgentDetails{
+func activeAgentsRoster() []contract.AgentDetails {
+	return []contract.AgentDetails{
 		{Name: "root", Provider: "anthropic", Model: "opus"},
 		{Name: "planner", Provider: "openai", Model: "gpt-5.4"},
 		{Name: "reviewer", Provider: "openai", Model: "gpt-4o"},
@@ -172,8 +172,8 @@ func TestActiveAgentsOnly_DetailedSizingUsesFilteredRoster(t *testing.T) {
 	// At width 40 the joined wide metrics of a thinking agent overflow the
 	// metric column while a no-thinking agent's fit.
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
-		runtime.AgentDetails{Name: "verbose", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus"},
+		contract.AgentDetails{Name: "verbose", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
 	)
 
 	assert.Contains(t, agentMetrics(m, "root"), "Ctx —",

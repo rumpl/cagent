@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker-agent/pkg/internal/portcullistest"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -351,10 +352,10 @@ func TestPromptImageUsesActualMIME(t *testing.T) {
 
 func TestToolCompletionDoesNotBypassTextTransformsWithAttachments(t *testing.T) {
 	t.Parallel()
-	event := runtime.ToolCallResponse("call", tools.Tool{Name: "mcp"}, &tools.ToolCallResult{
+	event := contract.ToolCallResponse("call", tools.Tool{Name: "mcp"}, &tools.ToolCallResult{
 		Output: "raw secret", Images: []tools.MediaContent{{MimeType: "image/png", Data: "private image"}},
 		Documents: []tools.DocumentContent{{URI: "file:///private", Text: "private document"}}, StructuredContent: map[string]any{"secret": "private structured content"},
-	}, "redacted", "root").(*runtime.ToolCallResponseEvent)
+	}, "redacted", "root").(*contract.ToolCallResponseEvent)
 	update := buildToolCallComplete(event)
 	encoded, err := json.Marshal(update)
 	require.NoError(t, err)

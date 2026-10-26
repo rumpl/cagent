@@ -32,6 +32,7 @@ import (
 	"github.com/docker/docker-agent/pkg/permissions"
 	"github.com/docker/docker-agent/pkg/profiling"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/sandbox"
 	"github.com/docker/docker-agent/pkg/server"
 	"github.com/docker/docker-agent/pkg/session"
@@ -970,7 +971,7 @@ func (f *runExecFlags) snapshotRuntimeOpts() ([]runtime.Opt, builtins.SnapshotCo
 	}, ctrl, nil
 }
 
-func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req runtime.CreateSessionRequest, sessStore session.Store) (runtime.Runtime, *session.Session, error) {
+func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadResult *teamloader.LoadResult, req runtime.CreateSessionRequest, sessStore session.Store) (contract.Runtime, *session.Session, error) {
 	t := loadResult.Team
 
 	// Merge user-level global permissions into the team's checker so the
@@ -1055,7 +1056,7 @@ func (f *runExecFlags) createLocalRuntimeAndSession(ctx context.Context, loadRes
 	return localRt, sess, nil
 }
 
-func (f *runExecFlags) handleExecMode(ctx context.Context, out *cli.Printer, rt runtime.Runtime, sess *session.Session, args []string) error {
+func (f *runExecFlags) handleExecMode(ctx context.Context, out *cli.Printer, rt contract.Runtime, sess *session.Session, args []string) error {
 	if f.sessionReadOnly {
 		return errors.New("--session-read-only cannot be used with --exec: there is nothing to display without a TUI")
 	}
@@ -1168,7 +1169,7 @@ func (f *runExecFlags) shouldOfferTour(args []string) bool {
 // --lean is set. Unlike the full TUI it renders to the normal terminal buffer
 // (no alternate screen) and sends the first/queued messages itself rather than
 // through the App's bubbletea command pipeline.
-func (f *runExecFlags) runLeanTUI(ctx context.Context, rt runtime.Runtime, sess *session.Session, cleanup func(), args []string, opts ...app.Opt) error {
+func (f *runExecFlags) runLeanTUI(ctx context.Context, rt contract.Runtime, sess *session.Session, cleanup func(), args []string, opts ...app.Opt) error {
 	if gen := rt.TitleGenerator(ctx); gen != nil {
 		opts = append(opts, app.WithTitleGenerator(gen))
 	}

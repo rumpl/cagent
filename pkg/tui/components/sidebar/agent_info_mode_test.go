@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -16,7 +16,7 @@ import (
 
 // newCompactPanelSidebar builds a sidebar like newAgentPanelSidebar but keeps
 // the default (zero-value) agent info mode: the compact two-line roster.
-func newCompactPanelSidebar(t *testing.T, width int, agents ...runtime.AgentDetails) *model {
+func newCompactPanelSidebar(t *testing.T, width int, agents ...contract.AgentDetails) *model {
 	t.Helper()
 	sess := session.New()
 	ss := service.NewSessionState(sess)
@@ -36,8 +36,8 @@ func newCompactPanelSidebar(t *testing.T, width int, agents ...runtime.AgentDeta
 // infoModeFixtureRoster is the fixed roster used by the exact-output tests:
 // an effort level, a disabled thinking config, a token budget, and a model
 // with no thinking configuration.
-func infoModeFixtureRoster() []runtime.AgentDetails {
-	return []runtime.AgentDetails{
+func infoModeFixtureRoster() []contract.AgentDetails {
+	return []contract.AgentDetails{
 		{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
 		{Name: "helper", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 		{Name: "budget", Provider: "openai", Model: "gpt-4o", Thinking: "8192"},
@@ -206,11 +206,11 @@ func TestCompactThinkingBadgeVocabularyOnLine(t *testing.T) {
 	t.Parallel()
 
 	m := newCompactPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-		runtime.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
-		runtime.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "8192"},
-		runtime.AgentDetails{Name: "delta", Provider: "google", Model: "gemini", Thinking: "adaptive"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
+		contract.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "8192"},
+		contract.AgentDetails{Name: "delta", Provider: "google", Model: "gemini", Thinking: "adaptive"},
 	)
 
 	want := map[string]string{
@@ -233,8 +233,8 @@ func TestCompactNameTruncatesNearMinWidth(t *testing.T) {
 	t.Parallel()
 
 	m := newCompactPanelSidebar(t, 21,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "agent2", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "agent2", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "high"},
 	)
 
 	line1, line2 := agentLines(m, "agent2")
@@ -259,7 +259,7 @@ func TestCompactClickZonesEveryLine(t *testing.T) {
 	m.titleGenerated = true
 	m.sessionTitle = "Test"
 	m.currentAgent = "root"
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "first", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 		{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -39,15 +39,15 @@ func TestRootHiddenDefersViewUntilVisible(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
 	page := &deferredRenderPage{Page: root.activeTab.chatPage}
 	root.activeTab.chatPage = page
-	_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
-	_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "prefix "))
+	_, _ = root.Update(contract.StreamStarted("profile", "root"))
+	_, _ = root.Update(contract.AgentChoice("root", "profile", "prefix "))
 	before := root.View()
 	require.Equal(t, 1, page.views)
 
 	_, _ = root.Update(tmuxVisibilityMsg{hidden: true})
 	require.Equal(t, before, root.View())
 	for _, chunk := range []string{"first ", "**second** ", "λ界 third"} {
-		_, _ = root.Update(agentruntime.AgentChoice("root", "profile", chunk))
+		_, _ = root.Update(contract.AgentChoice("root", "profile", chunk))
 		require.Equal(t, before, root.View(), "streaming must not compose a hidden frame")
 	}
 	require.Equal(t, 1, page.views)
@@ -65,18 +65,18 @@ func TestRootHiddenKeepsCompletionMetadataLive(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
 	page := &deferredRenderPage{Page: root.activeTab.chatPage}
 	root.activeTab.chatPage = page
-	_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+	_, _ = root.Update(contract.StreamStarted("profile", "root"))
 	before := root.View()
 	require.NotNil(t, before.ProgressBar)
 	_, _ = root.Update(tmuxVisibilityMsg{hidden: true})
 
 	call := tools.ToolCall{ID: "hidden-call", Function: tools.FunctionCall{Name: "shell", Arguments: `{"cmd":"echo done"}`}}
 	tool := tools.Tool{Name: "shell"}
-	for _, event := range []agentruntime.Event{
-		agentruntime.ToolCall(call, tool, "root"),
-		agentruntime.ToolCallResponse(call.ID, tool, tools.ResultSuccess("done"), "done", "root"),
-		agentruntime.AgentChoice("root", "profile", "HIDDEN-COMPLETION"),
-		agentruntime.StreamStopped("profile", "root", "normal"),
+	for _, event := range []contract.Event{
+		contract.ToolCall(call, tool, "root"),
+		contract.ToolCallResponse(call.ID, tool, tools.ResultSuccess("done"), "done", "root"),
+		contract.AgentChoice("root", "profile", "HIDDEN-COMPLETION"),
+		contract.StreamStopped("profile", "root", "normal"),
 	} {
 		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: event})
 		require.Equal(t, before.Content, root.View().Content)
@@ -130,8 +130,8 @@ func TestRootHiddenResizeRefreshesGeometry(t *testing.T) {
 			root.leanMode = lean
 			page := &deferredRenderPage{Page: root.activeTab.chatPage}
 			root.activeTab.chatPage = page
-			_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "before resize"))
+			_, _ = root.Update(contract.StreamStarted("profile", "root"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", "before resize"))
 			_ = root.View()
 			_, _ = root.Update(tmuxVisibilityMsg{hidden: true})
 			_, _ = root.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -142,7 +142,7 @@ func TestRootHiddenResizeRefreshesGeometry(t *testing.T) {
 				require.Equal(t, 100, width)
 			}
 
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", " after resize"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", " after resize"))
 			require.Equal(t, after, root.View().Content, "chunks after resize are deferred again")
 			require.Equal(t, 2, page.views)
 			_, _ = root.Update(tmuxVisibilityMsg{})
@@ -155,10 +155,10 @@ func TestRootHiddenResizeRefreshesGeometry(t *testing.T) {
 func TestRootHiddenFinalLeanFrameIsCurrent(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
 	root.leanMode = true
-	_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+	_, _ = root.Update(contract.StreamStarted("profile", "root"))
 	_ = root.View()
 	_, _ = root.Update(tmuxVisibilityMsg{hidden: true})
-	_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "FINAL-LEAN-FRAME"))
+	_, _ = root.Update(contract.AgentChoice("root", "profile", "FINAL-LEAN-FRAME"))
 	require.NotContains(t, root.View().Content, "FINAL-LEAN-FRAME")
 
 	_, cmd := root.Update(messages.ExitAfterFirstResponseMsg{})
@@ -175,8 +175,8 @@ func TestRootHiddenDoesNotHideErrors(t *testing.T) {
 
 func TestActualProgramHiddenSuppressesStreamWrites(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
-	_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
-	_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "prefix "))
+	_, _ = root.Update(contract.StreamStarted("profile", "root"))
+	_, _ = root.Update(contract.AgentChoice("root", "profile", "prefix "))
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	writer := &wallClockCountingWriter{}
 	program := startStreamingMotionProgram(t, model, tea.WithOutput(writer))
@@ -188,9 +188,9 @@ func TestActualProgramHiddenSuppressesStreamWrites(t *testing.T) {
 	baselineCompositions := model.compositions.Load()
 
 	for range 100 {
-		program.Send(agentruntime.AgentChoice("root", "profile", "hidden "))
+		program.Send(contract.AgentChoice("root", "profile", "hidden "))
 	}
-	program.Send(agentruntime.AgentChoice("root", "profile", "VISIBILITY-CATCHUP"))
+	program.Send(contract.AgentChoice("root", "profile", "VISIBILITY-CATCHUP"))
 	programAck(t, program)
 	waitForProgramQuiescence(t, model, writer)
 	require.Equal(t, uint64(101), model.chunks.Load())
@@ -207,15 +207,15 @@ func TestRootHiddenMouseReleasePreservesFollowTail(t *testing.T) {
 	for _, releaseBeforeVisible := range []bool{false, true} {
 		t.Run(map[bool]string{false: "release after focus", true: "release before focus"}[releaseBeforeVisible], func(t *testing.T) {
 			root, _, _ := frozenClockRoot(t, 120, 40)
-			_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"))
+			_, _ = root.Update(contract.StreamStarted("profile", "root"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"))
 			before := root.View().Content
 			_, _ = root.Update(tmuxVisibilityMsg{hidden: true})
 			for range 40 {
-				_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "background paragraph\n\n"))
+				_, _ = root.Update(contract.AgentChoice("root", "profile", "background paragraph\n\n"))
 				require.Equal(t, before, root.View().Content)
 			}
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "LATEST-RESPONSE\n\n"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", "LATEST-RESPONSE\n\n"))
 
 			if !releaseBeforeVisible {
 				_, _ = root.Update(tmuxVisibilityMsg{})
@@ -229,7 +229,7 @@ func TestRootHiddenMouseReleasePreservesFollowTail(t *testing.T) {
 			require.Contains(t, after, "LATEST-RESPONSE")
 			require.NotContains(t, after, "START-OF-CONVERSATION")
 
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "STILL-FOLLOWING\n\n"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", "STILL-FOLLOWING\n\n"))
 			require.Contains(t, ansi.Strip(root.View().Content), "STILL-FOLLOWING")
 		})
 	}
@@ -239,8 +239,8 @@ func TestActualProgramHiddenHoverPreservesFollowTail(t *testing.T) {
 	for _, stopped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "streaming", true: "completed"}[stopped], func(t *testing.T) {
 			root, _, _ := frozenClockRoot(t, 120, 40)
-			_, _ = root.Update(agentruntime.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"+strings.Repeat("history paragraph\n\n", 40)))
-			_, _ = root.Update(agentruntime.StreamStarted("profile", "root"))
+			_, _ = root.Update(contract.AgentChoice("root", "profile", "START-OF-CONVERSATION\n\n"+strings.Repeat("history paragraph\n\n", 40)))
+			_, _ = root.Update(contract.StreamStarted("profile", "root"))
 			_ = root.View()
 			model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 			writer := &wallClockCountingWriter{}
@@ -249,9 +249,9 @@ func TestActualProgramHiddenHoverPreservesFollowTail(t *testing.T) {
 			programAck(t, program)
 			before := programFrame(t, program)
 
-			program.Send(agentruntime.AgentChoice("root", "profile", strings.Repeat("background paragraph\n\n", 40)+"LATEST-RESPONSE\n\n"))
+			program.Send(contract.AgentChoice("root", "profile", strings.Repeat("background paragraph\n\n", 40)+"LATEST-RESPONSE\n\n"))
 			if stopped {
-				program.Send(agentruntime.StreamStopped("profile", "root", "normal"))
+				program.Send(contract.StreamStopped("profile", "root", "normal"))
 			}
 			programAck(t, program)
 			// Let the returned bottom-scroll commands run while composition is deferred.
@@ -266,7 +266,7 @@ func TestActualProgramHiddenHoverPreservesFollowTail(t *testing.T) {
 			require.Contains(t, after, "LATEST-RESPONSE")
 			require.NotContains(t, after, "START-OF-CONVERSATION")
 
-			program.Send(agentruntime.AgentChoice("root", "profile", strings.Repeat("new paragraph\n\n", 20)+"STILL-FOLLOWING\n\n"))
+			program.Send(contract.AgentChoice("root", "profile", strings.Repeat("new paragraph\n\n", 20)+"STILL-FOLLOWING\n\n"))
 			programAck(t, program)
 			require.Contains(t, ansi.Strip(programFrame(t, program)), "STILL-FOLLOWING")
 		})

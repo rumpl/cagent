@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker-agent/pkg/harness"
 	"github.com/docker/docker-agent/pkg/js"
 	"github.com/docker/docker-agent/pkg/paths"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -113,12 +114,12 @@ func TestHarnessAgentRunStream(t *testing.T) {
 	sess := session.New(session.WithUserMessage("do the task"))
 	events := collectRuntimeEvents(t, rt, sess)
 
-	assert.True(t, hasEventType(t, events, &AgentChoiceEvent{}))
+	assert.True(t, hasEventType(t, events, &contract.AgentChoiceEvent{}))
 	assert.Equal(t, "harness done", sess.GetLastAssistantMessageContent())
 
 	var sawHarnessModel bool
 	for _, ev := range events {
-		if info, ok := ev.(*AgentInfoEvent); ok && info.Model == "codex" {
+		if info, ok := ev.(*contract.AgentInfoEvent); ok && info.Model == "codex" {
 			sawHarnessModel = true
 		}
 	}
@@ -168,7 +169,7 @@ func TestHarnessAgentResumesPersistedSession(t *testing.T) {
 `)
 	loaded.AddMessage(session.UserMessage("third question"))
 	events := collectRuntimeEvents(t, rt, loaded)
-	assert.True(t, hasEventType(t, events, &ErrorEvent{}))
+	assert.True(t, hasEventType(t, events, &contract.ErrorEvent{}))
 	assert.Equal(t, "thread-123", harnessSessionIDFor(loaded, rt.CurrentAgent()))
 }
 
@@ -183,7 +184,7 @@ func TestHarnessFirstFailedTurnCanResume(t *testing.T) {
 	rt := newHarnessRuntimeWithStore(t, "codex", store)
 	sess := session.New(session.WithUserMessage("first question"))
 	events := collectRuntimeEvents(t, rt, sess)
-	assert.True(t, hasEventType(t, events, &ErrorEvent{}))
+	assert.True(t, hasEventType(t, events, &contract.ErrorEvent{}))
 	loaded, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "retry-thread", harnessSessionIDFor(loaded, rt.CurrentAgent()))
@@ -193,7 +194,7 @@ func TestHarnessFirstFailedTurnCanResume(t *testing.T) {
 	loaded.AddMessage(session.UserMessage("try again"))
 	rt = newHarnessRuntimeWithStore(t, "codex", store)
 	events = collectRuntimeEvents(t, rt, loaded)
-	assert.False(t, hasEventType(t, events, &ErrorEvent{}))
+	assert.False(t, hasEventType(t, events, &contract.ErrorEvent{}))
 	assert.Equal(t, "recovered", loaded.GetLastAssistantMessageContent())
 	assert.Contains(t, harnessShimArgs(t), "exec\nresume\nretry-thread\n")
 }
@@ -216,7 +217,7 @@ func TestHarnessRejectsImplicitOrMissingUserPrompt(t *testing.T) {
 	sess := session.New(session.WithImplicitUserMessage("Please proceed."))
 	events := collectRuntimeEvents(t, rt, sess)
 
-	assert.True(t, hasEventType(t, events, &ErrorEvent{}))
+	assert.True(t, hasEventType(t, events, &contract.ErrorEvent{}))
 	_, err := os.Stat(filepath.Join(harnessBinDir, "codex.args"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -248,7 +249,7 @@ func TestHarnessDelegatedTaskWithImplicitUserMessage(t *testing.T) {
 	events := collectRuntimeEvents(t, rt, sess)
 
 	// Must launch without error.
-	assert.False(t, hasEventType(t, events, &ErrorEvent{}))
+	assert.False(t, hasEventType(t, events, &contract.ErrorEvent{}))
 	assert.Equal(t, "delegation done", sess.GetLastAssistantMessageContent())
 
 	// Harness args must carry the task text so the harness can act on it.
@@ -275,7 +276,7 @@ func TestHarnessSubSessionIDSurvivesReconstruction(t *testing.T) {
 	rt := newHarnessRuntimeWithStore(t, "codex", store)
 	sess := session.New(session.WithParentID(parent.ID), session.WithUserMessage("child task"))
 	collectRuntimeEvents(t, rt, sess)
-	newPersistenceObserver(store).OnEvent(t.Context(), parent, SubSessionCompleted(parent.ID, sess, "root"))
+	newPersistenceObserver(store).OnEvent(t.Context(), parent, contract.SubSessionCompleted(parent.ID, sess, "root"))
 
 	reconstructed, err := store.GetSession(t.Context(), sess.ID)
 	require.NoError(t, err)
@@ -295,13 +296,13 @@ func TestHarnessToolCallCompletes(t *testing.T) {
 	rt := newHarnessRuntime(t, "codex")
 	events := collectRuntimeEvents(t, rt, session.New(session.WithUserMessage("run tests")))
 
-	var toolCall *ToolCallEvent
-	var toolResponse *ToolCallResponseEvent
+	var toolCall *contract.ToolCallEvent
+	var toolResponse *contract.ToolCallResponseEvent
 	for _, ev := range events {
 		switch ev := ev.(type) {
-		case *ToolCallEvent:
+		case *contract.ToolCallEvent:
 			toolCall = ev
-		case *ToolCallResponseEvent:
+		case *contract.ToolCallResponseEvent:
 			toolResponse = ev
 		}
 	}
@@ -325,14 +326,14 @@ func TestHarnessShowsClaudeCodeToolCallAlongsideText(t *testing.T) {
 	events := collectRuntimeEvents(t, rt, session.New(session.WithUserMessage("write poem")))
 
 	var sawText bool
-	var toolCall *ToolCallEvent
+	var toolCall *contract.ToolCallEvent
 	for _, ev := range events {
 		switch ev := ev.(type) {
-		case *AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			if strings.Contains(ev.Content, "I will create the file") {
 				sawText = true
 			}
-		case *ToolCallEvent:
+		case *contract.ToolCallEvent:
 			toolCall = ev
 		}
 	}
@@ -357,13 +358,13 @@ func TestHarnessSuppressesDuplicateClaudeCodeToolCall(t *testing.T) {
 	rt := newHarnessRuntime(t, "claude-code")
 	events := collectRuntimeEvents(t, rt, session.New(session.WithUserMessage("run uname")))
 
-	var toolCalls []ToolCallEvent
+	var toolCalls []contract.ToolCallEvent
 	var partialArgs strings.Builder
 	for _, ev := range events {
 		switch ev := ev.(type) {
-		case *ToolCallEvent:
+		case *contract.ToolCallEvent:
 			toolCalls = append(toolCalls, *ev)
-		case *PartialToolCallEvent:
+		case *contract.PartialToolCallEvent:
 			partialArgs.WriteString(ev.ToolCall.Function.Arguments)
 		}
 	}
@@ -388,7 +389,7 @@ func TestHarnessSuppressesReplayedClaudeCodeFinalText(t *testing.T) {
 
 	var chunks []string
 	for _, ev := range events {
-		if choice, ok := ev.(*AgentChoiceEvent); ok {
+		if choice, ok := ev.(*contract.AgentChoiceEvent); ok {
 			chunks = append(chunks, choice.Content)
 		}
 	}
@@ -408,9 +409,9 @@ func newHarnessRuntimeWithStore(t *testing.T, harnessType string, store session.
 	return rt
 }
 
-func collectRuntimeEvents(t *testing.T, rt *LocalRuntime, sess *session.Session) []Event {
+func collectRuntimeEvents(t *testing.T, rt *LocalRuntime, sess *session.Session) []contract.Event {
 	t.Helper()
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}

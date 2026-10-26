@@ -7,11 +7,6 @@ import (
 	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
-// QueuedMessage is a user message waiting to be injected into the agent loop,
-// either mid-turn (via the steer queue) or at end-of-turn (via the follow-up
-// queue).
-type QueuedMessage = contract.QueuedMessage
-
 // PendingMessageCanceler is implemented by runtimes that can withdraw queued
 // messages before the agent loop consumes them.
 type PendingMessageCanceler interface {
@@ -22,7 +17,7 @@ type PendingMessageCanceler interface {
 // RecallHandler delivers a tool-produced message through an embedder-owned
 // wake-up path. Embedders use it to resume an idle UI/session when background
 // work completes after the active RunStream has stopped.
-type RecallHandler func(ctx context.Context, msg QueuedMessage) bool
+type RecallHandler func(ctx context.Context, msg contract.QueuedMessage) bool
 
 // MessageQueue is the interface for storing messages that are injected into
 // the agent loop. Implementations must be safe for concurrent use: Enqueue
@@ -35,14 +30,14 @@ type RecallHandler func(ctx context.Context, msg QueuedMessage) bool
 type MessageQueue interface {
 	// Enqueue adds a message to the queue. Returns false if the queue is
 	// full or the context is cancelled.
-	Enqueue(ctx context.Context, msg QueuedMessage) bool
+	Enqueue(ctx context.Context, msg contract.QueuedMessage) bool
 	// Dequeue removes and returns the next message from the queue.
 	// Returns the message and true, or a zero value and false if the
 	// queue is empty. Must not block.
-	Dequeue(ctx context.Context) (QueuedMessage, bool)
+	Dequeue(ctx context.Context) (contract.QueuedMessage, bool)
 	// Drain returns all pending messages and removes them from the queue.
 	// Must not block — if the queue is empty it returns nil.
-	Drain(ctx context.Context) []QueuedMessage
+	Drain(ctx context.Context) []contract.QueuedMessage
 }
 
 type cancelableMessageQueue interface {
@@ -53,7 +48,7 @@ type cancelableMessageQueue interface {
 // inMemoryMessageQueue is the default MessageQueue.
 type inMemoryMessageQueue struct {
 	mu       sync.Mutex
-	messages []QueuedMessage
+	messages []contract.QueuedMessage
 	capacity int
 }
 
@@ -70,7 +65,7 @@ func NewInMemoryMessageQueue(capacity int) MessageQueue {
 	return &inMemoryMessageQueue{capacity: capacity}
 }
 
-func (q *inMemoryMessageQueue) Enqueue(ctx context.Context, msg QueuedMessage) bool {
+func (q *inMemoryMessageQueue) Enqueue(ctx context.Context, msg contract.QueuedMessage) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -83,19 +78,19 @@ func (q *inMemoryMessageQueue) Enqueue(ctx context.Context, msg QueuedMessage) b
 	return true
 }
 
-func (q *inMemoryMessageQueue) Dequeue(_ context.Context) (QueuedMessage, bool) {
+func (q *inMemoryMessageQueue) Dequeue(_ context.Context) (contract.QueuedMessage, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.messages) == 0 {
-		return QueuedMessage{}, false
+		return contract.QueuedMessage{}, false
 	}
 	msg := q.messages[0]
-	q.messages[0] = QueuedMessage{}
+	q.messages[0] = contract.QueuedMessage{}
 	q.messages = q.messages[1:]
 	return msg, true
 }
 
-func (q *inMemoryMessageQueue) Drain(_ context.Context) []QueuedMessage {
+func (q *inMemoryMessageQueue) Drain(_ context.Context) []contract.QueuedMessage {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	msgs := q.messages
@@ -113,7 +108,7 @@ func (q *inMemoryMessageQueue) Cancel(id string) bool {
 		if msg.ID != id {
 			continue
 		}
-		q.messages[i] = QueuedMessage{}
+		q.messages[i] = contract.QueuedMessage{}
 		q.messages = append(q.messages[:i], q.messages[i+1:]...)
 		return true
 	}
@@ -127,5 +122,3 @@ func (q *inMemoryMessageQueue) status() (depth, capacity int) {
 }
 
 // QueueStatus represents the current depth and capacity of message queues
-// QueueStatus reports pending user-message queue depths.
-type QueueStatus = contract.QueueStatus

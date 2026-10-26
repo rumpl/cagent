@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/docker/docker-agent/pkg/config/types"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -20,8 +21,8 @@ func (m *mockRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) {
 	return m.tools, nil
 }
 
-func (m *mockRuntime) CurrentAgentInfo(context.Context) CurrentAgentInfo {
-	return CurrentAgentInfo{
+func (m *mockRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{
 		Name:        "test",
 		Description: "test description",
 		Commands:    m.commands,

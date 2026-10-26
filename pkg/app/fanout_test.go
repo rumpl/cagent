@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 )
 
 // TestFanOut_TurnBoundaryEventEvictsPendingDelta verifies that when a
@@ -38,13 +38,13 @@ func TestFanOut_TurnBoundaryEventEvictsPendingDelta(t *testing.T) {
 		app.fanoutOnce.Do(app.startFanOut)
 
 		// Fill the subscriber's buffer with a droppable event.
-		filler := runtime.NewTokenUsageEvent("sess", "root", &runtime.Usage{})
+		filler := contract.NewTokenUsageEvent("sess", "root", &contract.Usage{})
 		events <- filler
 		synctest.Wait()
 		require.Len(t, ch, 1)
 
 		// The turn-boundary event must displace the pending filler.
-		stopped := runtime.StreamStopped("sess", "root", "normal")
+		stopped := contract.StreamStopped("sess", "root", "normal")
 		events <- stopped
 
 		synctest.Wait()
@@ -82,13 +82,13 @@ func TestFanOut_DroppableEventIsDroppedOnOverflow(t *testing.T) {
 		app.addSubscriber(&eventSubscriber{ch: witness})
 		app.fanoutOnce.Do(app.startFanOut)
 
-		first := runtime.NewTokenUsageEvent("sess", "root", &runtime.Usage{})
+		first := contract.NewTokenUsageEvent("sess", "root", &contract.Usage{})
 		events <- first
 		synctest.Wait()
 		require.Len(t, ch, 1)
 
 		// A second droppable event overflows and is dropped; the first stays.
-		second := runtime.NewTokenUsageEvent("sess", "other", &runtime.Usage{})
+		second := contract.NewTokenUsageEvent("sess", "other", &contract.Usage{})
 		events <- second
 		synctest.Wait()
 		require.Len(t, witness, 2)

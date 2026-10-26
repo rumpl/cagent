@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -68,7 +68,7 @@ func TestContextPercent_FallbackToSingleSession(t *testing.T) {
 	m := New(animation.NewRuntime(), t.Context(), sessionState).(*model)
 
 	// Session with no active stream (e.g., restored from persistence)
-	m.sessionUsage["session-1"] = &runtime.Usage{
+	m.sessionUsage["session-1"] = &contract.Usage{
 		InputTokens:   5000,
 		OutputTokens:  5000,
 		ContextLength: 10000,
@@ -167,10 +167,10 @@ func (s *testSidebar) stopStream() {
 }
 
 func (s *testSidebar) recordUsage(sessionID, agentName string, contextLen, contextLimit int64) {
-	s.SetTokenUsage(&runtime.TokenUsageEvent{
+	s.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sessionID,
-		AgentContext: runtime.AgentContext{AgentName: agentName},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: agentName},
+		Usage: &contract.Usage{
 			InputTokens:   contextLen / 2,
 			OutputTokens:  contextLen / 2,
 			ContextLength: contextLen,
@@ -180,10 +180,10 @@ func (s *testSidebar) recordUsage(sessionID, agentName string, contextLen, conte
 }
 
 func (s *testSidebar) recordUsageTokens(sessionID, agentName string, input, output int64) {
-	s.SetTokenUsage(&runtime.TokenUsageEvent{
+	s.SetTokenUsage(&contract.TokenUsageEvent{
 		SessionID:    sessionID,
-		AgentContext: runtime.AgentContext{AgentName: agentName},
-		Usage: &runtime.Usage{
+		AgentContext: contract.AgentContext{AgentName: agentName},
+		Usage: &contract.Usage{
 			InputTokens:  input,
 			OutputTokens: output,
 		},

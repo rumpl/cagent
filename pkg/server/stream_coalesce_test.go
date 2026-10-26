@@ -13,7 +13,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -21,15 +21,15 @@ import (
 // deltaScript is a turn whose deltas all arrive faster than any window: the
 // first delta goes out at once, the rest are held until stream_stopped
 // flushes them.
-func deltaScript(sessionID string) []runtime.Event {
-	return []runtime.Event{
-		runtime.StreamStarted(sessionID, "root"),
-		runtime.AgentChoice("root", sessionID, "a", "m1"),
-		runtime.AgentChoice("root", sessionID, "b", "m1"),
-		runtime.AgentChoice("root", sessionID, "c", "m1"),
-		runtime.ToolCallOutput("call-1", tools.Tool{Name: "shell"}, "1", "root"),
-		runtime.ToolCallOutput("call-1", tools.Tool{Name: "shell"}, "2", "root"),
-		runtime.StreamStopped(sessionID, "root", "normal"),
+func deltaScript(sessionID string) []contract.Event {
+	return []contract.Event{
+		contract.StreamStarted(sessionID, "root"),
+		contract.AgentChoice("root", sessionID, "a", "m1"),
+		contract.AgentChoice("root", sessionID, "b", "m1"),
+		contract.AgentChoice("root", sessionID, "c", "m1"),
+		contract.ToolCallOutput("call-1", tools.Tool{Name: "shell"}, "1", "root"),
+		contract.ToolCallOutput("call-1", tools.Tool{Name: "shell"}, "2", "root"),
+		contract.StreamStopped(sessionID, "root", "normal"),
 	}
 }
 
@@ -73,7 +73,7 @@ func TestRecallSession_CoalescesStreamingDeltasBeforeSequencing(t *testing.T) {
 		sm := newTestSessionManager(t, sess, &scriptedStreamRuntime{events: deltaScript(sess.ID)})
 		sm.streamCoalesceWindow = time.Hour
 
-		require.NoError(t, sm.recallSession(t.Context(), sess.ID, runtime.QueuedMessage{Content: "wake up"}))
+		require.NoError(t, sm.recallSession(t.Context(), sess.ID, contract.QueuedMessage{Content: "wake up"}))
 		waitSessionIdle(t, sm, sess.ID)
 
 		seq, ok := sm.LastEventSeq(sess.ID)
@@ -81,10 +81,10 @@ func TestRecallSession_CoalescesStreamingDeltasBeforeSequencing(t *testing.T) {
 		require.Equal(t, uint64(5), seq, "merged deltas must take one sequence number each")
 
 		replayed := replaySessionEvents(t, sm, sess.ID, 5)
-		assert.Equal(t, "a", replayed[1].(*runtime.AgentChoiceEvent).Content)
-		assert.Equal(t, "bc", replayed[2].(*runtime.AgentChoiceEvent).Content)
-		assert.Equal(t, "12", replayed[3].(*runtime.ToolCallOutputEvent).Output)
-		assert.IsType(t, &runtime.StreamStoppedEvent{}, replayed[4])
+		assert.Equal(t, "a", replayed[1].(*contract.AgentChoiceEvent).Content)
+		assert.Equal(t, "bc", replayed[2].(*contract.AgentChoiceEvent).Content)
+		assert.Equal(t, "12", replayed[3].(*contract.ToolCallOutputEvent).Output)
+		assert.IsType(t, &contract.StreamStoppedEvent{}, replayed[4])
 	})
 }
 

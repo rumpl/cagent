@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/components/toolcommon"
 	"github.com/docker/docker-agent/pkg/tui/styles"
 )
@@ -149,10 +149,10 @@ func TestCardGaugeColumnAlignment(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 56,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "minimal"},
-		runtime.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "medium"},
-		runtime.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "max"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "minimal"},
+		contract.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "medium"},
+		contract.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "max"},
 	)
 
 	wantGauge := map[string]string{

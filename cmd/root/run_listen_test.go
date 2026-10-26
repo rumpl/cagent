@@ -13,12 +13,13 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/config"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 type recallRuntime struct {
-	runtime.Runtime
+	contract.Runtime
 
 	store         session.Store
 	recallHandler runtime.RecallHandler
@@ -58,7 +59,7 @@ func TestStartSessionCoordinatorWithoutListenRoutesIdleRecallToApp(t *testing.T)
 			cancel()
 		})
 
-		require.True(t, rt.recallHandler(ctx, runtime.QueuedMessage{Content: "background job finished"}))
+		require.True(t, rt.recallHandler(ctx, contract.QueuedMessage{Content: "background job finished"}))
 
 		select {
 		case msg := <-events:

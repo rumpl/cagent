@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -30,38 +31,38 @@ func (m mapModelStore) GetModel(_ context.Context, id modelsdev.ID) (*modelsdev.
 	return nil, nil
 }
 
-func lastTokenUsage(events []Event) *TokenUsageEvent {
-	var last *TokenUsageEvent
+func lastTokenUsage(events []contract.Event) *contract.TokenUsageEvent {
+	var last *contract.TokenUsageEvent
 	for _, ev := range events {
-		if e, ok := ev.(*TokenUsageEvent); ok {
+		if e, ok := ev.(*contract.TokenUsageEvent); ok {
 			last = e
 		}
 	}
 	return last
 }
 
-func countCompactionStarts(events []Event) int {
+func countCompactionStarts(events []contract.Event) int {
 	var n int
 	for _, ev := range events {
-		if e, ok := ev.(*SessionCompactionEvent); ok && e.Status == "started" {
+		if e, ok := ev.(*contract.SessionCompactionEvent); ok && e.Status == "started" {
 			n++
 		}
 	}
 	return n
 }
 
-func drainRunStream(t *testing.T, rt *LocalRuntime, sess *session.Session) []Event {
+func drainRunStream(t *testing.T, rt *LocalRuntime, sess *session.Session) []contract.Event {
 	t.Helper()
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
 	return events
 }
 
-func firstAgentInfo(events []Event) *AgentInfoEvent {
+func firstAgentInfo(events []contract.Event) *contract.AgentInfoEvent {
 	for _, ev := range events {
-		if e, ok := ev.(*AgentInfoEvent); ok {
+		if e, ok := ev.(*contract.AgentInfoEvent); ok {
 			return e
 		}
 	}
@@ -70,13 +71,13 @@ func firstAgentInfo(events []Event) *AgentInfoEvent {
 
 // startupAgentInfo drives EmitStartupInfo (the emitAgentAndTeamInfo call site
 // used on session start/restore) and returns the resulting AgentInfoEvent.
-func startupAgentInfo(t *testing.T, rt *LocalRuntime) *AgentInfoEvent {
+func startupAgentInfo(t *testing.T, rt *LocalRuntime) *contract.AgentInfoEvent {
 	t.Helper()
-	events := make(chan Event, 20)
+	events := make(chan contract.Event, 20)
 	rt.EmitStartupInfo(t.Context(), nil, NewChannelSink(events))
 	close(events)
 
-	var collected []Event
+	var collected []contract.Event
 	for ev := range events {
 		collected = append(collected, ev)
 	}

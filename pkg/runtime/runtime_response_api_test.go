@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -31,7 +32,7 @@ func TestResponseAPIToolCallHandling(t *testing.T) {
 	events := runSession(t, sess, stream)
 
 	// Verify that we got the expected partial tool call events
-	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent")
+	require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}), "Expected PartialToolCallEvent")
 
 	// Verify the session has the complete tool call with full arguments
 	messages := sess.GetAllMessages()
@@ -66,7 +67,7 @@ func TestResponseAPIMultipleToolCalls(t *testing.T) {
 	events := runSession(t, sess, stream)
 
 	// Verify that we got partial tool call events
-	require.True(t, hasEventType(t, events, &PartialToolCallEvent{}), "Expected PartialToolCallEvent")
+	require.True(t, hasEventType(t, events, &contract.PartialToolCallEvent{}), "Expected PartialToolCallEvent")
 
 	// Verify the session has both complete tool calls
 	messages := sess.GetAllMessages()
@@ -94,9 +95,9 @@ func TestPartialToolCallEventsContainOnlyNewArgumentBytes(t *testing.T) {
 	sess := session.New(session.WithUserMessage("Write a story"))
 	events := runSession(t, sess, stream)
 
-	var partials []*PartialToolCallEvent
+	var partials []*contract.PartialToolCallEvent
 	for _, event := range events {
-		if ev, ok := event.(*PartialToolCallEvent); ok {
+		if ev, ok := event.(*contract.PartialToolCallEvent); ok {
 			partials = append(partials, ev)
 		}
 	}
@@ -118,13 +119,13 @@ func TestPartialToolCallEventJSONIncludesToolDefinitionOnlyWhenPresent(t *testin
 	t.Parallel()
 
 	toolDef := &tools.Tool{Name: "write_file", Description: "Create file"}
-	withDef := &PartialToolCallEvent{
+	withDef := &contract.PartialToolCallEvent{
 		Type:           "partial_tool_call",
 		ToolCall:       tools.ToolCall{ID: "call_1", Type: "function", Function: tools.FunctionCall{Name: "write_file"}},
 		ToolDefinition: toolDef,
 		AgentContext:   newAgentContext("root"),
 	}
-	withoutDef := &PartialToolCallEvent{
+	withoutDef := &contract.PartialToolCallEvent{
 		Type:         "partial_tool_call",
 		ToolCall:     tools.ToolCall{ID: "call_1", Type: "function", Function: tools.FunctionCall{Name: "write_file", Arguments: `{"path":"story.md"}`}},
 		AgentContext: newAgentContext("root"),

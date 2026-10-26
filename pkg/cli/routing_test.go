@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -77,7 +78,7 @@ func (j *fixedJudge) Evaluate(context.Context, any) (*evaluator.Result, error) {
 }
 
 type routedRun struct {
-	rt     runtime.Runtime
+	rt     contract.Runtime
 	router *fixedModel
 	quick  *fixedModel
 	deep   *fixedModel

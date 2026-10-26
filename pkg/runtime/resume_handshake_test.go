@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -27,10 +28,10 @@ func TestResume_ImmediateConfirmation(t *testing.T) {
 			if stale {
 				rt.Resume(t.Context(), ResumeApprove())
 			}
-			events := make(chan Event, 32)
-			sink := EventSinkFunc(func(ev Event) {
+			events := make(chan contract.Event, 32)
+			sink := EventSinkFunc(func(ev contract.Event) {
 				events <- ev
-				if _, ok := ev.(*ToolCallConfirmationEvent); ok {
+				if _, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 					decision := ResumeApprove()
 					if stale {
 						decision = ResumeReject("not approved")
@@ -42,9 +43,9 @@ func TestResume_ImmediateConfirmation(t *testing.T) {
 			runResumeTestCall(t, rt, root, available, sink)
 
 			assert.Equal(t, !stale, executed)
-			var response *ToolCallResponseEvent
+			var response *contract.ToolCallResponseEvent
 			for _, ev := range drainEvents(events) {
-				if res, ok := ev.(*ToolCallResponseEvent); ok {
+				if res, ok := ev.(*contract.ToolCallResponseEvent); ok {
 					response = res
 				}
 			}
@@ -78,8 +79,8 @@ func TestResume_NestedConfirmationDiscardsEarlierDecision(t *testing.T) {
 	}}
 	rt, root := newResumeTestRuntime(t, available)
 	prompts := 0
-	sink := EventSinkFunc(func(ev Event) {
-		if prompt, ok := ev.(*ToolCallConfirmationEvent); ok {
+	sink := EventSinkFunc(func(ev contract.Event) {
+		if prompt, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 			prompts++
 			if prompt.ToolCall.Function.Name == "the_tool" {
 				rt.Resume(t.Context(), ResumeApprove())
@@ -102,8 +103,8 @@ func TestResume_MaxIterationsDiscardsEarlierDecision(t *testing.T) {
 
 	rt, root := newTestRuntime(t)
 	rt.Resume(t.Context(), ResumeApprove())
-	sink := EventSinkFunc(func(ev Event) {
-		if _, ok := ev.(*MaxIterationsReachedEvent); ok {
+	sink := EventSinkFunc(func(ev contract.Event) {
+		if _, ok := ev.(*contract.MaxIterationsReachedEvent); ok {
 			rt.Resume(t.Context(), ResumeReject("stop"))
 		}
 	})
@@ -119,7 +120,7 @@ func newResumeTestRuntime(t *testing.T, available []tools.Tool) (*LocalRuntime, 
 	return rt, root
 }
 
-func runResumeTestCall(t *testing.T, rt *LocalRuntime, root *agent.Agent, available []tools.Tool, sink EventSink) {
+func runResumeTestCall(t *testing.T, rt *LocalRuntime, root *agent.Agent, available []tools.Tool, sink contract.EventSink) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -146,8 +147,8 @@ func TestResume_MaxIterationsWithoutWaitPreservesForegroundDecision(t *testing.T
 			executed := false
 			available := recordingTool("the_tool", &executed)
 			rt, root := newResumeTestRuntime(t, available)
-			sink := EventSinkFunc(func(ev Event) {
-				if _, ok := ev.(*ToolCallConfirmationEvent); ok {
+			sink := EventSinkFunc(func(ev contract.Event) {
+				if _, ok := ev.(*contract.ToolCallConfirmationEvent); ok {
 					rt.Resume(t.Context(), ResumeApprove())
 					ctx, cancel := context.WithCancel(t.Context())
 					defer cancel()
@@ -155,10 +156,10 @@ func TestResume_MaxIterationsWithoutWaitPreservesForegroundDecision(t *testing.T
 						cancel()
 					}
 					other := session.New(session.WithNonInteractive(nonInteractive))
-					limitEvents := make(chan Event, 8)
+					limitEvents := make(chan contract.Event, 8)
 					_, decision := rt.enforceMaxIterations(ctx, other, root, 10, 10, NewChannelSink(limitEvents))
 					assert.Equal(t, iterationStop, decision)
-					assert.IsType(t, &MaxIterationsReachedEvent{}, <-limitEvents)
+					assert.IsType(t, &contract.MaxIterationsReachedEvent{}, <-limitEvents)
 				}
 			})
 

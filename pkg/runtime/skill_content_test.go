@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker-agent/pkg/config/types"
 	"github.com/docker/docker-agent/pkg/hooks"
 	"github.com/docker/docker-agent/pkg/js"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/skills"
 	"github.com/docker/docker-agent/pkg/team"
@@ -49,7 +50,7 @@ func TestSkillGuardEntryPoints(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
 			sess := session.New(session.WithAgentName("worker"), session.WithToolsApproved(true))
-			evts := make(chan Event, 128)
+			evts := make(chan contract.Event, 128)
 			sink := NewChannelSink(evts)
 			switch entry {
 			case "slash":
@@ -213,7 +214,7 @@ func TestRunSkillPolicyPinnedBeforeHandler(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: "fork", Type: "function", Function: tools.FunctionCall{Name: "run_skill", Arguments: `{"name":"test"}`}}}, ts, NewChannelSink(make(chan Event, 128)))
+		rt.processToolCalls(t.Context(), sess, rt.resolveSessionAgent(sess), []tools.ToolCall{{ID: "fork", Type: "function", Function: tools.FunctionCall{Name: "run_skill", Arguments: `{"name":"test"}`}}}, ts, NewChannelSink(make(chan contract.Event, 128)))
 	}()
 	<-entered
 	require.NoError(t, rt.SetCurrentAgent(t.Context(), "other"))
@@ -249,7 +250,7 @@ func TestAllowedSkillForkKeepsCallerAfterAgentSwitch(t *testing.T) {
 		}))
 	}
 	sess := session.New(session.WithUserMessage("run the skill"))
-	result, err := rt.RunSkillFork(t.Context(), sess, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan Event, 128)))
+	result, err := rt.RunSkillFork(t.Context(), sess, skillstool.RunSkillArgs{Name: "test"}, NewChannelSink(make(chan contract.Event, 128)))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)

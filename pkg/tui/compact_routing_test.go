@@ -11,6 +11,8 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/modelcatalog"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sessiontitle"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -25,20 +27,20 @@ import (
 // live-session capabilities.
 type stubRuntime struct{}
 
-func (stubRuntime) CurrentAgentInfo(context.Context) runtime.CurrentAgentInfo {
-	return runtime.CurrentAgentInfo{}
+func (stubRuntime) CurrentAgentInfo(context.Context) contract.CurrentAgentInfo {
+	return contract.CurrentAgentInfo{}
 }
 func (stubRuntime) CurrentAgentName(context.Context) string                 { return "root" }
 func (stubRuntime) SetCurrentAgent(context.Context, string) error           { return nil }
 func (stubRuntime) CurrentAgentTools(context.Context) ([]tools.Tool, error) { return nil, nil }
 func (stubRuntime) CurrentAgentToolsetStatuses() []tools.ToolsetStatus      { return nil }
 func (stubRuntime) RestartToolset(context.Context, string) error            { return nil }
-func (stubRuntime) EmitStartupInfo(context.Context, *session.Session, runtime.EventSink) {
+func (stubRuntime) EmitStartupInfo(context.Context, *session.Session, contract.EventSink) {
 }
-func (stubRuntime) EmitAgentInfo(context.Context, runtime.EventSink) {}
-func (stubRuntime) ResetStartupInfo()                                {}
-func (stubRuntime) RunStream(context.Context, *session.Session) <-chan runtime.Event {
-	ch := make(chan runtime.Event)
+func (stubRuntime) EmitAgentInfo(context.Context, contract.EventSink) {}
+func (stubRuntime) ResetStartupInfo()                                 {}
+func (stubRuntime) RunStream(context.Context, *session.Session) <-chan contract.Event {
+	ch := make(chan contract.Event)
 	close(ch)
 	return ch
 }
@@ -51,12 +53,12 @@ func (stubRuntime) ResumeElicitation(context.Context, tools.ElicitationAction, m
 	return nil
 }
 func (stubRuntime) SessionStore() session.Store { return nil }
-func (stubRuntime) Summarize(context.Context, *session.Session, string, runtime.EventSink) {
+func (stubRuntime) Summarize(context.Context, *session.Session, string, contract.EventSink) {
 }
-func (stubRuntime) PermissionsInfo() *runtime.PermissionsInfo      { return nil }
+func (stubRuntime) PermissionsInfo() *contract.PermissionsInfo     { return nil }
 func (stubRuntime) CurrentAgentSkillsToolset() *skillstool.ToolSet { return nil }
 
-func (stubRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, runtime.EventSink) (*tools.ToolCallResult, error) {
+func (stubRuntime) RunSkillFork(context.Context, *session.Session, skillstool.RunSkillArgs, contract.EventSink) (*tools.ToolCallResult, error) {
 	return nil, nil
 }
 
@@ -70,26 +72,26 @@ func (stubRuntime) UpdateSessionTitle(context.Context, *session.Session, string)
 	return nil
 }
 func (stubRuntime) TitleGenerator(context.Context) *sessiontitle.Generator { return nil }
-func (stubRuntime) Steer(context.Context, runtime.QueuedMessage) error     { return nil }
-func (stubRuntime) FollowUp(context.Context, runtime.QueuedMessage) error  { return nil }
+func (stubRuntime) Steer(context.Context, contract.QueuedMessage) error    { return nil }
+func (stubRuntime) FollowUp(context.Context, contract.QueuedMessage) error { return nil }
 func (stubRuntime) SetAgentModel(context.Context, string, string) error    { return nil }
 func (stubRuntime) CycleAgentThinkingLevel(context.Context, string) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
 
 func (stubRuntime) SetAgentThinkingLevel(context.Context, string, effort.Level) (effort.Level, error) {
-	return "", runtime.ErrUnsupported
+	return "", contract.ErrUnsupported
 }
-func (stubRuntime) AvailableModels(context.Context) []runtime.ModelChoice { return nil }
-func (stubRuntime) SupportsModelSwitching() bool                          { return false }
-func (stubRuntime) OnToolsChanged(func(runtime.Event))                    {}
-func (stubRuntime) OnBackgroundEvent(func(runtime.Event))                 {}
-func (stubRuntime) OnElicitationRequest(func(runtime.Event))              {}
-func (stubRuntime) QueueStatus() runtime.QueueStatus                      { return runtime.QueueStatus{} }
-func (stubRuntime) TogglePause(context.Context) (bool, error)             { return false, nil }
-func (stubRuntime) Close() error                                          { return nil }
+func (stubRuntime) AvailableModels(context.Context) []modelcatalog.ModelChoice { return nil }
+func (stubRuntime) SupportsModelSwitching() bool                               { return false }
+func (stubRuntime) OnToolsChanged(func(contract.Event))                        {}
+func (stubRuntime) OnBackgroundEvent(func(contract.Event))                     {}
+func (stubRuntime) OnElicitationRequest(func(contract.Event))                  {}
+func (stubRuntime) QueueStatus() contract.QueueStatus                          { return contract.QueueStatus{} }
+func (stubRuntime) TogglePause(context.Context) (bool, error)                  { return false, nil }
+func (stubRuntime) Close() error                                               { return nil }
 
-var _ runtime.Runtime = stubRuntime{}
+var _ contract.Runtime = stubRuntime{}
 
 // liveCompactRuntime adds the optional targeted-compaction capability.
 type liveCompactRuntime struct {
@@ -99,7 +101,7 @@ type liveCompactRuntime struct {
 	compactErr error
 }
 
-func (r *liveCompactRuntime) CompactLiveSession(_ context.Context, sessionID, _ string, _ runtime.EventSink) error {
+func (r *liveCompactRuntime) CompactLiveSession(_ context.Context, sessionID, _ string, _ contract.EventSink) error {
 	if r.compactErr != nil {
 		return r.compactErr
 	}
@@ -108,7 +110,7 @@ func (r *liveCompactRuntime) CompactLiveSession(_ context.Context, sessionID, _ 
 }
 
 // newCompactTestModel wires a minimal appModel around rt and sess.
-func newCompactTestModel(t *testing.T, rt runtime.Runtime, sess *session.Session) (*appModel, *mockChatPage) {
+func newCompactTestModel(t *testing.T, rt contract.Runtime, sess *session.Session) (*appModel, *mockChatPage) {
 	t.Helper()
 	m, _ := newTestModel(t)
 	m.application = app.New(t.Context(), rt, sess)

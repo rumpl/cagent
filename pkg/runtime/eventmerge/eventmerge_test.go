@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -15,55 +15,55 @@ func TestMergeConcatenatesAgentChoiceContent(t *testing.T) {
 	t.Parallel()
 
 	chunks := []string{"Hello ", "streaming ", "world", "!"}
-	events := make([]runtime.Event, 0, len(chunks))
+	events := make([]contract.Event, 0, len(chunks))
 	for _, c := range chunks {
-		events = append(events, &runtime.AgentChoiceEvent{
+		events = append(events, &contract.AgentChoiceEvent{
 			Content:      c,
-			AgentContext: runtime.AgentContext{AgentName: "agent-a"},
+			AgentContext: contract.AgentContext{AgentName: "agent-a"},
 		})
 	}
 
 	merged := Merge(events)
 
 	require.Len(t, merged, 1)
-	assert.Equal(t, "Hello streaming world!", merged[0].(*runtime.AgentChoiceEvent).Content)
+	assert.Equal(t, "Hello streaming world!", merged[0].(*contract.AgentChoiceEvent).Content)
 }
 
 func TestMergeKeepsBoundaryBetweenAgents(t *testing.T) {
 	t.Parallel()
 
-	events := []runtime.Event{
-		&runtime.AgentChoiceEvent{Content: "a1", AgentContext: runtime.AgentContext{AgentName: "agent-a"}},
-		&runtime.AgentChoiceEvent{Content: "a2", AgentContext: runtime.AgentContext{AgentName: "agent-a"}},
-		&runtime.AgentChoiceEvent{Content: "b1", AgentContext: runtime.AgentContext{AgentName: "agent-b"}},
-		&runtime.AgentChoiceEvent{Content: "a3", AgentContext: runtime.AgentContext{AgentName: "agent-a"}},
+	events := []contract.Event{
+		&contract.AgentChoiceEvent{Content: "a1", AgentContext: contract.AgentContext{AgentName: "agent-a"}},
+		&contract.AgentChoiceEvent{Content: "a2", AgentContext: contract.AgentContext{AgentName: "agent-a"}},
+		&contract.AgentChoiceEvent{Content: "b1", AgentContext: contract.AgentContext{AgentName: "agent-b"}},
+		&contract.AgentChoiceEvent{Content: "a3", AgentContext: contract.AgentContext{AgentName: "agent-a"}},
 	}
 
 	merged := Merge(events)
 
 	require.Len(t, merged, 3)
-	assert.Equal(t, "a1a2", merged[0].(*runtime.AgentChoiceEvent).Content)
-	assert.Equal(t, "b1", merged[1].(*runtime.AgentChoiceEvent).Content)
-	assert.Equal(t, "a3", merged[2].(*runtime.AgentChoiceEvent).Content)
+	assert.Equal(t, "a1a2", merged[0].(*contract.AgentChoiceEvent).Content)
+	assert.Equal(t, "b1", merged[1].(*contract.AgentChoiceEvent).Content)
+	assert.Equal(t, "a3", merged[2].(*contract.AgentChoiceEvent).Content)
 }
 
 func TestMergeConcatenatesPartialToolCallArguments(t *testing.T) {
 	t.Parallel()
 
 	def := &tools.Tool{Name: "shell"}
-	events := []runtime.Event{
-		&runtime.PartialToolCallEvent{
+	events := []contract.Event{
+		&contract.PartialToolCallEvent{
 			ToolCall: tools.ToolCall{
 				ID:         "call-1",
 				ProviderID: "native-1",
 				Function:   tools.FunctionCall{Arguments: `{"a"`},
 			},
 		},
-		&runtime.PartialToolCallEvent{
+		&contract.PartialToolCallEvent{
 			ToolCall:       tools.ToolCall{ID: "call-1", Function: tools.FunctionCall{Name: "shell", Arguments: `:1`}},
 			ToolDefinition: def,
 		},
-		&runtime.PartialToolCallEvent{
+		&contract.PartialToolCallEvent{
 			ToolCall: tools.ToolCall{ID: "call-1", Function: tools.FunctionCall{Arguments: `}`}},
 		},
 	}
@@ -71,7 +71,7 @@ func TestMergeConcatenatesPartialToolCallArguments(t *testing.T) {
 	merged := Merge(events)
 
 	require.Len(t, merged, 1)
-	got := merged[0].(*runtime.PartialToolCallEvent)
+	got := merged[0].(*contract.PartialToolCallEvent)
 	assert.Equal(t, `{"a":1}`, got.ToolCall.Function.Arguments)
 	assert.Equal(t, "shell", got.ToolCall.Function.Name)
 	assert.Equal(t, "native-1", got.ToolCall.ProviderID)
@@ -81,39 +81,39 @@ func TestMergeConcatenatesPartialToolCallArguments(t *testing.T) {
 func TestMergeConcatenatesToolCallOutput(t *testing.T) {
 	t.Parallel()
 
-	events := []runtime.Event{
-		&runtime.ToolCallOutputEvent{ToolCallID: "call-1", Output: "line 1\n"},
-		&runtime.ToolCallOutputEvent{ToolCallID: "call-1", Output: "line 2\n"},
-		&runtime.ToolCallOutputEvent{ToolCallID: "call-2", Output: "other\n"},
+	events := []contract.Event{
+		&contract.ToolCallOutputEvent{ToolCallID: "call-1", Output: "line 1\n"},
+		&contract.ToolCallOutputEvent{ToolCallID: "call-1", Output: "line 2\n"},
+		&contract.ToolCallOutputEvent{ToolCallID: "call-2", Output: "other\n"},
 	}
 
 	merged := Merge(events)
 
 	require.Len(t, merged, 2)
-	assert.Equal(t, "line 1\nline 2\n", merged[0].(*runtime.ToolCallOutputEvent).Output)
-	assert.Equal(t, "other\n", merged[1].(*runtime.ToolCallOutputEvent).Output)
+	assert.Equal(t, "line 1\nline 2\n", merged[0].(*contract.ToolCallOutputEvent).Output)
+	assert.Equal(t, "other\n", merged[1].(*contract.ToolCallOutputEvent).Output)
 }
 
 func TestMergeNeverJoinsAcrossOtherEvents(t *testing.T) {
 	t.Parallel()
 
-	warning := runtime.Warning("heads up", "root")
-	lone := runtime.AgentChoice("root", "s", "c")
-	events := []runtime.Event{
-		runtime.AgentChoice("root", "s", "a"),
-		runtime.AgentChoice("root", "s", "b"),
+	warning := contract.Warning("heads up", "root")
+	lone := contract.AgentChoice("root", "s", "c")
+	events := []contract.Event{
+		contract.AgentChoice("root", "s", "a"),
+		contract.AgentChoice("root", "s", "b"),
 		warning,
 		lone,
-		runtime.AgentChoiceReasoning("root", "s", "r"),
+		contract.AgentChoiceReasoning("root", "s", "r"),
 	}
 
 	merged := Merge(events)
 
 	require.Len(t, merged, 4)
-	assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceEvent).Content)
+	assert.Equal(t, "ab", merged[0].(*contract.AgentChoiceEvent).Content)
 	assert.Same(t, warning, merged[1])
 	assert.Same(t, lone, merged[2], "a delta with nothing to merge with is passed through as-is")
-	assert.Equal(t, "r", merged[3].(*runtime.AgentChoiceReasoningEvent).Content)
+	assert.Equal(t, "r", merged[3].(*contract.AgentChoiceReasoningEvent).Content)
 }
 
 func TestMergePreservesContentSessions(t *testing.T) {
@@ -126,11 +126,11 @@ func TestMergePreservesContentSessions(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			contentEvent := runtime.AgentChoice
+			contentEvent := contract.AgentChoice
 			if reasoning {
-				contentEvent = runtime.AgentChoiceReasoning
+				contentEvent = contract.AgentChoiceReasoning
 			}
-			events := []runtime.Event{
+			events := []contract.Event{
 				contentEvent("root", "child", "child "),
 				contentEvent("root", "child", "reply"),
 				contentEvent("root", "parent", "parent "),
@@ -152,15 +152,15 @@ func TestMergePreservesContentSessions(t *testing.T) {
 				{"", "legacy reply", 5},
 			} {
 				if reasoning {
-					got := merged[i].(*runtime.AgentChoiceReasoningEvent)
+					got := merged[i].(*contract.AgentChoiceReasoningEvent)
 					assert.Equal(t, want.sessionID, got.SessionID)
 					assert.Equal(t, want.content, got.Content)
-					assert.Equal(t, events[want.first].(*runtime.AgentChoiceReasoningEvent).AgentContext, got.AgentContext)
+					assert.Equal(t, events[want.first].(*contract.AgentChoiceReasoningEvent).AgentContext, got.AgentContext)
 				} else {
-					got := merged[i].(*runtime.AgentChoiceEvent)
+					got := merged[i].(*contract.AgentChoiceEvent)
 					assert.Equal(t, want.sessionID, got.SessionID)
 					assert.Equal(t, want.content, got.Content)
-					assert.Equal(t, events[want.first].(*runtime.AgentChoiceEvent).AgentContext, got.AgentContext)
+					assert.Equal(t, events[want.first].(*contract.AgentChoiceEvent).AgentContext, got.AgentContext)
 				}
 			}
 		})
@@ -171,21 +171,21 @@ func TestMergePreservesMessageIDs(t *testing.T) {
 	t.Parallel()
 
 	for _, reasoning := range []bool{false, true} {
-		makeEvent := func(id, text string) runtime.Event {
+		makeEvent := func(id, text string) contract.Event {
 			if reasoning {
-				return runtime.AgentChoiceReasoning("root", "session", text, id)
+				return contract.AgentChoiceReasoning("root", "session", text, id)
 			}
-			return runtime.AgentChoice("root", "session", text, id)
+			return contract.AgentChoice("root", "session", text, id)
 		}
-		events := []runtime.Event{makeEvent("one", "a"), makeEvent("one", "b"), makeEvent("two", "c"), makeEvent("", "d")}
+		events := []contract.Event{makeEvent("one", "a"), makeEvent("one", "b"), makeEvent("two", "c"), makeEvent("", "d")}
 		merged := Merge(events)
 		require.Len(t, merged, 3)
 		if reasoning {
-			assert.Equal(t, "one", merged[0].(*runtime.AgentChoiceReasoningEvent).MessageID)
-			assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceReasoningEvent).Content)
+			assert.Equal(t, "one", merged[0].(*contract.AgentChoiceReasoningEvent).MessageID)
+			assert.Equal(t, "ab", merged[0].(*contract.AgentChoiceReasoningEvent).Content)
 		} else {
-			assert.Equal(t, "one", merged[0].(*runtime.AgentChoiceEvent).MessageID)
-			assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceEvent).Content)
+			assert.Equal(t, "one", merged[0].(*contract.AgentChoiceEvent).MessageID)
+			assert.Equal(t, "ab", merged[0].(*contract.AgentChoiceEvent).Content)
 		}
 	}
 }
@@ -194,12 +194,12 @@ func TestMergeAcceptsUntypedSlices(t *testing.T) {
 	t.Parallel()
 
 	type other struct{}
-	events := []any{runtime.AgentChoice("root", "s", "a"), runtime.AgentChoice("root", "s", "b"), other{}}
+	events := []any{contract.AgentChoice("root", "s", "a"), contract.AgentChoice("root", "s", "b"), other{}}
 
 	merged := Merge(events)
 
 	require.Len(t, merged, 2)
-	assert.Equal(t, "ab", merged[0].(*runtime.AgentChoiceEvent).Content)
+	assert.Equal(t, "ab", merged[0].(*contract.AgentChoiceEvent).Content)
 	assert.Equal(t, other{}, merged[1])
 }
 
@@ -234,23 +234,23 @@ func BenchmarkMergePartialToolCall(b *testing.B) {
 	}
 }
 
-func buildAgentChoiceEvents(n int) []runtime.Event {
+func buildAgentChoiceEvents(n int) []contract.Event {
 	const chunk = "the quick brown fox jumps over the lazy dog. "
-	events := make([]runtime.Event, 0, n)
+	events := make([]contract.Event, 0, n)
 	for range n {
-		events = append(events, &runtime.AgentChoiceEvent{
+		events = append(events, &contract.AgentChoiceEvent{
 			Content:      chunk,
-			AgentContext: runtime.AgentContext{AgentName: "agent"},
+			AgentContext: contract.AgentContext{AgentName: "agent"},
 		})
 	}
 	return events
 }
 
-func buildPartialToolCallEvents(n int) []runtime.Event {
+func buildPartialToolCallEvents(n int) []contract.Event {
 	const chunk = `,"key":"value"`
-	events := make([]runtime.Event, 0, n)
+	events := make([]contract.Event, 0, n)
 	for range n {
-		events = append(events, &runtime.PartialToolCallEvent{
+		events = append(events, &contract.PartialToolCallEvent{
 			ToolCall: tools.ToolCall{
 				ID:       "call-1",
 				Function: tools.FunctionCall{Arguments: chunk},

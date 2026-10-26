@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/modelerrors"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -19,8 +20,8 @@ import (
 // drainEvents reads non-blocking from the events channel and returns
 // everything currently buffered, so a test can collect what
 // enforceMaxIterations / handleStreamError emitted before exiting.
-func drainEvents(ch <-chan Event) []Event {
-	var out []Event
+func drainEvents(ch <-chan contract.Event) []contract.Event {
+	var out []contract.Event
 	for {
 		select {
 		case ev, ok := <-ch:
@@ -39,7 +40,7 @@ func TestDrainEvents(t *testing.T) {
 
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, drainEvents(make(chan Event)))
+		assert.Empty(t, drainEvents(make(chan contract.Event)))
 	})
 	t.Run("nil", func(t *testing.T) {
 		t.Parallel()
@@ -52,15 +53,15 @@ func TestDrainEvents(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			first, last := Warning("first", "root"), Warning("last", "root")
-			ch := make(chan Event, 3)
+			first, last := contract.Warning("first", "root"), contract.Warning("last", "root")
+			ch := make(chan contract.Event, 3)
 			ch <- first
 			ch <- nil
 			ch <- last
 			if closed {
 				close(ch)
 			}
-			assert.Equal(t, []Event{first, nil, last}, drainEvents(ch))
+			assert.Equal(t, []contract.Event{first, nil, last}, drainEvents(ch))
 			assert.Empty(t, drainEvents(ch))
 		})
 	}
@@ -83,7 +84,7 @@ func TestEnforceMaxIterations_BelowLimit_Continues(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 3, 10, NewChannelSink(events))
 
@@ -97,7 +98,7 @@ func TestEnforceMaxIterations_DisabledLimit_Continues(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	// runtimeMaxIterations <= 0 disables the cap entirely.
 	newMax, decision := rt.enforceMaxIterations(t.Context(), sess, a, 1_000_000, 0, NewChannelSink(events))
@@ -113,7 +114,7 @@ func TestEnforceMaxIterations_NonInteractive_AutoStops(t *testing.T) {
 	rt, a := newTestRuntime(t)
 	sess := session.New()
 	sess.NonInteractive = true
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	_, decision := rt.enforceMaxIterations(t.Context(), sess, a, 10, 10, NewChannelSink(events))
 
@@ -124,12 +125,12 @@ func TestEnforceMaxIterations_NonInteractive_AutoStops(t *testing.T) {
 
 	// First event is MaxIterationsReached; an assistant message-added
 	// event must follow with the configured stop text.
-	_, ok := got[0].(*MaxIterationsReachedEvent)
+	_, ok := got[0].(*contract.MaxIterationsReachedEvent)
 	require.True(t, ok, "first event must be MaxIterationsReachedEvent, got %T", got[0])
 
 	var saw bool
 	for _, ev := range got {
-		if added, ok := ev.(*MessageAddedEvent); ok {
+		if added, ok := ev.(*contract.MessageAddedEvent); ok {
 			saw = true
 			assert.Contains(t, added.Message.Message.Content, "max_iterations limit (10)")
 		}
@@ -142,11 +143,11 @@ func TestEnforceMaxIterations_Interactive_ApproveExtends(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
-	sink := EventSinkFunc(func(ev Event) {
+	sink := EventSinkFunc(func(ev contract.Event) {
 		events <- ev
-		if _, ok := ev.(*MaxIterationsReachedEvent); ok {
+		if _, ok := ev.(*contract.MaxIterationsReachedEvent); ok {
 			rt.Resume(t.Context(), ResumeApprove())
 		}
 	})
@@ -162,11 +163,11 @@ func TestEnforceMaxIterations_Interactive_RejectStops(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
-	sink := EventSinkFunc(func(ev Event) {
+	sink := EventSinkFunc(func(ev contract.Event) {
 		events <- ev
-		if _, ok := ev.(*MaxIterationsReachedEvent); ok {
+		if _, ok := ev.(*contract.MaxIterationsReachedEvent); ok {
 			rt.Resume(t.Context(), ResumeReject("no thanks"))
 		}
 	})
@@ -178,7 +179,7 @@ func TestEnforceMaxIterations_Interactive_RejectStops(t *testing.T) {
 	got := drainEvents(events)
 	var sawStopMessage bool
 	for _, ev := range got {
-		if added, ok := ev.(*MessageAddedEvent); ok {
+		if added, ok := ev.(*contract.MessageAddedEvent); ok {
 			sawStopMessage = true
 			assert.Contains(t, added.Message.Message.Content, "max_iterations limit (10)")
 		}
@@ -191,7 +192,7 @@ func TestEnforceMaxIterations_ContextCancelled_Stops(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -207,7 +208,7 @@ func TestHandleStreamError_ContextCanceled_Fatal(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 	span := noop.NewTracerProvider().Tracer("t").Start
 	_, sp := span(t.Context(), "x")
 
@@ -239,7 +240,7 @@ func TestHandleStreamError_OverflowWithCompactionEnabled_Retries(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	_, sp := noop.NewTracerProvider().Tracer("t").Start(t.Context(), "x")
 
 	overflow := modelerrors.NewContextOverflowError(errors.New("too long"))
@@ -253,7 +254,7 @@ func TestHandleStreamError_OverflowWithCompactionEnabled_Retries(t *testing.T) {
 	got := drainEvents(events)
 	var sawWarn bool
 	for _, ev := range got {
-		if w, ok := ev.(*WarningEvent); ok {
+		if w, ok := ev.(*contract.WarningEvent); ok {
 			sawWarn = true
 			assert.Contains(t, w.Message, "exceeded the model's context window")
 		}
@@ -266,7 +267,7 @@ func TestHandleStreamError_OverflowExhausted_Fatal(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	_, sp := noop.NewTracerProvider().Tracer("t").Start(t.Context(), "x")
 
 	overflow := modelerrors.NewContextOverflowError(errors.New("too long"))
@@ -281,7 +282,7 @@ func TestHandleStreamError_OverflowExhausted_Fatal(t *testing.T) {
 	got := drainEvents(events)
 	var sawError bool
 	for _, ev := range got {
-		if _, ok := ev.(*ErrorEvent); ok {
+		if _, ok := ev.(*contract.ErrorEvent); ok {
 			sawError = true
 		}
 	}
@@ -301,7 +302,7 @@ func TestHandleStreamError_OverflowWithCompactionDisabled_Fatal(t *testing.T) {
 	require.NoError(t, err)
 
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	_, sp := noop.NewTracerProvider().Tracer("t").Start(t.Context(), "x")
 
 	overflow := modelerrors.NewContextOverflowError(errors.New("too long"))
@@ -318,7 +319,7 @@ func TestHandleStreamError_GenericError_FatalAndEmitsError(t *testing.T) {
 
 	rt, a := newTestRuntime(t)
 	sess := session.New()
-	events := make(chan Event, 16)
+	events := make(chan contract.Event, 16)
 	_, sp := noop.NewTracerProvider().Tracer("t").Start(t.Context(), "x")
 
 	overflowCount := 0
@@ -329,7 +330,7 @@ func TestHandleStreamError_GenericError_FatalAndEmitsError(t *testing.T) {
 	got := drainEvents(events)
 	var sawError bool
 	for _, ev := range got {
-		if _, ok := ev.(*ErrorEvent); ok {
+		if _, ok := ev.(*contract.ErrorEvent); ok {
 			sawError = true
 		}
 	}

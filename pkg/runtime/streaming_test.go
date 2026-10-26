@@ -14,6 +14,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -117,7 +118,7 @@ func TestHandleStream_Refusal(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -145,7 +146,7 @@ func TestHandleStream_RefusalDropsPartialToolCalls(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -172,7 +173,7 @@ func TestHandleStream_ToolCallAndStopInSameChunk(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64) // buffered so handleStream never blocks on Emit
+	evCh := make(chan contract.Event, 64) // buffered so handleStream never blocks on Emit
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -202,7 +203,7 @@ func TestHandleStream_ToolCallThenSeparateStop(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -233,7 +234,7 @@ func TestHandleStream_MediaAccumulatesAlongsideText(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -265,7 +266,7 @@ func TestHandleStream_MediaOnlyTurnNotTreatedAsEmpty(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -297,7 +298,7 @@ func TestHandleStream_MultipleMediaBlobsInOneChunk(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -337,7 +338,7 @@ func TestHandleStream_MediaInTerminalChunkIsAccumulated(t *testing.T) {
 			a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 			sess := session.New(session.WithUserMessage("go"))
 
-			evCh := make(chan Event, 64)
+			evCh := make(chan contract.Event, 64)
 			res, err := handleStream(
 				t.Context(), nil, stream, a, nil, sess,
 				NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -366,7 +367,7 @@ func TestHandleStream_WhitespaceOnlyContentStops(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -393,7 +394,7 @@ func TestHandleStream_ContentOnlyBareEOFStops(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -452,7 +453,7 @@ func TestHandleStream_ProductionIdleTimeoutBoundary(t *testing.T) {
 		go func() {
 			_, err := handleStream(
 				t.Context(), func(error) { stream.Close() }, stream, a, nil, sess,
-				NewChannelSink(make(chan Event, 64)), defaultStreamIdleTimeout,
+				NewChannelSink(make(chan contract.Event, 64)), defaultStreamIdleTimeout,
 			)
 			resultCh <- err
 		}()
@@ -486,7 +487,7 @@ func TestHandleStream_IdleTimeout(t *testing.T) {
 			stream.Close() // unblock the stalled Recv so the reader goroutine can exit
 		}
 
-		evCh := make(chan Event, 64)
+		evCh := make(chan contract.Event, 64)
 		res, err := handleStream(
 			t.Context(), cancelStream, stream, a, nil, sess,
 			NewChannelSink(evCh), 30*time.Second,
@@ -526,7 +527,7 @@ func TestHandleStream_IdleTimeoutAfterResponseStarted(t *testing.T) {
 
 			res, err := handleStream(
 				t.Context(), cancelStream, stream, a, nil, sess,
-				NewChannelSink(make(chan Event, 64)), 50*time.Millisecond,
+				NewChannelSink(make(chan contract.Event, 64)), 50*time.Millisecond,
 			)
 
 			require.ErrorIs(t, err, errStreamIdle)
@@ -585,7 +586,7 @@ func TestHandleStream_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	_, cancelStream := context.WithCancelCause(ctx)
 	// Use a long idle timeout so only context cancellation can trigger.
 	res, err := handleStream(
@@ -600,12 +601,12 @@ func TestHandleStream_ContextCancellation(t *testing.T) {
 
 // agentChoiceText drains every buffered event and concatenates the
 // AgentChoice content, i.e. exactly what a live consumer (TUI/API) rendered.
-func agentChoiceText(ch <-chan Event) string {
+func agentChoiceText(ch <-chan contract.Event) string {
 	var b strings.Builder
 	for {
 		select {
 		case e := <-ch:
-			if c, ok := e.(*AgentChoiceEvent); ok {
+			if c, ok := e.(*contract.AgentChoiceEvent); ok {
 				b.WriteString(c.Content)
 			}
 		default:
@@ -621,7 +622,7 @@ func runMarkerStream(t *testing.T, stream *mockStream) (streamResult, string) {
 
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	sess := session.New(session.WithUserMessage("go"))
-	evCh := make(chan Event, 64)
+	evCh := make(chan contract.Event, 64)
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
 		NewChannelSink(evCh), defaultStreamIdleTimeout,
@@ -791,7 +792,7 @@ func TestHandleStream_PreservesProviderToolCallID(t *testing.T) {
 	a := agent.New("root", "test", agent.WithModel(&mockProvider{id: "test/mock-model", stream: stream}))
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, session.New(session.WithUserMessage("go")),
-		NewChannelSink(make(chan Event, 64)), defaultStreamIdleTimeout,
+		NewChannelSink(make(chan contract.Event, 64)), defaultStreamIdleTimeout,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Calls, 1)

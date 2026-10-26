@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -22,7 +23,7 @@ import (
 // to assert on ordering deterministically.
 type recordingObserver struct {
 	mu          sync.Mutex
-	events      []Event
+	events      []contract.Event
 	startCalls  atomic.Int64
 	startSessID string
 }
@@ -34,18 +35,18 @@ func (o *recordingObserver) OnRunStart(_ context.Context, sess *session.Session)
 	o.startSessID = sess.ID
 }
 
-func (o *recordingObserver) OnEvent(_ context.Context, _ *session.Session, e Event) {
+func (o *recordingObserver) OnEvent(_ context.Context, _ *session.Session, e contract.Event) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.events = append(o.events, e)
 }
 
-func (o *recordingObserver) snapshot() []Event {
+func (o *recordingObserver) snapshot() []contract.Event {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	out := slices.Clone(o.events)
 	if out == nil {
-		out = []Event{}
+		out = []contract.Event{}
 	}
 	return out
 }
@@ -102,7 +103,7 @@ func TestObserver_SeesEveryEventBeforeCaller(t *testing.T) {
 	obs := &recordingObserver{}
 	r, sess := runtimeWithObserver(t, obs)
 
-	var consumed []Event
+	var consumed []contract.Event
 	for event := range r.RunStream(t.Context(), sess) {
 		consumed = append(consumed, event)
 	}
@@ -130,7 +131,7 @@ func TestObserver_MultipleObserversFireInRegistrationOrder(t *testing.T) {
 	)
 	tag := func(name string) EventObserver {
 		return &fnObserver{
-			onEvent: func(_ context.Context, _ *session.Session, _ Event) {
+			onEvent: func(_ context.Context, _ *session.Session, _ contract.Event) {
 				mu.Lock()
 				defer mu.Unlock()
 				order = append(order, name)
@@ -201,8 +202,8 @@ func TestObserverFactoryCreatesPerRunState(t *testing.T) {
 		return obs
 	})(rt)
 	for range 2 {
-		input := make(chan Event, 1)
-		input <- Warning("test", "root")
+		input := make(chan contract.Event, 1)
+		input <- contract.Warning("test", "root")
 		close(input)
 		for range rt.observe(t.Context(), session.New(), input) {
 		}
@@ -219,7 +220,7 @@ func TestObserverFactoryCreatesPerRunState(t *testing.T) {
 // for tests that only need to observe a subset of the lifecycle hooks.
 type fnObserver struct {
 	onStart func(context.Context, *session.Session)
-	onEvent func(context.Context, *session.Session, Event)
+	onEvent func(context.Context, *session.Session, contract.Event)
 }
 
 func (f *fnObserver) OnRunStart(ctx context.Context, sess *session.Session) {
@@ -228,7 +229,7 @@ func (f *fnObserver) OnRunStart(ctx context.Context, sess *session.Session) {
 	}
 }
 
-func (f *fnObserver) OnEvent(ctx context.Context, sess *session.Session, e Event) {
+func (f *fnObserver) OnEvent(ctx context.Context, sess *session.Session, e contract.Event) {
 	if f.onEvent != nil {
 		f.onEvent(ctx, sess, e)
 	}

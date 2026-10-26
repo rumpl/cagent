@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/teamloader"
 )
@@ -177,7 +178,7 @@ func TestRoutingExample_LowConfidenceAndOutagesUseDefaultAgent(t *testing.T) {
 			assert.Equal(t, "clarifier", routes[0].ToAgent)
 			assert.NotEmpty(t, routes[0].FallbackReason)
 			for _, ev := range events {
-				if w, ok := ev.(*WarningEvent); ok {
+				if w, ok := ev.(*contract.WarningEvent); ok {
 					assert.NotContains(t, w.Message, "judge-secret")
 				}
 			}

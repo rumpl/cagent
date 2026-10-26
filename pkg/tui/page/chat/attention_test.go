@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -32,11 +32,11 @@ func TestAttentionDialogOwnership(t *testing.T) {
 				p.SetRoutingID("tab")
 			}
 			for _, event := range []tea.Msg{
-				runtime.ToolCallConfirmation(tools.ToolCall{ID: "tool"}, tools.Tool{Name: "shell"}, "root", nil),
-				&runtime.MaxIterationsReachedEvent{MaxIterations: 10},
-				&runtime.ElicitationRequestEvent{ElicitationID: "form"},
-				&runtime.ElicitationRequestEvent{ElicitationID: "url", Mode: "url", URL: "https://example.com"},
-				&runtime.ElicitationRequestEvent{ElicitationID: "oauth", Meta: map[string]any{"docker-agent/type": "oauth_flow"}},
+				contract.ToolCallConfirmation(tools.ToolCall{ID: "tool"}, tools.Tool{Name: "shell"}, "root", nil),
+				&contract.MaxIterationsReachedEvent{MaxIterations: 10},
+				&contract.ElicitationRequestEvent{ElicitationID: "form"},
+				&contract.ElicitationRequestEvent{ElicitationID: "url", Mode: "url", URL: "https://example.com"},
+				&contract.ElicitationRequestEvent{ElicitationID: "oauth", Meta: map[string]any{"docker-agent/type": "oauth_flow"}},
 			} {
 				_, effects := p.UpdateEffects(event)
 				var opened []dialog.OpenDialogMsg

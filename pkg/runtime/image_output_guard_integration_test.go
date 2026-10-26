@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/gemini"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/testutil/geminiintegration"
@@ -78,30 +79,30 @@ func TestRunStream_ImageOutputGuard_RejectsBeforeDispatch(t *testing.T) {
 	sess := session.New(session.WithUserMessage("draw a cat"))
 	sess.Title = "image output guard integration test"
 
-	var events []Event
+	var events []contract.Event
 	for ev := range rt.RunStream(t.Context(), sess) {
 		events = append(events, ev)
 	}
 
 	assert.Zero(t, providerCalls.Load(), "the guard must reject before any request reaches the provider")
 
-	var errEvent *ErrorEvent
-	var streamStarted *StreamStartedEvent
-	var streamStopped *StreamStoppedEvent
+	var errEvent *contract.ErrorEvent
+	var streamStarted *contract.StreamStartedEvent
+	var streamStopped *contract.StreamStoppedEvent
 	for _, ev := range events {
 		switch e := ev.(type) {
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			require.Nil(t, errEvent, "expected exactly one ErrorEvent")
 			errEvent = e
-		case *StreamStartedEvent:
+		case *contract.StreamStartedEvent:
 			if streamStarted == nil {
 				streamStarted = e
 			}
-		case *StreamStoppedEvent:
+		case *contract.StreamStoppedEvent:
 			streamStopped = e
-		case *AgentChoiceEvent:
+		case *contract.AgentChoiceEvent:
 			t.Fatalf("guard rejection must not produce assistant content, got AgentChoiceEvent %q", e.Content)
-		case *AgentChoiceReasoningEvent:
+		case *contract.AgentChoiceReasoningEvent:
 			t.Fatalf("guard rejection must not produce reasoning content, got AgentChoiceReasoningEvent %q", e.Content)
 		}
 	}
@@ -110,5 +111,5 @@ func TestRunStream_ImageOutputGuard_RejectsBeforeDispatch(t *testing.T) {
 	require.NotNil(t, streamStopped, "expected a StreamStoppedEvent to close out the turn")
 	assert.Contains(t, errEvent.Error, "output_capabilities.image")
 	assert.Contains(t, errEvent.Error, "tools")
-	assert.Equal(t, ErrorCodeModelError, errEvent.Code)
+	assert.Equal(t, contract.ErrorCodeModelError, errEvent.Code)
 }

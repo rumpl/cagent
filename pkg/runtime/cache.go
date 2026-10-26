@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 )
@@ -56,7 +57,7 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	ctx context.Context,
 	sess *session.Session,
 	a *agent.Agent,
-	events EventSink,
+	events contract.EventSink,
 ) bool {
 	c := a.Cache()
 	if c == nil || promptHasAttachments(sess) {
@@ -108,9 +109,9 @@ func (r *LocalRuntime) tryReplayCachedResponse(
 	slog.DebugContext(ctx, "Response cache hit; replaying cached answer",
 		"agent", a.Name(), "session_id", sess.ID)
 	modelID := a.Model(ctx).ID().String()
-	events.Emit(AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
+	events.Emit(contract.AgentInfo(a.Name(), modelID, a.Description(), a.WelcomeMessage()))
 	messageID := uuid.NewV4().String()
-	events.Emit(AgentChoice(a.Name(), sess.ID, cached, messageID))
+	events.Emit(contract.AgentChoice(a.Name(), sess.ID, cached, messageID))
 	addAgentMessage(sess, a, &chat.Message{
 		MessageID: messageID,
 		Role:      chat.MessageRoleAssistant,

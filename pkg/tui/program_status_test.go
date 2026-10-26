@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/programstatus"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
@@ -36,11 +36,11 @@ func TestProgramStatusLifecycle(t *testing.T) {
 			m.programStatus = &programstatus.Reporter{}
 			id, root := m.supervisor.ActiveID(), m.application.Session().ID
 			assert.Contains(t, statusOutput(m.refreshProgramStatus()), "state=idle")
-			_, cmd := m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStarted(root, "root")))
+			_, cmd := m.Update(queuedRuntimeDelivery(m, id, contract.StreamStarted(root, "root")))
 			assert.Contains(t, statusOutput(cmd), "state=working")
-			_, cmd = m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStopped("child", "child", "normal")))
+			_, cmd = m.Update(queuedRuntimeDelivery(m, id, contract.StreamStopped("child", "child", "normal")))
 			assert.NotContains(t, statusOutput(cmd), "state=done")
-			_, cmd = m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStopped(root, "root", "normal")))
+			_, cmd = m.Update(queuedRuntimeDelivery(m, id, contract.StreamStopped(root, "root", "normal")))
 			assert.Contains(t, statusOutput(cmd), "state=done")
 			_, cmd = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 			assert.Contains(t, statusOutput(cmd), "state=idle")
@@ -53,11 +53,11 @@ func TestProgramStatusBackgroundPrompt(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	m.programStatus = &programstatus.Reporter{}
 	id, root := m.supervisor.ActiveID(), m.application.Session().ID
-	_, _ = m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStarted(root, "root")))
+	_, _ = m.Update(queuedRuntimeDelivery(m, id, contract.StreamStarted(root, "root")))
 	_, _ = m.handleSpawnSession("/other")
 	otherID := m.supervisor.ActiveID()
-	_, _ = m.Update(queuedRuntimeDelivery(m, otherID, runtime.StreamStarted(m.application.Session().ID, "other")))
-	prompt := &runtime.ElicitationRequestEvent{SessionID: root, ElicitationID: "question"}
+	_, _ = m.Update(queuedRuntimeDelivery(m, otherID, contract.StreamStarted(m.application.Session().ID, "other")))
+	prompt := &contract.ElicitationRequestEvent{SessionID: root, ElicitationID: "question"}
 	_, cmd := m.Update(queuedRuntimeDelivery(m, id, prompt))
 	assert.Contains(t, statusOutput(cmd), "state=blocked")
 	assert.Equal(t, "question", m.tabs[id].programStatus.Status().Kind)
@@ -74,7 +74,7 @@ func TestProgramStatusRetirementAndStaleDelivery(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	m.programStatus = &programstatus.Reporter{}
 	id := m.supervisor.ActiveID()
-	prompt := &runtime.ElicitationRequestEvent{ElicitationID: "old"}
+	prompt := &contract.ElicitationRequestEvent{ElicitationID: "old"}
 	queued := queuedRuntimeDelivery(m, id, prompt)
 	_, cmd := m.Update(queued)
 	assert.Contains(t, statusOutput(cmd), "state=blocked")
@@ -89,8 +89,8 @@ func TestProgramStatusLatestWriteAndExit(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	m.programStatus = &programstatus.Reporter{}
 	id, root := m.supervisor.ActiveID(), m.application.Session().ID
-	_, start := m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStarted(root, "root")))
-	_, stop := m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStopped(root, "root", "error")))
+	_, start := m.Update(queuedRuntimeDelivery(m, id, contract.StreamStarted(root, "root")))
+	_, stop := m.Update(queuedRuntimeDelivery(m, id, contract.StreamStopped(root, "root", "error")))
 	assert.Contains(t, statusOutput(start), "state=error", "even an older command publishes the latest status")
 	assert.Empty(t, statusOutput(stop))
 	// Supervisor shutdown may already have removed its runners before quitCmd.
@@ -104,7 +104,7 @@ func TestProgramStatusDisabled(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	assert.Nil(t, m.refreshProgramStatus())
 	id := m.supervisor.ActiveID()
-	_, cmd := m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStarted(m.application.Session().ID, "root")))
+	_, cmd := m.Update(queuedRuntimeDelivery(m, id, contract.StreamStarted(m.application.Session().ID, "root")))
 	assert.NotContains(t, statusOutput(cmd), "]7501;")
 }
 
@@ -115,7 +115,7 @@ func TestProgramStatusDetection(t *testing.T) {
 		WithProgramStatusProbe(&programstatus.Reporter{})(m)
 		assert.Nil(t, m.refreshProgramStatus())
 		id, root := m.supervisor.ActiveID(), m.application.Session().ID
-		_, cmd := m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStarted(root, "root")))
+		_, cmd := m.Update(queuedRuntimeDelivery(m, id, contract.StreamStarted(root, "root")))
 		assert.Empty(t, statusOutput(cmd), "no reporting before feature detection")
 		if supported {
 			_, cmd = m.Update(uv.UnknownOscEvent("\x1b]7501;?:future=1\a"))
@@ -145,7 +145,7 @@ func TestProgramStatusAcceptedOperation(t *testing.T) {
 	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	assert.Equal(t, "idle", m.activeTab.programStatus.Status().State)
 	id, root := m.supervisor.ActiveID(), m.application.Session().ID
-	_, cmd = m.Update(queuedRuntimeDelivery(m, id, runtime.StreamStopped(root, "root", "normal")))
+	_, cmd = m.Update(queuedRuntimeDelivery(m, id, contract.StreamStopped(root, "root", "normal")))
 	assert.NotContains(t, statusOutput(cmd), "state=done")
 }
 
@@ -154,11 +154,11 @@ func TestProgramStatusClosesDetachedPrompt(t *testing.T) {
 	m := newTabLifecycleModel(t)
 	m.programStatus = &programstatus.Reporter{}
 	id := m.supervisor.ActiveID()
-	prompt := &runtime.ElicitationRequestEvent{SessionID: "job", ElicitationID: "pending"}
+	prompt := &contract.ElicitationRequestEvent{SessionID: "job", ElicitationID: "pending"}
 	_, _ = m.Update(queuedRuntimeDelivery(m, id, prompt))
 	assert.Equal(t, "blocked", m.activeTab.programStatus.Status().State)
 	require.True(t, m.dialogMgr.Open())
-	_, cmd := m.Update(queuedRuntimeDelivery(m, id, &runtime.ElicitationClosedEvent{SessionID: "job", ElicitationID: "pending"}))
+	_, cmd := m.Update(queuedRuntimeDelivery(m, id, &contract.ElicitationClosedEvent{SessionID: "job", ElicitationID: "pending"}))
 	assert.Contains(t, statusOutput(cmd), "state=idle")
 	assert.False(t, m.dialogMgr.Open())
 }
@@ -169,15 +169,15 @@ func TestProgramStatusIgnoresReplacedOperationStop(t *testing.T) {
 	m.programStatus = &programstatus.Reporter{}
 	root := m.application.Session().ID
 	m.application.BeginOperation(t.Context())
-	first := &runtime.StreamStartedEvent{AgentContext: runtime.AgentContext{OperationID: 1}, SessionID: root}
+	first := &contract.StreamStartedEvent{AgentContext: contract.AgentContext{OperationID: 1}, SessionID: root}
 	_, _ = m.Update(first)
 	m.activeTab.programStatus.Cancel(root)
 	m.application.BeginOperation(t.Context())
 	m.activeTab.programStatus.Start(root)
-	_, cmd := m.Update(&runtime.StreamStoppedEvent{AgentContext: runtime.AgentContext{OperationID: 1}, SessionID: root, Reason: "canceled"})
+	_, cmd := m.Update(&contract.StreamStoppedEvent{AgentContext: contract.AgentContext{OperationID: 1}, SessionID: root, Reason: "canceled"})
 	assert.Nil(t, cmd)
 	assert.Equal(t, "working", m.activeTab.programStatus.Status().State)
-	_, _ = m.Update(&runtime.StreamStartedEvent{AgentContext: runtime.AgentContext{OperationID: 2}, SessionID: root})
+	_, _ = m.Update(&contract.StreamStartedEvent{AgentContext: contract.AgentContext{OperationID: 2}, SessionID: root})
 	assert.Equal(t, "working", m.activeTab.programStatus.Status().State)
 }
 
@@ -187,11 +187,11 @@ func TestProgramStatusScopedCloseAfterClosure(t *testing.T) {
 	m.programStatus = &programstatus.Reporter{}
 	id := m.supervisor.ActiveID()
 	for _, name := range []string{"A", "B"} {
-		_, _ = m.Update(queuedRuntimeDelivery(m, id, &runtime.ElicitationRequestEvent{ElicitationID: name, SessionID: "job"}))
+		_, _ = m.Update(queuedRuntimeDelivery(m, id, &contract.ElicitationRequestEvent{ElicitationID: name, SessionID: "job"}))
 	}
-	_, _ = m.Update(queuedRuntimeDelivery(m, id, &runtime.ElicitationClosedEvent{ElicitationID: "B", SessionID: "job"}))
+	_, _ = m.Update(queuedRuntimeDelivery(m, id, &contract.ElicitationClosedEvent{ElicitationID: "B", SessionID: "job"}))
 	_, _ = m.Update(dialog.CloseDialogMsg{ElicitationID: "B"})
 	require.NotNil(t, m.dialogMgr.TopBackgroundEvent())
-	assert.Equal(t, "A", m.dialogMgr.TopBackgroundEvent().(*runtime.ElicitationRequestEvent).ElicitationID)
+	assert.Equal(t, "A", m.dialogMgr.TopBackgroundEvent().(*contract.ElicitationRequestEvent).ElicitationID)
 	assert.Equal(t, "blocked", m.activeTab.programStatus.Status().State)
 }

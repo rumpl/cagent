@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -117,11 +118,11 @@ func newRoutedServer(t *testing.T, judge *fixedJudge) *routedServer {
 	return s
 }
 
-func (s *routedServer) run(t *testing.T, message string) []runtime.Event {
+func (s *routedServer) run(t *testing.T, message string) []contract.Event {
 	t.Helper()
 	ch, err := s.sm.RunSession(t.Context(), s.sess.ID, "agent", "root", []api.Message{{Role: chat.MessageRoleUser, Content: message}}, "")
 	require.NoError(t, err)
-	var events []runtime.Event
+	var events []contract.Event
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -144,13 +145,13 @@ func TestRunSessionRoutesAndPersistsDecision(t *testing.T) {
 
 	events := s.run(t, "Diagnose this deadlock")
 
-	var routes []*runtime.AgentRouteEvent
-	var decisions []*runtime.RoutingDecisionEvent
+	var routes []*contract.AgentRouteEvent
+	var decisions []*contract.RoutingDecisionEvent
 	for _, ev := range events {
 		switch e := ev.(type) {
-		case *runtime.AgentRouteEvent:
+		case *contract.AgentRouteEvent:
 			routes = append(routes, e)
-		case *runtime.RoutingDecisionEvent:
+		case *contract.RoutingDecisionEvent:
 			decisions = append(decisions, e)
 		}
 	}
@@ -194,9 +195,9 @@ func TestRunSessionRoutingFailureIsReportedAndStopsRun(t *testing.T) {
 
 	events := s.run(t, "anything")
 
-	var errs []*runtime.ErrorEvent
+	var errs []*contract.ErrorEvent
 	for _, ev := range events {
-		if e, ok := ev.(*runtime.ErrorEvent); ok {
+		if e, ok := ev.(*contract.ErrorEvent); ok {
 			errs = append(errs, e)
 		}
 	}

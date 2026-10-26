@@ -15,32 +15,35 @@ import (
 	"github.com/docker/docker-agent/pkg/api"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/harness"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
+	"github.com/docker/docker-agent/pkg/runtime/inspection"
+	"github.com/docker/docker-agent/pkg/runtime/remote"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
-func nativeExecutionProfile() *ExecutionCapabilities {
-	return &ExecutionCapabilities{
+func nativeExecutionProfile() *inspection.ExecutionCapabilities {
+	return &inspection.ExecutionCapabilities{
 		Mode: "native", ToolExecution: "docker-agent", ToolApproval: "docker-agent-policy",
 		BudgetSupported: true, CompactionSupported: true, MidTurnSteeringSupported: true, PromptHookContextSupported: true,
 	}
 }
 
-func harnessExecutionProfile() *ExecutionCapabilities {
-	return &ExecutionCapabilities{Mode: "harness", ToolExecution: "harness-reported", ToolApproval: "external"}
+func harnessExecutionProfile() *inspection.ExecutionCapabilities {
+	return &inspection.ExecutionCapabilities{Mode: "harness", ToolExecution: "harness-reported", ToolApproval: "external"}
 }
 
 func TestExecutionCapabilitiesProfiles(t *testing.T) {
 	t.Parallel()
-	assert.Nil(t, executionCapabilities(nil))
+	assert.Nil(t, inspection.Capabilities(nil))
 	assert.Nil(t, (*LocalRuntime)(nil).AgentExecutionCapabilities("native"))
 	assert.Nil(t, (&LocalRuntime{}).AgentExecutionCapabilities("native"))
-	assert.Equal(t, nativeExecutionProfile(), executionCapabilities(agent.New("native", "")))
-	assert.Equal(t, harnessExecutionProfile(), executionCapabilities(agent.New("harness", "", agent.WithHarness(&latest.HarnessConfig{Type: "codex"}))))
-	profile := executionCapabilities(agent.New("native", ""))
+	assert.Equal(t, nativeExecutionProfile(), inspection.Capabilities(agent.New("native", "")))
+	assert.Equal(t, harnessExecutionProfile(), inspection.Capabilities(agent.New("harness", "", agent.WithHarness(&latest.HarnessConfig{Type: "codex"}))))
+	profile := inspection.Capabilities(agent.New("native", ""))
 	profile.ToolApproval = "changed"
-	assert.Equal(t, nativeExecutionProfile(), executionCapabilities(agent.New("native", "")), "profiles must not share mutable values")
+	assert.Equal(t, nativeExecutionProfile(), inspection.Capabilities(agent.New("native", "")), "profiles must not share mutable values")
 }
 
 type capabilityProbeToolset struct {
@@ -71,18 +74,18 @@ func TestExecutionCapabilitiesInspectionIsLazy(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, rt.Close()) })
 	for _, tc := range []struct {
 		name string
-		want *ExecutionCapabilities
+		want *inspection.ExecutionCapabilities
 	}{
 		{"native", nativeExecutionProfile()}, {"external", harnessExecutionProfile()}, {"missing", nil},
 	} {
 		assert.Equal(t, tc.want, rt.AgentExecutionCapabilities(tc.name))
 		assert.Equal(t, tc.want, rt.AgentConfigInfo(t.Context(), tc.name).ExecutionCapabilities)
 	}
-	var events []Event
-	rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event Event) { events = append(events, event) }))
+	var events []contract.Event
+	rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event contract.Event) { events = append(events, event) }))
 	require.Len(t, events, 2)
-	assert.Equal(t, nativeExecutionProfile(), events[0].(*AgentInfoEvent).ExecutionCapabilities)
-	roster := events[1].(*TeamInfoEvent)
+	assert.Equal(t, nativeExecutionProfile(), events[0].(*contract.AgentInfoEvent).ExecutionCapabilities)
+	roster := events[1].(*contract.TeamInfoEvent)
 	require.Len(t, roster.AvailableAgents, 2)
 	assert.Equal(t, nativeExecutionProfile(), roster.AvailableAgents[0].ExecutionCapabilities)
 	assert.Equal(t, harnessExecutionProfile(), roster.AvailableAgents[1].ExecutionCapabilities)
@@ -92,8 +95,8 @@ func TestExecutionCapabilitiesInspectionIsLazy(t *testing.T) {
 
 	require.NoError(t, rt.SetCurrentAgent(t.Context(), "external"))
 	events = nil
-	rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event Event) { events = append(events, event) }))
-	assert.Equal(t, harnessExecutionProfile(), events[0].(*AgentInfoEvent).ExecutionCapabilities)
+	rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event contract.Event) { events = append(events, event) }))
+	assert.Equal(t, harnessExecutionProfile(), events[0].(*contract.AgentInfoEvent).ExecutionCapabilities)
 }
 
 func TestExecutionCapabilitiesStreamRoster(t *testing.T) {
@@ -103,9 +106,9 @@ func TestExecutionCapabilitiesStreamRoster(t *testing.T) {
 	rt, err := NewLocalRuntime(t.Context(), team.New(team.WithAgents(root, external)), WithModelStore(mockModelStore{}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rt.Close()) })
-	var roster *TeamInfoEvent
+	var roster *contract.TeamInfoEvent
 	for event := range rt.RunStream(t.Context(), session.New(session.WithUserMessage("hello"))) {
-		if info, ok := event.(*TeamInfoEvent); ok {
+		if info, ok := event.(*contract.TeamInfoEvent); ok {
 			roster = info
 		}
 	}
@@ -117,7 +120,7 @@ func TestExecutionCapabilitiesStreamRoster(t *testing.T) {
 
 func TestExecutionCapabilitiesClientDecodesRoster(t *testing.T) {
 	t.Parallel()
-	roster := TeamInfo([]AgentDetails{
+	roster := contract.TeamInfo([]contract.AgentDetails{
 		{Name: "native", ExecutionCapabilities: nativeExecutionProfile()},
 		{Name: "external", ExecutionCapabilities: harnessExecutionProfile()},
 		{Name: "legacy"},
@@ -129,18 +132,18 @@ func TestExecutionCapabilitiesClientDecodesRoster(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
 	}))
 	t.Cleanup(server.Close)
-	client, err := NewClient(server.URL)
+	client, err := remote.NewClient(server.URL)
 	require.NoError(t, err)
 	stream, err := client.RunAgent(t.Context(), "session", "team", nil, "")
 	require.NoError(t, err)
-	var decoded *TeamInfoEvent
+	var decoded *contract.TeamInfoEvent
 	for event := range stream {
-		if info, ok := event.(*TeamInfoEvent); ok {
+		if info, ok := event.(*contract.TeamInfoEvent); ok {
 			decoded = info
 		}
 	}
 	require.NotNil(t, decoded)
-	want := roster.(*TeamInfoEvent)
+	want := roster.(*contract.TeamInfoEvent)
 	assert.Equal(t, want.Type, decoded.Type)
 	assert.Equal(t, want.CurrentAgent, decoded.CurrentAgent)
 	assert.Equal(t, want.AvailableAgents, decoded.AvailableAgents)
@@ -151,16 +154,16 @@ func TestExecutionCapabilitiesJSONCompatibility(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
-		profile *ExecutionCapabilities
+		profile *inspection.ExecutionCapabilities
 	}{
 		{"unknown", nil}, {"native", nativeExecutionProfile()}, {"harness", harnessExecutionProfile()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			original := AgentDetails{Name: "root", ExecutionCapabilities: tc.profile}
+			original := contract.AgentDetails{Name: "root", ExecutionCapabilities: tc.profile}
 			data, err := json.Marshal(original)
 			require.NoError(t, err)
-			var decoded AgentDetails
+			var decoded contract.AgentDetails
 			require.NoError(t, json.Unmarshal(data, &decoded))
 			assert.Equal(t, original, decoded)
 			if tc.profile == nil {
@@ -171,11 +174,11 @@ func TestExecutionCapabilitiesJSONCompatibility(t *testing.T) {
 			}
 		})
 	}
-	var legacy TeamInfoEvent
+	var legacy contract.TeamInfoEvent
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"team_info","available_agents":[{"name":"root","model":"codex"}],"current_agent":"root"}`), &legacy))
 	require.Len(t, legacy.AvailableAgents, 1)
 	assert.Nil(t, legacy.AvailableAgents[0].ExecutionCapabilities)
-	update := AgentInfo("root", "test/model", "", "")
+	update := contract.AgentInfo("root", "test/model", "", "")
 	data, err := json.Marshal(update)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "execution_capabilities", "model-only updates must not guess capabilities")
@@ -184,11 +187,11 @@ func TestExecutionCapabilitiesJSONCompatibility(t *testing.T) {
 type capabilityRemoteClient struct {
 	stubRemoteClient
 
-	events []Event
+	events []contract.Event
 }
 
-func (c *capabilityRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan Event, error) {
-	out := make(chan Event, len(c.events))
+func (c *capabilityRemoteClient) RunAgent(context.Context, string, string, []api.Message, string) (<-chan contract.Event, error) {
+	out := make(chan contract.Event, len(c.events))
 	for _, event := range c.events {
 		out <- event
 	}
@@ -198,28 +201,28 @@ func (c *capabilityRemoteClient) RunAgent(context.Context, string, string, []api
 
 func TestExecutionCapabilitiesRemoteDoesNotInferSupport(t *testing.T) {
 	t.Parallel()
-	for _, capabilities := range []*ExecutionCapabilities{nil, harnessExecutionProfile()} {
+	for _, capabilities := range []*inspection.ExecutionCapabilities{nil, harnessExecutionProfile()} {
 		t.Run(fmt.Sprintf("known=%t", capabilities != nil), func(t *testing.T) {
 			t.Parallel()
-			roster := TeamInfo([]AgentDetails{{Name: "root", ExecutionCapabilities: capabilities}}, "root")
+			roster := contract.TeamInfo([]contract.AgentDetails{{Name: "root", ExecutionCapabilities: capabilities}}, "root")
 			client := &capabilityRemoteClient{
 				stubRemoteClient: stubRemoteClient{cfg: &latest.Config{Agents: latest.Agents{{Name: "root", Harness: &latest.HarnessConfig{Type: "codex"}}}}},
-				events:           []Event{roster, StreamStopped("session", "root", "completed")},
+				events:           []contract.Event{roster, contract.StreamStopped("session", "root", "completed")},
 			}
-			rt, err := NewRemoteRuntime(client)
+			rt, err := remote.NewRuntime(client)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rt.Close()) })
-			rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event Event) {
+			rt.EmitAgentInfo(t.Context(), EventSinkFunc(func(event contract.Event) {
 				switch info := event.(type) {
-				case *AgentInfoEvent:
+				case *contract.AgentInfoEvent:
 					assert.Nil(t, info.ExecutionCapabilities)
-				case *TeamInfoEvent:
+				case *contract.TeamInfoEvent:
 					assert.Nil(t, info.AvailableAgents[0].ExecutionCapabilities)
 				}
 			}))
-			var forwarded *TeamInfoEvent
+			var forwarded *contract.TeamInfoEvent
 			for event := range rt.RunStream(t.Context(), session.New(session.WithID("session"))) {
-				if info, ok := event.(*TeamInfoEvent); ok {
+				if info, ok := event.(*contract.TeamInfoEvent); ok {
 					forwarded = info
 				}
 			}

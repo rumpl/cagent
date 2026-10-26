@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -26,58 +27,58 @@ func TestRunLast(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		events []runtime.Event
+		events []contract.Event
 		json   bool
 		want   string
 	}{
 		{
 			name: "streamed final message",
-			events: []runtime.Event{
-				runtime.AgentChoiceReasoning("root", "sess", "thinking", "first"),
-				runtime.AgentChoice("root", "sess", "intermediate", "first"),
-				runtime.ToolCall(tools.ToolCall{}, tools.Tool{}, "root"),
-				runtime.ToolCallResponse("tool", tools.Tool{}, tools.ResultSuccess("tool output"), "tool output", "root"),
-				runtime.AgentChoice("root", "sess", "final ", "final"),
-				runtime.AgentChoice("root", "sess", "answer", "final"),
-				runtime.Warning("cache miss", "root"),
+			events: []contract.Event{
+				contract.AgentChoiceReasoning("root", "sess", "thinking", "first"),
+				contract.AgentChoice("root", "sess", "intermediate", "first"),
+				contract.ToolCall(tools.ToolCall{}, tools.Tool{}, "root"),
+				contract.ToolCallResponse("tool", tools.Tool{}, tools.ResultSuccess("tool output"), "tool output", "root"),
+				contract.AgentChoice("root", "sess", "final ", "final"),
+				contract.AgentChoice("root", "sess", "answer", "final"),
+				contract.Warning("cache miss", "root"),
 			},
 			want: "final answer\n",
 		},
 		{
 			name: "agent handoff and sub-session filtering",
-			events: []runtime.Event{
-				runtime.AgentChoice("root", "sess", "draft", "first"),
-				runtime.AgentChoice("reviewer", "sess", "reviewed", "final"),
-				runtime.AgentChoice("child", "child-session", "child answer", "child"),
-				runtime.StreamStopped("child-session", "child", "error"),
-				runtime.StreamStopped("sess", "reviewer", runtime.TurnEndReasonNormal),
+			events: []contract.Event{
+				contract.AgentChoice("root", "sess", "draft", "first"),
+				contract.AgentChoice("reviewer", "sess", "reviewed", "final"),
+				contract.AgentChoice("child", "child-session", "child answer", "child"),
+				contract.StreamStopped("child-session", "child", "error"),
+				contract.StreamStopped("sess", "reviewer", runtime.TurnEndReasonNormal),
 			},
 			want: "reviewed\n",
 		},
 		{
 			name: "legacy events without message IDs",
-			events: []runtime.Event{
-				runtime.AgentChoice("root", "sess", "draft"),
-				runtime.AgentChoice("reviewer", "sess", "reviewed "),
-				runtime.AgentChoice("reviewer", "sess", "answer"),
+			events: []contract.Event{
+				contract.AgentChoice("root", "sess", "draft"),
+				contract.AgentChoice("reviewer", "sess", "reviewed "),
+				contract.AgentChoice("reviewer", "sess", "answer"),
 			},
 			want: "reviewed answer\n",
 		},
 		{
 			name:   "JSON text is encoded as a string",
 			json:   true,
-			events: []runtime.Event{runtime.AgentChoice("root", "sess", "final\n\"answer\"", "final")},
+			events: []contract.Event{contract.AgentChoice("root", "sess", "final\n\"answer\"", "final")},
 			want:   "\"final\\n\\\"answer\\\"\"\n",
 		},
 		{
 			name:   "structured JSON is not double encoded",
 			json:   true,
-			events: []runtime.Event{runtime.AgentChoice("root", "sess", "{\n  \"answer\": 9007199254740993\n}", "final")},
+			events: []contract.Event{contract.AgentChoice("root", "sess", "{\n  \"answer\": 9007199254740993\n}", "final")},
 			want:   "{\"answer\":9007199254740993}\n",
 		},
 		{
 			name:   "structured output in text mode stays unchanged",
-			events: []runtime.Event{runtime.AgentChoice("root", "sess", "{\n  \"answer\": 4\n}", "final")},
+			events: []contract.Event{contract.AgentChoice("root", "sess", "{\n  \"answer\": 4\n}", "final")},
 			want:   "{\n  \"answer\": 4\n}\n",
 		},
 	} {
@@ -98,10 +99,10 @@ func TestRunLastOnlyPrintsFinalTurn(t *testing.T) {
 		t.Run(map[bool]string{false: "text", true: "json"}[outputJSON], func(t *testing.T) {
 			t.Parallel()
 			var turn int
-			rt := &mockRuntime{runStreamFn: func(_ context.Context, sess *session.Session) <-chan runtime.Event {
+			rt := &mockRuntime{runStreamFn: func(_ context.Context, sess *session.Session) <-chan contract.Event {
 				turn++
-				ch := make(chan runtime.Event, 1)
-				ch <- runtime.AgentChoice("root", sess.ID, []string{"first answer", "last answer"}[turn-1], "message")
+				ch := make(chan contract.Event, 1)
+				ch <- contract.AgentChoice("root", sess.ID, []string{"first answer", "last answer"}[turn-1], "message")
 				close(ch)
 				return ch
 			}}
@@ -121,21 +122,21 @@ func TestRunLastDoesNotPrintUnfinishedAnswers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
-		events []runtime.Event
+		events []contract.Event
 		want   string
 	}{
 		{"empty", nil, "no final answer"},
-		{"reasoning only", []runtime.Event{runtime.AgentChoiceReasoning("root", "sess", "thinking", "id")}, "no final answer"},
-		{"runtime error", []runtime.Event{runtime.AgentChoice("root", "sess", "partial", "id"), runtime.Error("model failed")}, "model failed"},
-		{"iteration limit", []runtime.Event{runtime.AgentChoice("root", "sess", "partial", "id"), maxIterEvent(10)}, "no final answer"},
-		{"canceled", []runtime.Event{runtime.AgentChoice("root", "sess", "partial", "id"), runtime.StreamStopped("sess", "root", runtime.TurnEndReasonCanceled)}, "canceled"},
-		{"empty final response", []runtime.Event{runtime.AgentChoice("root", "sess", "draft", "draft"), runtime.AgentChoice("root", "sess", "", "final")}, "no final answer"},
-		{"reasoning only final response", []runtime.Event{runtime.AgentChoice("root", "sess", "draft", "draft"), runtime.AgentChoiceReasoning("reviewer", "sess", "thinking", "final")}, "no final answer"},
-		{"remote tool preamble without usage", []runtime.Event{runtime.AgentChoice("root", "sess", "calling tool", "id"), &runtime.MessageAddedEvent{SessionID: "sess", HasToolCalls: true}}, "no final answer"},
-		{"empty completion without usage", []runtime.Event{runtime.AgentChoice("root", "sess", "draft", "id"), &runtime.TokenUsageEvent{SessionID: "sess", AssistantMessageEmpty: true}}, "no final answer"},
-		{"remote empty completion", []runtime.Event{runtime.AgentChoice("root", "sess", "draft", "id"), &runtime.MessageAddedEvent{SessionID: "sess", AssistantMessageEmpty: true}}, "no final answer"},
-		{"truncated", []runtime.Event{runtime.AgentChoice("root", "sess", "partial", "id"), &runtime.StreamStoppedEvent{SessionID: "sess", Reason: runtime.TurnEndReasonNormal, FinishReason: chat.FinishReasonLength}}, "truncated"},
-		{"tool preamble", []runtime.Event{runtime.AgentChoice("root", "sess", "calling tool", "id"), runtime.NewTokenUsageEvent("sess", "root", &runtime.Usage{LastMessage: &runtime.MessageUsage{FinishReason: chat.FinishReasonToolCalls}})}, "no final answer"},
+		{"reasoning only", []contract.Event{contract.AgentChoiceReasoning("root", "sess", "thinking", "id")}, "no final answer"},
+		{"runtime error", []contract.Event{contract.AgentChoice("root", "sess", "partial", "id"), contract.Error("model failed")}, "model failed"},
+		{"iteration limit", []contract.Event{contract.AgentChoice("root", "sess", "partial", "id"), maxIterEvent(10)}, "no final answer"},
+		{"canceled", []contract.Event{contract.AgentChoice("root", "sess", "partial", "id"), contract.StreamStopped("sess", "root", runtime.TurnEndReasonCanceled)}, "canceled"},
+		{"empty final response", []contract.Event{contract.AgentChoice("root", "sess", "draft", "draft"), contract.AgentChoice("root", "sess", "", "final")}, "no final answer"},
+		{"reasoning only final response", []contract.Event{contract.AgentChoice("root", "sess", "draft", "draft"), contract.AgentChoiceReasoning("reviewer", "sess", "thinking", "final")}, "no final answer"},
+		{"remote tool preamble without usage", []contract.Event{contract.AgentChoice("root", "sess", "calling tool", "id"), &contract.MessageAddedEvent{SessionID: "sess", HasToolCalls: true}}, "no final answer"},
+		{"empty completion without usage", []contract.Event{contract.AgentChoice("root", "sess", "draft", "id"), &contract.TokenUsageEvent{SessionID: "sess", AssistantMessageEmpty: true}}, "no final answer"},
+		{"remote empty completion", []contract.Event{contract.AgentChoice("root", "sess", "draft", "id"), &contract.MessageAddedEvent{SessionID: "sess", AssistantMessageEmpty: true}}, "no final answer"},
+		{"truncated", []contract.Event{contract.AgentChoice("root", "sess", "partial", "id"), &contract.StreamStoppedEvent{SessionID: "sess", Reason: runtime.TurnEndReasonNormal, FinishReason: chat.FinishReasonLength}}, "truncated"},
+		{"tool preamble", []contract.Event{contract.AgentChoice("root", "sess", "calling tool", "id"), contract.NewTokenUsageEvent("sess", "root", &contract.Usage{LastMessage: &contract.MessageUsage{FinishReason: chat.FinishReasonToolCalls}})}, "no final answer"},
 	} {
 		for _, outputJSON := range []bool{false, true} {
 			t.Run(tc.name+map[bool]string{false: "/text", true: "/json"}[outputJSON], func(t *testing.T) {
@@ -152,10 +153,10 @@ func TestRunLastDoesNotPrintUnfinishedAnswers(t *testing.T) {
 
 func TestRunLastDeclinesInteractions(t *testing.T) {
 	t.Parallel()
-	rt := &mockRuntime{events: []runtime.Event{
-		&runtime.ToolCallConfirmationEvent{},
-		&runtime.ElicitationRequestEvent{ElicitationID: "request"},
-		runtime.AgentChoice("root", "sess", "answer", "id"),
+	rt := &mockRuntime{events: []contract.Event{
+		&contract.ToolCallConfirmationEvent{},
+		&contract.ElicitationRequestEvent{ElicitationID: "request"},
+		contract.AgentChoice("root", "sess", "answer", "id"),
 	}}
 	var out bytes.Buffer
 	require.NoError(t, Run(t.Context(), NewPrinter(&out), Config{Last: true, AutoApprove: true}, rt, session.New(session.WithID("sess")), []string{"hello"}))
@@ -169,7 +170,7 @@ func TestRunLastReadsStdin(t *testing.T) {
 	for _, messages := range [][]string{nil, {"-"}} {
 		t.Run(strings.Join(messages, ""), func(t *testing.T) {
 			swapStdin(t, "hello\n")
-			rt := &mockRuntime{events: []runtime.Event{runtime.AgentChoice("root", "sess", "answer", "id")}}
+			rt := &mockRuntime{events: []contract.Event{contract.AgentChoice("root", "sess", "answer", "id")}}
 			var out bytes.Buffer
 			require.NoError(t, Run(t.Context(), NewPrinter(&out), Config{Last: true}, rt, session.New(session.WithID("sess")), messages))
 			assert.Equal(t, "answer\n", out.String())
@@ -240,12 +241,12 @@ func (*outputToolStream) Close() {}
 
 func TestRunLastFailsBeforeStartingFollowUpTurn(t *testing.T) {
 	t.Parallel()
-	for _, trigger := range []runtime.Event{maxIterEvent(10), runtime.StreamStopped("sess", "root", runtime.TurnEndReasonCanceled)} {
+	for _, trigger := range []contract.Event{maxIterEvent(10), contract.StreamStopped("sess", "root", runtime.TurnEndReasonCanceled)} {
 		var turns int
-		rt := &mockRuntime{runStreamFn: func(context.Context, *session.Session) <-chan runtime.Event {
+		rt := &mockRuntime{runStreamFn: func(context.Context, *session.Session) <-chan contract.Event {
 			turns++
-			ch := make(chan runtime.Event, 2)
-			ch <- runtime.AgentChoice("root", "sess", "partial", "id")
+			ch := make(chan contract.Event, 2)
+			ch <- contract.AgentChoice("root", "sess", "partial", "id")
 			ch <- trigger
 			close(ch)
 			return ch

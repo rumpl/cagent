@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 )
 
@@ -17,11 +17,11 @@ func TestSessionLifecycle(t *testing.T) {
 			t.Parallel()
 			s := &Session{}
 			assert.Equal(t, "idle", s.Status().State)
-			s.Apply("root", runtime.StreamStarted("root", "root"))
-			s.Apply("root", runtime.StreamStarted("child", "child"))
-			s.Apply("root", runtime.StreamStopped("child", "child", "error"))
+			s.Apply("root", contract.StreamStarted("root", "root"))
+			s.Apply("root", contract.StreamStarted("child", "child"))
+			s.Apply("root", contract.StreamStopped("child", "child", "error"))
 			assert.Equal(t, "working", s.Status().State)
-			s.Apply("root", runtime.StreamStopped("root", "root", reason))
+			s.Apply("root", contract.StreamStopped("root", "root", reason))
 			want := "done"
 			switch reason {
 			case "canceled":
@@ -42,15 +42,15 @@ func TestSessionPrompts(t *testing.T) {
 		event tea.Msg
 		kind  string
 	}{
-		{&runtime.ToolCallConfirmationEvent{ToolCall: tools.ToolCall{ID: "tool"}}, "permission"},
-		{&runtime.MaxIterationsReachedEvent{}, "question"},
-		{&runtime.ElicitationRequestEvent{}, "question"},
-		{&runtime.ElicitationRequestEvent{Meta: map[string]any{"docker-agent/type": "oauth_flow"}}, "auth"},
+		{&contract.ToolCallConfirmationEvent{ToolCall: tools.ToolCall{ID: "tool"}}, "permission"},
+		{&contract.MaxIterationsReachedEvent{}, "question"},
+		{&contract.ElicitationRequestEvent{}, "question"},
+		{&contract.ElicitationRequestEvent{Meta: map[string]any{"docker-agent/type": "oauth_flow"}}, "auth"},
 	} {
 		s := &Session{}
 		s.Start("root")
 		s.Apply("root", tc.event)
-		s.Apply("root", runtime.StreamStopped("child", "child", "normal"))
+		s.Apply("root", contract.StreamStopped("child", "child", "normal"))
 		s.Acknowledge()
 		assert.Equal(t, "blocked", s.Status().State)
 		assert.Equal(t, tc.kind, s.Status().Kind)
@@ -64,11 +64,11 @@ func TestSessionDetachedPrompts(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
 	s.Start("root")
-	foreground := &runtime.ElicitationRequestEvent{SessionID: "root"}
-	detached := &runtime.ElicitationRequestEvent{SessionID: "job"}
+	foreground := &contract.ElicitationRequestEvent{SessionID: "root"}
+	detached := &contract.ElicitationRequestEvent{SessionID: "job"}
 	s.Apply("root", foreground)
 	s.Apply("root", detached)
-	s.Apply("root", runtime.StreamStopped("root", "root", "normal"))
+	s.Apply("root", contract.StreamStopped("root", "root", "normal"))
 	assert.Equal(t, "blocked", s.Status().State)
 	s.Resolve(foreground)
 	assert.Equal(t, "blocked", s.Status().State)
@@ -80,15 +80,15 @@ func TestSessionErrorAndRecovery(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
 	s.Start("root")
-	s.Apply("root", &runtime.ErrorEvent{SessionID: "root"})
+	s.Apply("root", &contract.ErrorEvent{SessionID: "root"})
 	assert.Equal(t, "working", s.Status().State, "don't mark an active run finished")
-	s.Apply("root", runtime.StreamStopped("root", "root", "normal"))
+	s.Apply("root", contract.StreamStopped("root", "root", "normal"))
 	assert.Equal(t, "error", s.Status().State)
-	s.Apply("root", runtime.SessionRecovered("root"))
+	s.Apply("root", contract.SessionRecovered("root"))
 	assert.Equal(t, "idle", s.Status().State)
-	s.Apply("root", runtime.StreamStarted("root", "root"))
-	s.Apply("root", &runtime.ErrorEvent{SessionID: "child"})
-	s.Apply("root", runtime.StreamStopped("root", "root", "normal"))
+	s.Apply("root", contract.StreamStarted("root", "root"))
+	s.Apply("root", &contract.ErrorEvent{SessionID: "child"})
+	s.Apply("root", contract.StreamStopped("root", "root", "normal"))
 	assert.Equal(t, "done", s.Status().State)
 }
 
@@ -98,11 +98,11 @@ func TestSessionCompaction(t *testing.T) {
 		s := &Session{}
 		s.Start("root")
 		if nested {
-			s.Apply("root", runtime.StreamStarted("root", "root"))
+			s.Apply("root", contract.StreamStarted("root", "root"))
 		}
-		s.Apply("root", &runtime.SessionCompactionEvent{SessionID: "root", Status: "started"})
+		s.Apply("root", &contract.SessionCompactionEvent{SessionID: "root", Status: "started"})
 		assert.Equal(t, "working", s.Status().State)
-		s.Apply("root", &runtime.SessionCompactionEvent{SessionID: "root", Status: "completed"})
+		s.Apply("root", &contract.SessionCompactionEvent{SessionID: "root", Status: "completed"})
 		want := "done"
 		if nested {
 			want = "working"
@@ -115,12 +115,12 @@ func TestSessionStandaloneFork(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"normal", "error", "canceled"} {
 		s := &Session{}
-		s.Apply("root", runtime.StreamStarted("fork", "worker"))
+		s.Apply("root", contract.StreamStarted("fork", "worker"))
 		assert.Equal(t, "working", s.Status().State)
-		s.Apply("root", runtime.StreamStarted("nested", "child"))
-		s.Apply("root", runtime.StreamStopped("nested", "child", "normal"))
+		s.Apply("root", contract.StreamStarted("nested", "child"))
+		s.Apply("root", contract.StreamStopped("nested", "child", "normal"))
 		assert.Equal(t, "working", s.Status().State)
-		s.Apply("root", runtime.StreamStopped("fork", "worker", reason))
+		s.Apply("root", contract.StreamStopped("fork", "worker", reason))
 		want := "done"
 		switch reason {
 		case "error":
@@ -136,7 +136,7 @@ func TestSessionCompactionWithoutStart(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
 	s.Start("root")
-	s.Apply("root", &runtime.SessionCompactionEvent{SessionID: "root", Status: "completed", Outcome: runtime.CompactionOutcomeSkipped})
+	s.Apply("root", &contract.SessionCompactionEvent{SessionID: "root", Status: "completed", Outcome: contract.CompactionOutcomeSkipped})
 	assert.Equal(t, "done", s.Status().State)
 }
 
@@ -144,13 +144,13 @@ func TestSessionCancelsForkPrompts(t *testing.T) {
 	t.Parallel()
 	for _, direct := range []bool{false, true} {
 		s := &Session{}
-		s.Apply("root", runtime.StreamStarted("fork", "worker"))
-		s.Apply("root", &runtime.ElicitationRequestEvent{SessionID: "fork"})
+		s.Apply("root", contract.StreamStarted("fork", "worker"))
+		s.Apply("root", &contract.ElicitationRequestEvent{SessionID: "fork"})
 		assert.Equal(t, "blocked", s.Status().State)
 		if direct {
 			s.Cancel("root")
 		} else {
-			s.Apply("root", runtime.StreamStopped("fork", "worker", "canceled"))
+			s.Apply("root", contract.StreamStopped("fork", "worker", "canceled"))
 		}
 		assert.Equal(t, "idle", s.Status().State)
 	}
@@ -159,11 +159,11 @@ func TestSessionCancelsForkPrompts(t *testing.T) {
 func TestSessionCancellationRetiresNestedPrompts(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
-	s.Apply("root", runtime.StreamStarted("root", "root"))
-	s.Apply("root", runtime.StreamStarted("child", "child"))
-	s.Apply("root", &runtime.ElicitationRequestEvent{SessionID: "child"})
-	s.Apply("root", runtime.StreamStopped("child", "child", "canceled"))
-	s.Apply("root", runtime.StreamStopped("root", "root", "canceled"))
+	s.Apply("root", contract.StreamStarted("root", "root"))
+	s.Apply("root", contract.StreamStarted("child", "child"))
+	s.Apply("root", &contract.ElicitationRequestEvent{SessionID: "child"})
+	s.Apply("root", contract.StreamStopped("child", "child", "canceled"))
+	s.Apply("root", contract.StreamStopped("root", "root", "canceled"))
 	assert.Equal(t, "idle", s.Status().State)
 }
 
@@ -174,13 +174,13 @@ func TestSessionCanceledLateCompletion(t *testing.T) {
 		s.Start("root")
 		s.Cancel("root")
 		if compact {
-			s.Apply("root", runtime.SessionCompactionCompleted("root", runtime.CompactionOutcomeApplied, "root"))
+			s.Apply("root", contract.SessionCompactionCompleted("root", contract.CompactionOutcomeApplied, "root"))
 		} else {
-			s.Apply("root", runtime.StreamStopped("root", "root", "normal"))
+			s.Apply("root", contract.StreamStopped("root", "root", "normal"))
 		}
 		assert.Equal(t, "idle", s.Status().State)
 		s.Start("root")
-		s.Apply("root", runtime.StreamStopped("root", "root", "normal"))
+		s.Apply("root", contract.StreamStopped("root", "root", "normal"))
 		assert.Equal(t, "done", s.Status().State)
 	}
 }
@@ -189,14 +189,14 @@ func TestSessionEarlyChildPromptAndFailure(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
 	s.Start("root")
-	s.Apply("root", &runtime.ElicitationRequestEvent{SessionID: "child", ElicitationID: "oauth"})
-	s.Apply("root", runtime.StreamStopped("child", "child", "canceled"))
+	s.Apply("root", &contract.ElicitationRequestEvent{SessionID: "child", ElicitationID: "oauth"})
+	s.Apply("root", contract.StreamStopped("child", "child", "canceled"))
 	assert.Equal(t, "working", s.Status().State)
-	s.Apply("root", runtime.StreamStopped("root", "root", "canceled"))
+	s.Apply("root", contract.StreamStopped("root", "root", "canceled"))
 	assert.Equal(t, "idle", s.Status().State)
 
 	s.Start("root")
-	s.Apply("root", &runtime.ErrorEvent{SessionID: "fork", Error: "tool startup failed"})
+	s.Apply("root", &contract.ErrorEvent{SessionID: "fork", Error: "tool startup failed"})
 	s.Finish("root", "")
 	assert.Equal(t, "error", s.Status().State)
 }
@@ -204,12 +204,12 @@ func TestSessionEarlyChildPromptAndFailure(t *testing.T) {
 func TestSessionClosedDetachedPrompt(t *testing.T) {
 	t.Parallel()
 	s := &Session{}
-	first := &runtime.ElicitationRequestEvent{SessionID: "job", ElicitationID: "first"}
-	second := &runtime.ElicitationRequestEvent{SessionID: "job", ElicitationID: "second"}
+	first := &contract.ElicitationRequestEvent{SessionID: "job", ElicitationID: "first"}
+	second := &contract.ElicitationRequestEvent{SessionID: "job", ElicitationID: "second"}
 	s.Apply("root", first)
 	s.Apply("root", second)
-	s.Apply("root", &runtime.ElicitationClosedEvent{ElicitationID: "first"})
+	s.Apply("root", &contract.ElicitationClosedEvent{ElicitationID: "first"})
 	assert.Equal(t, "blocked", s.Status().State)
-	s.Apply("root", &runtime.ElicitationClosedEvent{ElicitationID: "second"})
+	s.Apply("root", &contract.ElicitationClosedEvent{ElicitationID: "second"})
 	assert.Equal(t, "idle", s.Status().State)
 }

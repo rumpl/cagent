@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -41,7 +42,7 @@ func runHandleStream(t *testing.T, stream *mockStream) streamResult {
 	sess := session.New(session.WithUserMessage("go"))
 	res, err := handleStream(
 		t.Context(), nil, stream, a, nil, sess,
-		NewChannelSink(make(chan Event, 64)), defaultStreamIdleTimeout,
+		NewChannelSink(make(chan contract.Event, 64)), defaultStreamIdleTimeout,
 	)
 	require.NoError(t, err)
 	return res

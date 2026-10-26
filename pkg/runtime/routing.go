@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -126,7 +127,7 @@ func (r *LocalRuntime) routingUnsupported(route *routeState, a *agent.Agent) *ro
 
 // activateAgent fires before_agent_run once for a new activation and follows
 // route transitions, returning the agent that should actually run.
-func (r *LocalRuntime) activateAgent(ctx context.Context, sess *session.Session, a *agent.Agent, route *routeState, events EventSink) (*agent.Agent, *routeStop) {
+func (r *LocalRuntime) activateAgent(ctx context.Context, sess *session.Session, a *agent.Agent, route *routeState, events contract.EventSink) (*agent.Agent, *routeStop) {
 	for route.activated != a.Name() {
 		route.step++
 		route.activated = a.Name()
@@ -150,7 +151,7 @@ func (r *LocalRuntime) activateAgent(ctx context.Context, sess *session.Session,
 
 // routeCompletion fires after_agent_complete, or applies the agent's forced
 // handoff, for an agent that completed successfully with content.
-func (r *LocalRuntime) routeCompletion(ctx context.Context, sess *session.Session, a *agent.Agent, content string, ls *loopState, events EventSink) (routeOutcome, *routeStop) {
+func (r *LocalRuntime) routeCompletion(ctx context.Context, sess *session.Session, a *agent.Agent, content string, ls *loopState, events contract.EventSink) (routeOutcome, *routeStop) {
 	route := ls.route
 	if strings.TrimSpace(content) == "" {
 		return routeFinished, nil
@@ -186,7 +187,7 @@ func (r *LocalRuntime) routeCompletion(ctx context.Context, sess *session.Sessio
 
 // dispatchControlHook runs a control event with evaluator accounting attached,
 // so routing assessments are charged like tool-dispatch ones.
-func (r *LocalRuntime) dispatchControlHook(ctx context.Context, sess *session.Session, a *agent.Agent, event hooks.EventType, route *routeState, output string, events EventSink) *hooks.Result {
+func (r *LocalRuntime) dispatchControlHook(ctx context.Context, sess *session.Session, a *agent.Agent, event hooks.EventType, route *routeState, output string, events contract.EventSink) *hooks.Result {
 	r.ensureBudget()
 	ctx = context.WithValue(ctx, evaluatorAccountingKey{}, &evaluatorAccounting{r: r, sess: sess, a: a, events: events})
 	return r.dispatchHook(ctx, a, event, &hooks.Input{
@@ -231,7 +232,7 @@ func (r *LocalRuntime) resolveTransition(a *agent.Agent, result *hooks.Result, r
 // implicit handoff note as force_handoff so the next model call never starts
 // on a dangling assistant message; an entry route replaces the activation and
 // leaves the user's request as the last message.
-func (r *LocalRuntime) applyRoute(ctx context.Context, sess *session.Session, from, next *agent.Agent, route *routeState, phase string, result *hooks.Result, afterCompletion bool, events EventSink) {
+func (r *LocalRuntime) applyRoute(ctx context.Context, sess *session.Session, from, next *agent.Agent, route *routeState, phase string, result *hooks.Result, afterCompletion bool, events contract.EventSink) {
 	kind := agentSwitchKindRoute
 	if phase == agentSwitchKindForceHandoff {
 		kind = agentSwitchKindForceHandoff
@@ -245,7 +246,7 @@ func (r *LocalRuntime) applyRoute(ctx context.Context, sess *session.Session, fr
 		sess.AddMessage(session.ImplicitUserMessage(forcedHandoffNote(from.Name())))
 	}
 
-	event := &AgentRouteEvent{
+	event := &contract.AgentRouteEvent{
 		Type: "agent_route", SessionID: sess.ID, InvocationID: route.invocationID, StepID: route.stepID(),
 		Phase: phase, FromAgent: from.Name(), ToAgent: next.Name(),
 		AgentContext: newAgentContext(from.Name()),
@@ -259,7 +260,7 @@ func (r *LocalRuntime) applyRoute(ctx context.Context, sess *session.Session, fr
 	event.Probability, event.FallbackReason = decision.Probability, decision.FallbackReason
 	events.Emit(event)
 	if event.FallbackReason != "" {
-		events.Emit(Warning(fmt.Sprintf("Routing fell back to %q (%s).", next.Name(), event.FallbackReason), from.Name()))
+		events.Emit(contract.Warning(fmt.Sprintf("Routing fell back to %q (%s).", next.Name(), event.FallbackReason), from.Name()))
 	}
 }
 
@@ -271,7 +272,7 @@ const (
 
 // recordRoutingDecision stores the decision as a session item, so it survives
 // reloads and exports. toAgent is empty when no route was taken.
-func (r *LocalRuntime) recordRoutingDecision(sess *session.Session, fromAgent, toAgent string, route *routeState, phase, action, reason string, result *hooks.Result, events EventSink) *session.RoutingDecision {
+func (r *LocalRuntime) recordRoutingDecision(sess *session.Session, fromAgent, toAgent string, route *routeState, phase, action, reason string, result *hooks.Result, events contract.EventSink) *session.RoutingDecision {
 	decision := &session.RoutingDecision{
 		ID: uuid.NewV4().String(), InvocationID: route.invocationID, StepID: route.stepID(),
 		Phase: phase, FromAgent: fromAgent, ToAgent: toAgent, Action: action, Reason: reason, CreatedAt: r.now(),
@@ -286,7 +287,7 @@ func (r *LocalRuntime) recordRoutingDecision(sess *session.Session, fromAgent, t
 		}
 	}
 	sess.AddRoutingDecision(decision)
-	events.Emit(&RoutingDecisionEvent{
+	events.Emit(&contract.RoutingDecisionEvent{
 		Type: "routing_decision", SessionID: sess.ID, Decision: decision,
 		AgentContext: newAgentContext(fromAgent),
 	})
@@ -294,7 +295,7 @@ func (r *LocalRuntime) recordRoutingDecision(sess *session.Session, fromAgent, t
 }
 
 // recordUnroutedDecision records a control hook that ran but did not change the agent.
-func (r *LocalRuntime) recordUnroutedDecision(sess *session.Session, a *agent.Agent, route *routeState, phase string, result *hooks.Result, stop *routeStop, events EventSink) {
+func (r *LocalRuntime) recordUnroutedDecision(sess *session.Session, a *agent.Agent, route *routeState, phase string, result *hooks.Result, stop *routeStop, events contract.EventSink) {
 	if result == nil {
 		return
 	}
@@ -319,7 +320,7 @@ func (r *LocalRuntime) switchSessionAgent(sess *session.Session, name string) {
 
 // stopRouting reports a routing stop to the user and classifies the stream exit.
 // Budget exhaustion and cancellation take precedence: they are terminal, not hook failures.
-func (r *LocalRuntime) stopRouting(ctx context.Context, sess *session.Session, a *agent.Agent, stop *routeStop, events EventSink) string {
+func (r *LocalRuntime) stopRouting(ctx context.Context, sess *session.Session, a *agent.Agent, stop *routeStop, events contract.EventSink) string {
 	switch {
 	case ctx.Err() != nil:
 		return turnEndReasonCanceled
@@ -329,7 +330,7 @@ func (r *LocalRuntime) stopRouting(ctx context.Context, sess *session.Session, a
 		r.emitHookDrivenShutdown(ctx, a, sess, stop.message, events)
 		return turnEndReasonHookBlocked
 	}
-	events.Emit(ErrorWithCodeForSession(sess.ID, ErrorCodeRoutingFailed, stop.message))
+	events.Emit(contract.ErrorWithCodeForSession(sess.ID, contract.ErrorCodeRoutingFailed, stop.message))
 	r.notifyError(ctx, a, sess.ID, stop.message)
 	return turnEndReasonError
 }

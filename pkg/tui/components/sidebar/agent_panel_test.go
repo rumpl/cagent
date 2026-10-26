@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/service"
@@ -23,7 +23,7 @@ import (
 // agent_info_mode_test.go). The transfer-box animation is always stopped on
 // cleanup so tests that start it (via SetAgentSwitching) cannot leak a
 // registration on the global animation coordinator into parallel tests.
-func newAgentPanelSidebar(t *testing.T, width int, agents ...runtime.AgentDetails) *model {
+func newAgentPanelSidebar(t *testing.T, width int, agents ...contract.AgentDetails) *model {
 	t.Helper()
 	sess := session.New()
 	ss := service.NewSessionState(sess)
@@ -122,7 +122,7 @@ func TestAgentEntryLayout(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 56,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Description: "Executive assistant", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Description: "Executive assistant", Thinking: "high"},
 	)
 
 	line1, line2 := agentLines(m, "root")
@@ -148,9 +148,9 @@ func TestCurrentAgentMarker(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "first", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
-		runtime.AgentDetails{Name: "last", Provider: "google", Model: "gemini-flash", Thinking: "off"},
+		contract.AgentDetails{Name: "first", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
+		contract.AgentDetails{Name: "last", Provider: "google", Model: "gemini-flash", Thinking: "off"},
 	)
 
 	rootLine1, _ := agentLines(m, "root")
@@ -183,8 +183,8 @@ func TestShortcutAtRightmost(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "8192"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "8192"},
 	)
 
 	for _, name := range []string{"root", "alpha"} {
@@ -202,9 +202,9 @@ func TestShortcutColumnAlignment(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "a", Provider: "openai", Model: "gpt-4o", Thinking: "off"},
-		runtime.AgentDetails{Name: "longer-name", Provider: "openai", Model: "gpt-5.4", Thinking: "8192"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "a", Provider: "openai", Model: "gpt-4o", Thinking: "off"},
+		contract.AgentDetails{Name: "longer-name", Provider: "openai", Model: "gpt-5.4", Thinking: "8192"},
 	)
 
 	end := -1
@@ -229,12 +229,12 @@ func TestEffortVocabularyOnCard(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 56,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-		runtime.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
-		runtime.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "8192"},
-		runtime.AgentDetails{Name: "delta", Provider: "google", Model: "gemini", Thinking: "adaptive"},
-		runtime.AgentDetails{Name: "plain", Provider: "openai", Model: "gpt-4o"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
+		contract.AgentDetails{Name: "gamma", Provider: "openai", Model: "gpt-4o", Thinking: "8192"},
+		contract.AgentDetails{Name: "delta", Provider: "google", Model: "gemini", Thinking: "adaptive"},
+		contract.AgentDetails{Name: "plain", Provider: "openai", Model: "gpt-4o"},
 	)
 
 	want := map[string]string{
@@ -259,8 +259,8 @@ func TestModelLineLeftTruncated(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 28,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "agent2", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "off"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "agent2", Provider: "anthropic", Model: "claude-sonnet-4-6", Thinking: "off"},
 	)
 
 	_, line2 := agentLines(m, "agent2")
@@ -274,11 +274,11 @@ func TestModelLineLeftTruncated(t *testing.T) {
 func TestMoreThanNineAgentsNoShortcutBeyond9(t *testing.T) {
 	t.Parallel()
 
-	agents := []runtime.AgentDetails{
+	agents := []contract.AgentDetails{
 		{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
 	}
 	for i := 2; i <= 12; i++ {
-		agents = append(agents, runtime.AgentDetails{
+		agents = append(agents, contract.AgentDetails{
 			Name:     "agent" + string(rune('a'+i)),
 			Provider: "openai",
 			Model:    "gpt-4o",
@@ -347,9 +347,9 @@ func TestDetailedCardWidthThreshold(t *testing.T) {
 			t.Parallel()
 
 			m := newAgentPanelSidebar(t, tt.width,
-				runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
-				runtime.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-				runtime.AgentDetails{Name: "probe", Provider: "openai", Model: "gpt-5.4", Thinking: "minimal"},
+				contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
+				contract.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+				contract.AgentDetails{Name: "probe", Provider: "openai", Model: "gpt-5.4", Thinking: "minimal"},
 			)
 			recordAgentUsageWithCost(m, "session-root", "root", 30_000, 100_000, 0.13)
 
@@ -407,8 +407,8 @@ func TestDetailedCardResizeAcrossThreshold(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, DefaultWidth,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
-		runtime.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
+		contract.AgentDetails{Name: "scout", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 	)
 	recordAgentUsageWithCost(m, "session-root", "root", 30_000, 100_000, 0.13)
 	m.workingDirectory = "" // keep the full-view render environment-independent
@@ -481,7 +481,7 @@ func TestClickZonesEveryLine(t *testing.T) {
 	m.titleGenerated = true
 	m.sessionTitle = "Test"
 	m.currentAgent = "root"
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "first", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
 		{Name: "root", Provider: "anthropic", Model: "claude-opus-4-8", Thinking: "high"},
 	}
@@ -517,9 +517,9 @@ func TestRosterSeparatesAgentsWithBlankLine(t *testing.T) {
 	t.Parallel()
 
 	m := newAgentPanelSidebar(t, 40,
-		runtime.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
-		runtime.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
-		runtime.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
+		contract.AgentDetails{Name: "root", Provider: "anthropic", Model: "opus", Thinking: "high"},
+		contract.AgentDetails{Name: "alpha", Provider: "openai", Model: "gpt-5.4-mini", Thinking: "off"},
+		contract.AgentDetails{Name: "beta", Provider: "openai", Model: "gpt-5.4", Thinking: "high"},
 	)
 
 	_ = renderAgentPanel(m) // populates agentLineOwners

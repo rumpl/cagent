@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 )
 
@@ -77,36 +78,36 @@ func (p *PersistenceObserver) OnRunStart(ctx context.Context, sess *session.Sess
 // and any [SessionScoped] event tagged with a different session id
 // (forwarded sub-agent streaming events) is filtered out so it can't
 // pollute the parent's transcript.
-func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session, event Event) {
+func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session, event contract.Event) {
 	if sess.IsSubSession() {
 		return
 	}
-	if scoped, ok := event.(SessionScoped); ok && scoped.GetSessionID() != sess.ID {
+	if scoped, ok := event.(contract.SessionScoped); ok && scoped.GetSessionID() != sess.ID {
 		return
 	}
 
 	// Accounting for an attempted request must survive cancellation of the run.
 	switch event.(type) {
-	case *EvaluationUsageEvent, *RoutingDecisionEvent, *TokenUsageEvent, *SubSessionCompletedEvent:
+	case *contract.EvaluationUsageEvent, *contract.RoutingDecisionEvent, *contract.TokenUsageEvent, *contract.SubSessionCompletedEvent:
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 	}
 
 	switch e := event.(type) {
-	case *AgentChoiceEvent:
+	case *contract.AgentChoiceEvent:
 		p.beginStreamingMessage(e.MessageID)
 		p.streaming.content.WriteString(e.Content)
 		p.streaming.agentName = e.AgentName
 		p.persistStreamingContent(ctx, sess.ID)
 
-	case *AgentChoiceReasoningEvent:
+	case *contract.AgentChoiceReasoningEvent:
 		p.beginStreamingMessage(e.MessageID)
 		p.streaming.reasoningContent.WriteString(e.Content)
 		p.streaming.agentName = e.AgentName
 		p.persistStreamingContent(ctx, sess.ID)
 
-	case *UserMessageEvent:
+	case *contract.UserMessageEvent:
 		p.streaming = streamingState{}
 		msg := session.UserMessage(e.Message, e.MultiContent...)
 		msg.Message.MessageID = e.MessageID
@@ -114,7 +115,7 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 			slog.WarnContext(ctx, "Failed to persist user message", "session_id", e.SessionID, "error", err)
 		}
 
-	case *MessageAddedEvent:
+	case *contract.MessageAddedEvent:
 		// Finalise the streaming row (if any) with the canonical
 		// MessageAddedEvent payload, then reset for the next stream.
 		var err error
@@ -129,14 +130,14 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 		}
 		p.streaming = streamingState{}
 
-	case *SubSessionCompletedEvent:
+	case *contract.SubSessionCompletedEvent:
 		if subSess, ok := e.SubSession.(*session.Session); ok {
 			if err := p.store.AddSubSession(ctx, e.ParentSessionID, subSess); err != nil {
 				slog.WarnContext(ctx, "Failed to persist sub-session", "parent_id", e.ParentSessionID, "error", err)
 			}
 		}
 
-	case *SessionSummaryEvent:
+	case *contract.SessionSummaryEvent:
 		if e.IsPersisted() {
 			break
 		}
@@ -150,29 +151,29 @@ func (p *PersistenceObserver) OnEvent(ctx context.Context, sess *session.Session
 			slog.WarnContext(ctx, "Failed to persist summary", "session_id", e.SessionID, "error", err)
 		}
 
-	case *EvaluationUsageEvent:
+	case *contract.EvaluationUsageEvent:
 		if err := p.store.AddEvaluation(ctx, e.SessionID, e.Evaluation); err != nil {
 			slog.WarnContext(ctx, "Failed to persist evaluator usage", "session_id", e.SessionID, "error", err)
 		}
 
-	case *RoutingDecisionEvent:
+	case *contract.RoutingDecisionEvent:
 		if err := p.store.AddRoutingDecision(ctx, e.SessionID, e.Decision); err != nil {
 			slog.WarnContext(ctx, "Failed to persist routing decision", "session_id", e.SessionID, "error", err)
 		}
 
-	case *TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		if e.Usage != nil {
 			if err := p.store.UpdateSessionTokens(ctx, sess.ID, e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.Cost); err != nil {
 				slog.WarnContext(ctx, "Failed to persist token usage", "session_id", sess.ID, "error", err)
 			}
 		}
 
-	case *SessionTitleEvent:
+	case *contract.SessionTitleEvent:
 		if err := p.store.UpdateSessionTitle(ctx, sess.ID, e.Title); err != nil {
 			slog.WarnContext(ctx, "Failed to persist session title", "session_id", sess.ID, "error", err)
 		}
 
-	case *ErrorEvent:
+	case *contract.ErrorEvent:
 		// Persist agent failures so they survive a session reload and travel
 		// with a shared JSON export for diagnostics. Reset the streaming state
 		// so any in-flight assistant row is finalised in place and the error is

@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/docker-agent/pkg/programstatus"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/core"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -14,7 +14,7 @@ import (
 
 func isTabStateEvent(msg tea.Msg) bool {
 	switch msg.(type) {
-	case runtime.Event, messages.StreamCancelledMsg:
+	case contract.Event, messages.StreamCancelledMsg:
 		return true
 	default:
 		return false

@@ -10,7 +10,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/app"
 	chattypes "github.com/docker/docker-agent/pkg/chat"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
@@ -55,9 +55,9 @@ func TestEvaluationUsageEventKeepsTransientAccountingSeparate(t *testing.T) {
 			beforeCompaction, beforeIndices, beforeCount := root.CompactionInput()
 
 			for range 2 {
-				for _, event := range []*runtime.EvaluationUsageEvent{
-					{SessionID: root.ID, AgentContext: runtime.AgentContext{AgentName: "root"}, Evaluation: rootEvaluation},
-					{SessionID: child.ID, AgentContext: runtime.AgentContext{AgentName: "worker"}, Evaluation: childEvaluation},
+				for _, event := range []*contract.EvaluationUsageEvent{
+					{SessionID: root.ID, AgentContext: contract.AgentContext{AgentName: "root"}, Evaluation: rootEvaluation},
+					{SessionID: child.ID, AgentContext: contract.AgentContext{AgentName: "worker"}, Evaluation: childEvaluation},
 					{SessionID: root.ID},
 				} {
 					handled, cmd := p.handleRuntimeEvent(event)
@@ -110,28 +110,28 @@ func TestEvaluationUsageSnapshotsKeepChatHistoryAndChildContextSeparate(t *testi
 		{root.ID, "root", 100, 20, 0.5, 0.25},
 		{child.ID, "worker", 40, 5, 0.125, 0.125},
 	} {
-		handled, _ := p.handleRuntimeEvent(runtime.NewTokenUsageEvent(tc.sessionID, tc.agentName, &runtime.Usage{
+		handled, _ := p.handleRuntimeEvent(contract.NewTokenUsageEvent(tc.sessionID, tc.agentName, &contract.Usage{
 			InputTokens: tc.input, OutputTokens: tc.output, ContextLength: tc.input + tc.output, ContextLimit: 10000,
-			Cost: tc.chatCost, LastMessage: &runtime.MessageUsage{
+			Cost: tc.chatCost, LastMessage: &contract.MessageUsage{
 				Usage: chattypes.Usage{InputTokens: tc.input, OutputTokens: tc.output}, Model: "chat-model", Cost: tc.chatCost,
 			},
 		}))
 		require.True(t, handled)
-		e := &runtime.EvaluationUsageEvent{
-			SessionID: tc.sessionID, AgentContext: runtime.AgentContext{AgentName: tc.agentName},
+		e := &contract.EvaluationUsageEvent{
+			SessionID: tc.sessionID, AgentContext: contract.AgentContext{AgentName: tc.agentName},
 			Evaluation: &session.Evaluation{
 				ID: tc.sessionID + "-evaluation", Evaluator: "safety", AgentName: tc.agentName, Model: "judge-model",
 				Usage: &chattypes.Usage{InputTokens: 9000, OutputTokens: 1000}, Cost: new(tc.evalCost),
 			},
 		}
-		snapshot := &runtime.Usage{
+		snapshot := &contract.Usage{
 			InputTokens: tc.input, OutputTokens: tc.output, ContextLength: tc.input + tc.output, ContextLimit: 10000,
 			Cost: tc.chatCost + tc.evalCost, SnapshotOnly: true,
 		}
 		for range 2 {
 			handled, _ = p.handleRuntimeEvent(e)
 			require.True(t, handled)
-			handled, _ = p.handleRuntimeEvent(runtime.NewTokenUsageEvent(tc.sessionID, tc.agentName, snapshot))
+			handled, _ = p.handleRuntimeEvent(contract.NewTokenUsageEvent(tc.sessionID, tc.agentName, snapshot))
 			require.True(t, handled)
 		}
 		cost, ok := state.AgentCost(tc.agentName)

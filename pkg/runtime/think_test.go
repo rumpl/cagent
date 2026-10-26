@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -47,12 +48,12 @@ func drainThink(t *testing.T, rt *LocalRuntime, sess *session.Session) []string 
 	var outputs []string
 	for ev := range rt.RunStream(t.Context(), sess) {
 		switch ev := ev.(type) {
-		case *ToolCallResponseEvent:
+		case *contract.ToolCallResponseEvent:
 			if ev.ToolDefinition.Name == "think" {
 				assert.False(t, ev.Result.IsError, ev.Response)
 				outputs = append(outputs, ev.Response)
 			}
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			t.Errorf("runtime error: %v", ev)
 		}
 	}
@@ -160,12 +161,12 @@ func dispatchThink(t *testing.T, rt *LocalRuntime, ctx context.Context, sess *se
 	t.Helper()
 	available, err := ts.Tools(t.Context())
 	require.NoError(t, err)
-	events := make(chan Event, 64)
+	events := make(chan contract.Event, 64)
 	rt.processToolCalls(ctx, sess, caller, []tools.ToolCall{{ID: "call", Type: "function", Function: tools.FunctionCall{Name: "think", Arguments: fmt.Sprintf(`{"thought":%q}`, thought)}}}, available, NewChannelSink(events))
 	close(events)
 	var result *tools.ToolCallResult
 	for ev := range events {
-		if ev, ok := ev.(*ToolCallResponseEvent); ok {
+		if ev, ok := ev.(*contract.ToolCallResponseEvent); ok {
 			result = ev.Result
 		}
 	}
@@ -299,7 +300,7 @@ func TestThinkCodeModeDistinctInstances(t *testing.T) {
 	sess.ToolsApproved = true
 	var results []string
 	for ev := range rt.RunStream(t.Context(), sess) {
-		if ev, ok := ev.(*ToolCallResponseEvent); ok && (ev.ToolDefinition.Name == "first_think" || ev.ToolDefinition.Name == "second_think") {
+		if ev, ok := ev.(*contract.ToolCallResponseEvent); ok && (ev.ToolDefinition.Name == "first_think" || ev.ToolDefinition.Name == "second_think") {
 			assert.False(t, ev.Result.IsError, ev.Response)
 			results = append(results, ev.Response)
 		}

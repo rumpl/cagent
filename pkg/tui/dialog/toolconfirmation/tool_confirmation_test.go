@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/dialog/common"
@@ -20,8 +21,8 @@ import (
 
 // newConfirmationEvent builds a tool-call confirmation event carrying the
 // supplied metadata for use in the dialog tests.
-func newConfirmationEvent(metadata map[string]string) *runtime.ToolCallConfirmationEvent {
-	return &runtime.ToolCallConfirmationEvent{
+func newConfirmationEvent(metadata map[string]string) *contract.ToolCallConfirmationEvent {
+	return &contract.ToolCallConfirmationEvent{
 		Type:           "tool_call_confirmation",
 		ToolCall:       tools.ToolCall{ID: "x", Function: tools.FunctionCall{Name: "shell", Arguments: "{}"}},
 		ToolDefinition: tools.Tool{Name: "shell"},

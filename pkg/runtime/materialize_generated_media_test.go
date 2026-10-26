@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/runtime/artifacts"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/workspacemedia"
 )
@@ -71,15 +72,15 @@ func assertNoFilesUnder(t *testing.T, dir string) {
 // event, for tests that need to inspect exactly what was emitted (not
 // just observe side effects via a channel).
 type collectingSink struct {
-	events []Event
+	events []contract.Event
 }
 
-func (s *collectingSink) Emit(e Event) { s.events = append(s.events, e) }
+func (s *collectingSink) Emit(e contract.Event) { s.events = append(s.events, e) }
 
-func (s *collectingSink) warnings() []*WarningEvent {
-	var out []*WarningEvent
+func (s *collectingSink) warnings() []*contract.WarningEvent {
+	var out []*contract.WarningEvent
 	for _, e := range s.events {
-		if w, ok := e.(*WarningEvent); ok {
+		if w, ok := e.(*contract.WarningEvent); ok {
 			out = append(out, w)
 		}
 	}

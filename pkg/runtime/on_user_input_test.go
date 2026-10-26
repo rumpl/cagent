@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/hooks"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -141,11 +142,11 @@ func TestEnforceMaxIterations_Interactive_FiresOnUserInput(t *testing.T) {
 	a := r.CurrentAgent()
 	require.NotNil(t, a)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
-	sink := EventSinkFunc(func(ev Event) {
+	sink := EventSinkFunc(func(ev contract.Event) {
 		events <- ev
-		if _, ok := ev.(*MaxIterationsReachedEvent); ok {
+		if _, ok := ev.(*contract.MaxIterationsReachedEvent); ok {
 			r.Resume(t.Context(), ResumeReject("stop"))
 		}
 	})
@@ -168,7 +169,7 @@ func TestEnforceMaxIterations_NonInteractive_DoesNotFireOnUserInput(t *testing.T
 	require.NotNil(t, a)
 	sess := session.New()
 	sess.NonInteractive = true
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	_, decision := r.enforceMaxIterations(t.Context(), sess, a, 10, 10, NewChannelSink(events))
 
@@ -188,7 +189,7 @@ func TestEnforceMaxIterations_ContextCancelled_DoesNotFireOnUserInput(t *testing
 	a := r.CurrentAgent()
 	require.NotNil(t, a)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -200,7 +201,7 @@ func TestEnforceMaxIterations_ContextCancelled_DoesNotFireOnUserInput(t *testing
 
 	select {
 	case ev := <-events:
-		assert.IsType(t, &MaxIterationsReachedEvent{}, ev,
+		assert.IsType(t, &contract.MaxIterationsReachedEvent{}, ev,
 			"MaxIterationsReached must still be emitted before the cancelled-context stop")
 	default:
 		t.Fatal("expected MaxIterationsReached to be emitted")
@@ -228,11 +229,11 @@ func TestEnforceMaxIterations_PinnedSessionAgent_AttributesHookToThatAgent(t *te
 	)
 	r, rb := runtimeWithRecordedUserInput(t, worker)
 	sess := session.New()
-	events := make(chan Event, 8)
+	events := make(chan contract.Event, 8)
 
-	sink := EventSinkFunc(func(ev Event) {
+	sink := EventSinkFunc(func(ev contract.Event) {
 		events <- ev
-		if _, ok := ev.(*MaxIterationsReachedEvent); ok {
+		if _, ok := ev.(*contract.MaxIterationsReachedEvent); ok {
 			r.Resume(t.Context(), ResumeReject("stop"))
 		}
 	})
@@ -254,8 +255,8 @@ func TestOnUserInputHooks_Elicitation_CarriesConversationID(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r, rb := runtimeWithRecordedUserInput(t)
 
-		sinkCalled := make(chan Event, 1)
-		r.OnElicitationRequest(func(ev Event) { sinkCalled <- ev })
+		sinkCalled := make(chan contract.Event, 1)
+		r.OnElicitationRequest(func(ev contract.Event) { sinkCalled <- ev })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
@@ -267,10 +268,10 @@ func TestOnUserInputHooks_Elicitation_CarriesConversationID(t *testing.T) {
 			done <- err
 		}()
 
-		var ev *ElicitationRequestEvent
+		var ev *contract.ElicitationRequestEvent
 		select {
 		case e := <-sinkCalled:
-			ev = e.(*ElicitationRequestEvent)
+			ev = e.(*contract.ElicitationRequestEvent)
 		case <-time.After(time.Second):
 			t.Fatal("elicitation request event not delivered to the sink")
 		}

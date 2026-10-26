@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
 	"github.com/docker/docker-agent/pkg/tools"
 )
@@ -76,12 +77,12 @@ var errNoSuchElicitation = errors.New("no elicitation request in progress")
 // cannot block the request/response path at all (#3584 review item 1).
 type elicitationBridge struct {
 	mu sync.RWMutex
-	ch chan Event
+	ch chan contract.Event
 }
 
 // swap atomically replaces the bridge's channel and returns the previous
 // value. RunStream calls swap(events) on entry and swap(prev) on exit.
-func (b *elicitationBridge) swap(ch chan Event) chan Event {
+func (b *elicitationBridge) swap(ch chan contract.Event) chan contract.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	prev := b.ch
@@ -101,7 +102,7 @@ func (b *elicitationBridge) swap(ch chan Event) chan Event {
 //
 // Returns errNoElicitationChannel when no channel is configured or when a
 // defensive recover catches an externally closed channel.
-func (b *elicitationBridge) send(ctx context.Context, ev Event) (err error) {
+func (b *elicitationBridge) send(ctx context.Context, ev contract.Event) (err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	defer func() {
@@ -134,7 +135,7 @@ func (b *elicitationBridge) send(ctx context.Context, ev Event) (err error) {
 // process with a send-on-closed-channel panic; #3584 bounded the wait (send
 // used to have no ctx at all and could block indefinitely) and moved the
 // caller onto a detached goroutine so this can never stall the request path.
-func (b *elicitationBridge) restoreAndClose(current chan<- Event, previous chan Event) {
+func (b *elicitationBridge) restoreAndClose(current chan<- contract.Event, previous chan contract.Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.ch = previous
@@ -349,7 +350,7 @@ func (r *LocalRuntime) ResumeElicitation(ctx context.Context, action tools.Elici
 // best-effort bridge — as the single, exactly-once delivery point. Embedders
 // (e.g. the TUI's App, or the API server for session-scoped SSE delivery)
 // register a handler here that forwards the event to their UI/transport.
-func (r *LocalRuntime) OnElicitationRequest(handler func(Event)) {
+func (r *LocalRuntime) OnElicitationRequest(handler func(contract.Event)) {
 	r.elicitationSinkMu.Lock()
 	defer r.elicitationSinkMu.Unlock()
 	r.onElicitationRequest = handler
@@ -357,7 +358,7 @@ func (r *LocalRuntime) OnElicitationRequest(handler func(Event)) {
 }
 
 // OnElicitationRequestWithContext preserves the originating run's ownership.
-func (r *LocalRuntime) OnElicitationRequestWithContext(handler func(context.Context, Event)) {
+func (r *LocalRuntime) OnElicitationRequestWithContext(handler func(context.Context, contract.Event)) {
 	r.elicitationSinkMu.Lock()
 	defer r.elicitationSinkMu.Unlock()
 	r.onElicitationContext = handler
@@ -388,7 +389,7 @@ func (r *LocalRuntime) MirrorsElicitationOnRunStream() {}
 // an event observed on a RunStream channel), or the exactly-once guarantee
 // this type documents no longer holds (#3584 item 5 — dual delivery
 // previously required a stateful App-side dedupe to paper over).
-func (r *LocalRuntime) emitElicitationRequest(event Event) {
+func (r *LocalRuntime) emitElicitationRequest(event contract.Event) {
 	r.elicitationSinkMu.RLock()
 	handler, contextual := r.onElicitationRequest, r.onElicitationContext
 	r.elicitationSinkMu.RUnlock()
@@ -401,7 +402,7 @@ func (r *LocalRuntime) emitElicitationRequest(event Event) {
 	}
 }
 
-func (r *LocalRuntime) emitElicitationRequestContext(ctx context.Context, event Event) {
+func (r *LocalRuntime) emitElicitationRequestContext(ctx context.Context, event contract.Event) {
 	r.elicitationSinkMu.RLock()
 	handler := r.onElicitationRequest
 	contextual := r.onElicitationContext
@@ -423,7 +424,7 @@ func (r *LocalRuntime) emitElicitationRequestContext(ctx context.Context, event 
 // gives them a seam to do that instead of reconstructing the sink separately
 // and invoking it in isolation, which would pass even if the runtime under
 // test was never actually wired up (#3584 re-review should-fix 1).
-func (r *LocalRuntime) EmitElicitationRequestForTesting(event Event) {
+func (r *LocalRuntime) EmitElicitationRequestForTesting(event contract.Event) {
 	r.emitElicitationRequest(event)
 }
 
@@ -593,13 +594,13 @@ func (r *LocalRuntime) requestElicitation(ctx context.Context, spec elicitationS
 		"server_elicitation_id", spec.serverElicitationID)
 	slog.DebugContext(ctx, "Elicitation request meta", "meta", spec.meta)
 
-	ev := ElicitationRequest(spec.message, spec.mode, spec.schema, spec.url, correlationID, spec.serverElicitationID, sessionID, spec.meta, agentName)
+	ev := contract.ElicitationRequest(spec.message, spec.mode, spec.schema, spec.url, correlationID, spec.serverElicitationID, sessionID, spec.meta, agentName)
 
 	// Reliable delivery: invoked synchronously, unconditionally, and exactly
 	// once, BEFORE anything that could block (#3584 review item 1). This
 	// must never be gated behind the best-effort bridge below.
 	r.emitElicitationRequestContext(ctx, ev)
-	defer r.emitBackgroundEvent(context.WithoutCancel(ctx), &ElicitationClosedEvent{
+	defer r.emitBackgroundEvent(context.WithoutCancel(ctx), &contract.ElicitationClosedEvent{
 		Type: "elicitation_closed", ElicitationID: correlationID, SessionID: sessionID,
 		AgentContext: newAgentContext(agentName),
 	})

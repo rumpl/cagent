@@ -8,17 +8,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
-	agentruntime "github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
 func TestActualProgramScrollCancelResizeMatrixNeverNeedsRecoveryClick(t *testing.T) {
 	root, _, _ := frozenClockRoot(t, 120, 40)
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
-	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoiceReasoning("root", "profile", "thinking prefix λ界\n\n")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.StreamStarted("profile", "root")})
+	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoiceReasoning("root", "profile", "thinking prefix λ界\n\n")})
 	chunk := "matrix marker **bold** `code` λ界 [link](https://example.com)\n\n"
 	for range 120 {
-		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
+		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: contract.AgentChoice("root", "profile", chunk)})
 		_ = root.View()
 	}
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}

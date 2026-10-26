@@ -13,7 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/paths"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/tuitest"
@@ -90,8 +90,8 @@ func testLoadSessionThenClickEditLabel(t *testing.T, newTab bool, width int) {
 
 	// Simulate the async startup info that App.ReplaceSession re-emits after
 	// the load completed: it changes the collapsed sidebar band's height.
-	driver.Send(&runtime.TeamInfoEvent{
-		AvailableAgents: []runtime.AgentDetails{
+	driver.Send(&contract.TeamInfoEvent{
+		AvailableAgents: []contract.AgentDetails{
 			{Name: "root", Model: "gpt-4", Description: "root agent"},
 			{Name: "helper", Model: "gpt-4", Description: "helper agent"},
 		},

@@ -21,7 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/gitbranch"
 	pathx "github.com/docker/docker-agent/pkg/path"
 	"github.com/docker/docker-agent/pkg/plans"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -75,14 +75,14 @@ type Model interface {
 	layout.Sizeable
 	layout.Positionable
 
-	SetTokenUsage(event *runtime.TokenUsageEvent)
+	SetTokenUsage(event *contract.TokenUsageEvent)
 	SetTodos(result *tools.ToolCallResult) error
 	SetMode(mode Mode)
 	// SetMirroredPadding swaps the horizontal edge padding so the sidebar hugs
 	// the terminal edge when rendered on the left of the chat.
 	SetMirroredPadding(mirrored bool)
 	SetAgentInfo(agentName, model, description string, contextLimit int64, compactionModel string, primaryContextLimit int64) tea.Cmd
-	SetTeamInfo(availableAgents []runtime.AgentDetails)
+	SetTeamInfo(availableAgents []contract.AgentDetails)
 	// SetAgentSwitching records the start (switching=true) or end of a
 	// transfer_task hop between fromAgent and toAgent. Stops carry the
 	// inverse pair of their start (start A→B is closed by stop B→A) and are
@@ -324,14 +324,14 @@ type model struct {
 	ar           *animation.Runtime
 	width        int
 	height       int
-	xPos         int                       // absolute x position on screen
-	yPos         int                       // absolute y position on screen
-	layoutCfg    LayoutConfig              // layout configuration for spacing
-	sessionUsage map[string]*runtime.Usage // sessionID -> latest usage snapshot
+	xPos         int                        // absolute x position on screen
+	yPos         int                        // absolute y position on screen
+	layoutCfg    LayoutConfig               // layout configuration for spacing
+	sessionUsage map[string]*contract.Usage // sessionID -> latest usage snapshot
 	// budgetUsage is the newest run-budget snapshot, or nil on an
 	// unbudgeted run. It is a single value rather than a per-session map
 	// because one budget covers the whole run, sub-sessions included.
-	budgetUsage       *runtime.BudgetUsageEvent
+	budgetUsage       *contract.BudgetUsageEvent
 	todoComp          *todotool.SidebarComponent
 	ragIndexing       map[string]*ragIndexingState // strategy name -> indexing state
 	spinner           spinner.Spinner
@@ -351,7 +351,7 @@ type model struct {
 	// the primary model's own window in that case and stays unrendered.
 	agentCompactionModel string
 	agentPrimaryLimit    int64
-	availableAgents      []runtime.AgentDetails
+	availableAgents      []contract.AgentDetails
 	backgroundAgents     map[string]string // child session ID -> agent name
 	agentTransfers       []agentTransfer   // logical transfer_task hops (stack; top = innermost)
 	agentReturn          *agentReturnState // transient child→parent Return presentation, nil when none
@@ -440,7 +440,7 @@ func New(ar *animation.Runtime, ctx context.Context, sessionState *service.Sessi
 		width:             20,
 		layoutCfg:         DefaultLayoutConfig(),
 		height:            24,
-		sessionUsage:      make(map[string]*runtime.Usage),
+		sessionUsage:      make(map[string]*contract.Usage),
 		todoComp:          todotool.NewSidebarComponent(),
 		transferAnimation: ar.Subscribe(),
 		spinner:           spinner.New(ar, spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle),
@@ -516,7 +516,7 @@ func (m *model) invalidateAnimation() {
 	m.visualGeneration++
 }
 
-func (m *model) SetTokenUsage(event *runtime.TokenUsageEvent) {
+func (m *model) SetTokenUsage(event *contract.TokenUsageEvent) {
 	if event == nil || event.Usage == nil || event.SessionID == "" || event.AgentName == "" {
 		return
 	}
@@ -579,7 +579,7 @@ func (m *model) SetAgentInfo(agentName, modelID, description string, contextLimi
 }
 
 // SetTeamInfo sets the available agents in the team
-func (m *model) SetTeamInfo(availableAgents []runtime.AgentDetails) {
+func (m *model) SetTeamInfo(availableAgents []contract.AgentDetails) {
 	m.availableAgents = availableAgents
 	m.invalidateCache()
 }
@@ -1044,7 +1044,7 @@ func (m *model) LoadFromSession(sess *session.Session) {
 
 	// Load token usage from session
 	if sess.InputTokens > 0 || sess.OutputTokens > 0 || totalCost > 0 {
-		m.sessionUsage[sess.ID] = &runtime.Usage{
+		m.sessionUsage[sess.ID] = &contract.Usage{
 			InputTokens:   sess.InputTokens,
 			OutputTokens:  sess.OutputTokens,
 			ContextLength: sess.InputTokens + sess.OutputTokens,
@@ -1113,7 +1113,7 @@ func (m *model) activeSessionID() string {
 }
 
 // activeSessionUsage returns the usage snapshot for the active session.
-func (m *model) activeSessionUsage() (*runtime.Usage, bool) {
+func (m *model) activeSessionUsage() (*contract.Usage, bool) {
 	if id := m.activeSessionID(); id != "" {
 		if usage, ok := m.sessionUsage[id]; ok {
 			return usage, true
@@ -1148,7 +1148,7 @@ func (m *model) contextPercent() string {
 
 // usageContextPercent formats a usage snapshot's context fill as "N%", or ""
 // when the snapshot is missing or its context limit is unknown.
-func usageContextPercent(usage *runtime.Usage) string {
+func usageContextPercent(usage *contract.Usage) string {
 	if usage == nil || usage.ContextLimit <= 0 {
 		return ""
 	}
@@ -1177,7 +1177,7 @@ func (m *model) agentContextGaugeLevel(agentName string) styles.ContextGaugeLeve
 
 // usageGaugeLevel classifies a usage snapshot's context fill against the
 // compaction threshold it carries (0 falls back to the package default).
-func usageGaugeLevel(usage *runtime.Usage) styles.ContextGaugeLevel {
+func usageGaugeLevel(usage *contract.Usage) styles.ContextGaugeLevel {
 	if usage == nil || usage.ContextLimit <= 0 {
 		return styles.ContextGaugeNormal
 	}
@@ -1256,7 +1256,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
-	case *runtime.BackgroundAgentStatusEvent:
+	case *contract.BackgroundAgentStatusEvent:
 		if msg.SessionID == "" {
 			return m, nil
 		}
@@ -1270,17 +1270,17 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		m.invalidateCache()
 		return m, nil
-	case *runtime.TokenUsageEvent:
+	case *contract.TokenUsageEvent:
 		m.SetTokenUsage(msg)
 		return m, nil
-	case *runtime.BudgetUsageEvent:
+	case *contract.BudgetUsageEvent:
 		// The budget is per-run and shared by every sub-session, so the
 		// latest event always describes the whole run regardless of which
 		// session emitted it. Keep one snapshot rather than a per-session
 		// map — summing across sessions would double-count the wallet.
 		m.budgetUsage = msg
 		return m, nil
-	case *runtime.SessionCompactionEvent:
+	case *contract.SessionCompactionEvent:
 		// The "compacting…" gauge describes the displayed session only: a
 		// targeted compaction of a session that is not currently shown
 		// (e.g. an idle background agent session) must not flip it. Events
@@ -1297,7 +1297,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		m.stopSpinner()
 		return m, nil
-	case *runtime.RAGIndexingStartedEvent:
+	case *contract.RAGIndexingStartedEvent:
 		// Ignore if stream was cancelled (stale event from before cancellation)
 		if m.streamCancelled {
 			return m, nil
@@ -1311,7 +1311,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.ragIndexing[key] = state
 		m.invalidateCache()
 		return m, state.spinner.Init()
-	case *runtime.RAGIndexingProgressEvent:
+	case *contract.RAGIndexingProgressEvent:
 		key := msg.RAGName + "/" + msg.StrategyName
 		slog.Debug("Sidebar received RAG indexing progress event", "rag", msg.RAGName, "strategy", msg.StrategyName, "current", msg.Current, "total", msg.Total)
 		if state, exists := m.ragIndexing[key]; exists {
@@ -1320,7 +1320,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			m.invalidateCache()
 		}
 		return m, nil
-	case *runtime.RAGIndexingCompletedEvent:
+	case *contract.RAGIndexingCompletedEvent:
 		key := msg.RAGName + "/" + msg.StrategyName
 		slog.Debug("Sidebar received RAG indexing completed event", "rag", msg.RAGName, "strategy", msg.StrategyName)
 		if state, exists := m.ragIndexing[key]; exists {
@@ -1329,7 +1329,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 			m.invalidateCache()
 		}
 		return m, nil
-	case *runtime.ToolCallEvent:
+	case *contract.ToolCallEvent:
 		// Tool call started - ensure working agent is set
 		if msg.AgentName != "" {
 			m.workingAgent = msg.AgentName
@@ -1341,7 +1341,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		activityCmd := m.SetAgentActivity(msg.AgentName)
 		cmd := m.startSpinner()
 		return m, tea.Batch(cmd, activityCmd)
-	case *runtime.ToolCallResponseEvent:
+	case *contract.ToolCallResponseEvent:
 		// Tool response received - ensure working agent is set (in case stream events were missed)
 		if msg.AgentName != "" {
 			m.workingAgent = msg.AgentName
@@ -1349,7 +1349,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		cmd := m.startSpinner()
 		return m, cmd
-	case *runtime.SessionTitleEvent:
+	case *contract.SessionTitleEvent:
 		// Clear regenerating state now that title generation is done
 		if m.titleRegenerating {
 			m.titleRegenerating = false
@@ -1362,7 +1362,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		}
 		m.invalidateCache()
 		return m, nil
-	case *runtime.StreamStartedEvent:
+	case *contract.StreamStartedEvent:
 		// New stream starting - reset cancelled flag and enable spinner
 		m.streamCancelled = false
 		m.workingAgent = msg.AgentName
@@ -1380,7 +1380,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.invalidateCache()
 		cmd := m.startSpinner()
 		return m, cmd
-	case *runtime.SessionRecoveredEvent:
+	case *contract.SessionRecoveredEvent:
 		m.workingAgent = ""
 		m.sessionStack = nil
 		m.clearTransferPresentation()
@@ -1388,7 +1388,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.invalidateCache()
 		m.stopSpinner()
 		return m, nil
-	case *runtime.StreamStoppedEvent:
+	case *contract.StreamStoppedEvent:
 		m.workingAgent = ""
 		if n := len(m.sessionStack); n > 0 {
 			m.sessionStack = m.sessionStack[:n-1]
@@ -1402,13 +1402,13 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		m.invalidateCache()
 		m.stopSpinner() // Will only stop if no other state needs it
 		return m, nil
-	case *runtime.AgentInfoEvent:
+	case *contract.AgentInfoEvent:
 		cmd := m.SetAgentInfo(msg.AgentName, msg.Model, msg.Description, msg.ContextLimit, msg.CompactionModel, msg.PrimaryContextLimit)
 		return m, cmd
-	case *runtime.TeamInfoEvent:
+	case *contract.TeamInfoEvent:
 		m.SetTeamInfo(msg.AvailableAgents)
 		return m, nil
-	case *runtime.AgentSwitchingEvent:
+	case *contract.AgentSwitchingEvent:
 		// Standalone dispatch: no routing identity exists at this level, so
 		// the presentation timers fire as plain ticks — correct for a
 		// single-page setup. The multi-tab chat page intercepts this event
@@ -1422,7 +1422,7 @@ func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	case transferTimerMsg:
 		cmd := m.handleTransferTimer(msg)
 		return m, cmd
-	case *runtime.ToolsetInfoEvent:
+	case *contract.ToolsetInfoEvent:
 		// Ignore loading state if stream was cancelled (stale event from before cancellation)
 		if m.streamCancelled && msg.Loading {
 			return m, nil
@@ -2070,7 +2070,7 @@ func (m *model) budgetLine(contentWidth int) string {
 
 // oneBudgetLine renders a single named budget's totals against its ceilings.
 // Returns "" when the budget declares no ceilings at all.
-func (m *model) oneBudgetLine(s runtime.BudgetStatus, nameWidth int) string {
+func (m *model) oneBudgetLine(s contract.BudgetStatus, nameWidth int) string {
 	var parts []string
 	if s.MaxCost > 0 {
 		parts = append(parts, budgetPartStyle(s.Cost, s.MaxCost).Render(
@@ -2266,13 +2266,13 @@ func (m *model) agentInfo(contentWidth int) string {
 
 // agentRenderer renders one roster agent's content lines at a layout
 // precomputed for the whole panel.
-type agentRenderer func(agent runtime.AgentDetails, index int, current bool) []string
+type agentRenderer func(agent contract.AgentDetails, index int, current bool) []string
 
 // rosterAgent is one Agents-roster entry: the agent's details plus its
 // original team index, preserved under filtering so the ^N switch shortcut
 // keeps addressing the same team position.
 type rosterAgent struct {
-	agent runtime.AgentDetails
+	agent contract.AgentDetails
 	index int
 }
 
@@ -2328,7 +2328,7 @@ func (m *model) compactAgentRenderer(roster []rosterAgent, contentWidth int) age
 	glyphOnly := contentWidth < rowGlyphOnlyMinWidth
 	badgeWidth := badgeColumnWidth(roster, glyphOnly)
 	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-badgeWidth-1-agentShortcutWidth)
-	return func(agent runtime.AgentDetails, index int, current bool) []string {
+	return func(agent contract.AgentDetails, index int, current bool) []string {
 		return m.renderAgentLine(agent, index, contentWidth, nameWidth, badgeWidth, glyphOnly, current)
 	}
 }
@@ -2353,7 +2353,7 @@ func (m *model) detailedAgentRenderer(roster []rosterAgent, contentWidth int) ag
 		}
 	}
 	nameWidth := max(1, contentWidth-agentMarkerWidth-minGap-agentShortcutWidth)
-	return func(agent runtime.AgentDetails, index int, current bool) []string {
+	return func(agent contract.AgentDetails, index int, current bool) []string {
 		return m.renderAgentCard(agent, index, contentWidth, nameWidth, narrow, current)
 	}
 }
@@ -2550,7 +2550,7 @@ func padLeft(s string, width int) string {
 // usage percentage right-aligned once the agent has run (background agent
 // tasks included). The description is omitted. Agents past the 9th have no
 // shortcut.
-func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth, nameWidth, badgeWidth int, glyphOnly, current bool) []string {
+func (m *model) renderAgentLine(agent contract.AgentDetails, index, contentWidth, nameWidth, badgeWidth int, glyphOnly, current bool) []string {
 	agentStyle := styles.AgentAccentStyleFor(agent.Name)
 
 	var marker string
@@ -2615,7 +2615,7 @@ func (m *model) renderAgentLine(agent runtime.AgentDetails, index, contentWidth,
 // detailedAgentRenderer) — context keeps the warning/critical coloring, and
 // cost is the agent's cumulative attributed cost. The description is
 // omitted. Agents past the 9th have no shortcut.
-func (m *model) renderAgentCard(agent runtime.AgentDetails, index, contentWidth, nameWidth int, narrow, current bool) []string {
+func (m *model) renderAgentCard(agent contract.AgentDetails, index, contentWidth, nameWidth int, narrow, current bool) []string {
 	agentStyle := styles.AgentAccentStyleFor(agent.Name)
 
 	var marker string
@@ -2674,7 +2674,7 @@ type metricSegment struct {
 // metricSegments builds the labeled metric segments of an agent's card in
 // display order: effort (omitted when the agent has no thinking
 // configuration), then context and cost.
-func (m *model) metricSegments(agent runtime.AgentDetails, narrow bool) []metricSegment {
+func (m *model) metricSegments(agent contract.AgentDetails, narrow bool) []metricSegment {
 	segments := make([]metricSegment, 0, 3)
 	if s := effortSegment(agent.Thinking, narrow); s.full != "" {
 		segments = append(segments, s)
@@ -2684,7 +2684,7 @@ func (m *model) metricSegments(agent runtime.AgentDetails, narrow bool) []metric
 
 // metricLines builds the flowed metric lines of an agent card, fitted to
 // width columns.
-func (m *model) metricLines(agent runtime.AgentDetails, width int, narrow bool) []string {
+func (m *model) metricLines(agent contract.AgentDetails, width int, narrow bool) []string {
 	return flowMetricLines(m.metricSegments(agent, narrow), width, narrow)
 }
 

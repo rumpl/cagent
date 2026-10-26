@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/agent"
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/modelsdev"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -200,7 +201,7 @@ func TestRuntime_RecordsPerCallTelemetryCost(t *testing.T) {
 				prov.stream = builder.Build()
 				sess.AddMessage(session.UserMessage("hi"))
 				for ev := range rt.RunStream(t.Context(), sess) {
-					if ev, ok := ev.(*ErrorEvent); ok {
+					if ev, ok := ev.(*contract.ErrorEvent); ok {
 						t.Errorf("unexpected runtime error: %s", ev.Error)
 					}
 				}

@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/openai"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -82,7 +83,7 @@ func TestRunStream_NativeToolSearch_DispatchesUnactivatedCatalogTool(t *testing.
 	sess.ExcludedTools = []string{"delete_everything"}
 
 	for ev := range rt.RunStream(t.Context(), sess) {
-		if e, ok := ev.(*ErrorEvent); ok {
+		if e, ok := ev.(*contract.ErrorEvent); ok {
 			t.Fatalf("unexpected error event: %s", e.Error)
 		}
 	}
@@ -169,7 +170,7 @@ func TestRunStream_NativeToolSearch_CatalogToolRequiresApproval(t *testing.T) {
 type unapprovedNativeSearchRun struct {
 	server       *fakeResponsesServer
 	handlerCalls atomic.Int64
-	response     *ToolCallResponseEvent
+	response     *contract.ToolCallResponseEvent
 }
 
 // replayedOutput is the function_call_output the model receives on turn 2.
@@ -212,16 +213,16 @@ func runUnapprovedNativeSearch(t *testing.T, decision ResumeRequest) *unapproved
 	sess := session.New(session.WithUserMessage("write my notes"))
 	require.False(t, sess.ToolsApproved)
 
-	var prompts []*ToolCallConfirmationEvent
+	var prompts []*contract.ToolCallConfirmationEvent
 	for ev := range rt.RunStream(t.Context(), sess) {
 		switch e := ev.(type) {
-		case *ErrorEvent:
+		case *contract.ErrorEvent:
 			t.Fatalf("unexpected error event: %s", e.Error)
-		case *ToolCallConfirmationEvent:
+		case *contract.ToolCallConfirmationEvent:
 			assert.Equal(t, int64(0), run.handlerCalls.Load(), "the prompt must precede the handler")
 			prompts = append(prompts, e)
 			rt.resumeChan <- decision
-		case *ToolCallResponseEvent:
+		case *contract.ToolCallResponseEvent:
 			run.response = e
 		}
 	}

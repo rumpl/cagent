@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/base"
 	"github.com/docker/docker-agent/pkg/modelsdev"
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/session/sqlitestore"
 	"github.com/docker/docker-agent/pkg/team"
@@ -306,14 +307,14 @@ func TestSessionFromEventsRuntimeParallelGuards(t *testing.T) {
 				require.NoError(t, json.Unmarshal(data, &payload))
 				events = append(events, payload)
 				switch e := event.(type) {
-				case *runtime.EvaluationUsageEvent:
+				case *contract.EvaluationUsageEvent:
 					order = append(order, "evaluation-"+e.Evaluation.Model)
-				case *runtime.ToolCallEvent:
+				case *contract.ToolCallEvent:
 					order = append(order, "call-"+e.ToolCall.ID)
 					if e.ToolCall.ID == "A" && !earlyResult {
 						close(releaseGuardB)
 					}
-				case *runtime.ToolCallResponseEvent:
+				case *contract.ToolCallResponseEvent:
 					order = append(order, "result-"+e.ToolCallID)
 					if e.ToolCallID == "A" && earlyResult {
 						close(releaseGuardB)
@@ -321,7 +322,7 @@ func TestSessionFromEventsRuntimeParallelGuards(t *testing.T) {
 					if e.ToolCallID == "B" && !earlyResult {
 						close(releaseToolA)
 					}
-				case *runtime.ErrorEvent:
+				case *contract.ErrorEvent:
 					t.Errorf("unexpected runtime error: %s", e.Error)
 				}
 			}

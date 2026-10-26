@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/tui/core/layout"
 	"github.com/docker/docker-agent/pkg/tui/dialog/common"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -104,7 +104,7 @@ func (d *manager) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 
 	case CloseDialogMsg:
 		if msg.ElicitationID != "" {
-			prompt, ok := d.TopBackgroundEvent().(*runtime.ElicitationRequestEvent)
+			prompt, ok := d.TopBackgroundEvent().(*contract.ElicitationRequestEvent)
 			if !ok || prompt.ElicitationID != msg.ElicitationID {
 				return d, nil
 			}

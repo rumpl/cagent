@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/agent"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/team"
 )
@@ -22,8 +23,8 @@ type slowChoiceObserver struct{ delay time.Duration }
 
 func (slowChoiceObserver) OnRunStart(context.Context, *session.Session) {}
 
-func (o slowChoiceObserver) OnEvent(_ context.Context, _ *session.Session, event Event) {
-	if _, ok := event.(*AgentChoiceEvent); ok {
+func (o slowChoiceObserver) OnEvent(_ context.Context, _ *session.Session, event contract.Event) {
+	if _, ok := event.(*contract.AgentChoiceEvent); ok {
 		time.Sleep(o.delay) //nolint:forbidigo // Fake-time delay preserves consumer backpressure.
 	}
 }
@@ -59,14 +60,14 @@ func TestRunStream_StreamStoppedDeliveredUnderSlowConsumer(t *testing.T) {
 		sess := session.New(session.WithUserMessage("hi"))
 		sess.Title = "Unit Test"
 
-		var events []Event
+		var events []contract.Event
 		for ev := range rt.RunStream(t.Context(), sess) {
 			events = append(events, ev)
 		}
 
 		var stoppedCount, stoppedIdx int
 		for i, ev := range events {
-			if _, ok := ev.(*StreamStoppedEvent); ok {
+			if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 				stoppedCount++
 				stoppedIdx = i
 			}
@@ -88,9 +89,9 @@ func TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveCon
 		rt := newElicitationTestRuntime(t)
 		rt.streamStoppedDeliveryTimeout = 2 * time.Second
 		sess := session.New()
-		events := make(chan Event, 1)
-		parent := make(chan Event, 1)
-		events <- Error("buffer already full")
+		events := make(chan contract.Event, 1)
+		parent := make(chan contract.Event, 1)
+		events <- contract.Error("buffer already full")
 		rt.elicitation.swap(events)
 
 		done := make(chan struct{})
@@ -108,7 +109,7 @@ func TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveCon
 
 		// Free the slot while the finalizer is blocked, before its deadline.
 		received := <-events
-		_, ok := received.(*ErrorEvent)
+		_, ok := received.(*contract.ErrorEvent)
 		require.True(t, ok, "expected to drain the pre-seeded event first")
 
 		select {
@@ -119,7 +120,7 @@ func TestLocalRuntime_FinalizeEventChannelDeliversStreamStoppedToSlowButAliveCon
 
 		var stopped int
 		for ev := range events {
-			if _, ok := ev.(*StreamStoppedEvent); ok {
+			if _, ok := ev.(*contract.StreamStoppedEvent); ok {
 				stopped++
 			}
 		}

@@ -13,7 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/leantui/ui"
 	"github.com/docker/docker-agent/pkg/paths"
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/sound"
 	"github.com/docker/docker-agent/pkg/tui/messages"
@@ -184,15 +184,15 @@ func TestCompletionSound(t *testing.T) {
 			m := bareModel(80)
 			var played []sound.Event
 			m.playSound = func(_ context.Context, event sound.Event) { played = append(played, event) }
-			m.handleEvent(t.Context(), runtime.StreamStarted("root", "root"))
+			m.handleEvent(t.Context(), contract.StreamStarted("root", "root"))
 			m.streamStartTime = time.Now().Add(-tc.duration)
-			m.handleEvent(t.Context(), runtime.StreamStarted("child", "child"))
-			m.handleEvent(t.Context(), runtime.StreamStopped("child", "child", "normal"))
+			m.handleEvent(t.Context(), contract.StreamStarted("child", "child"))
+			m.handleEvent(t.Context(), contract.StreamStopped("child", "child", "normal"))
 			assert.Empty(t, played)
 			assert.True(t, m.busy)
-			m.handleEvent(t.Context(), runtime.StreamStopped("root", "root", tc.reason))
+			m.handleEvent(t.Context(), contract.StreamStopped("root", "root", tc.reason))
 			assert.Equal(t, tc.want, len(played) == 1)
-			m.handleEvent(t.Context(), runtime.StreamStopped("root", "root", tc.reason))
+			m.handleEvent(t.Context(), contract.StreamStopped("root", "root", tc.reason))
 			assert.LessOrEqual(t, len(played), 1)
 		})
 	}
@@ -204,10 +204,10 @@ func TestFailureSound(t *testing.T) {
 	m := bareModel(80)
 	var played []sound.Event
 	m.playSound = func(_ context.Context, event sound.Event) { played = append(played, event) }
-	m.handleEvent(t.Context(), &runtime.ErrorEvent{Error: "failed"})
+	m.handleEvent(t.Context(), &contract.ErrorEvent{Error: "failed"})
 	assert.Equal(t, []sound.Event{sound.Failure}, played)
 	require.NoError(t, (&userconfig.Config{}).Save())
-	m.handleEvent(t.Context(), &runtime.ErrorEvent{Error: "failed"})
+	m.handleEvent(t.Context(), &contract.ErrorEvent{Error: "failed"})
 	assert.Len(t, played, 1)
 }
 

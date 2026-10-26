@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/tab"
@@ -28,7 +28,7 @@ func TestSidebar_HandleClickType_Agent(t *testing.T) {
 	m.titleGenerated = true
 	m.sessionTitle = "Test"
 	m.currentAgent = "agent1"
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "agent1", Provider: "openai", Model: "gpt-4", Description: "First agent"},
 		{Name: "agent2", Provider: "anthropic", Model: "claude", Description: "Second agent"},
 	}
@@ -75,7 +75,7 @@ func TestSidebar_AgentClickZones_EveryRenderedLineMapped(t *testing.T) {
 	m.titleGenerated = true
 	m.sessionTitle = "Test"
 	m.currentAgent = "agent1"
-	m.availableAgents = []runtime.AgentDetails{
+	m.availableAgents = []contract.AgentDetails{
 		{Name: "agent1", Provider: "openai", Model: "gpt-4", Description: "First agent", Thinking: "high"},
 		{Name: "agent2", Provider: "anthropic", Model: "claude", Description: "Second agent", Thinking: "off"},
 	}

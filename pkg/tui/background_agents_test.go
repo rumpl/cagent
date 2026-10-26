@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/runtime/contract"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
@@ -20,19 +20,19 @@ func TestBackgroundAgentStatusStaysOnOwningTab(t *testing.T) {
 	})
 	for _, id := range []string{activeID, hiddenID} {
 		m.tabs[id].sessionState.SetCurrentAgentName("root")
-		_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.BackgroundAgentStatus("child-"+id, "worker", true)})
+		_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.BackgroundAgentStatus("child-"+id, "worker", true)})
 		assert.Equal(t, "root", m.tabs[id].sessionState.CurrentAgentName())
 		assert.Contains(t, ansi.Strip(m.tabs[id].chatPage.View()), "Background: 1 running")
 		assert.False(t, m.tabs[id].chatPage.IsWorking())
-		_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: runtime.NewTokenUsageEvent("child-"+id, "worker", &runtime.Usage{
+		_, _ = m.Update(messages.RoutedMsg{SessionID: id, Inner: contract.NewTokenUsageEvent("child-"+id, "worker", &contract.Usage{
 			ContextLength: 10, ContextLimit: 100,
 		})})
 		assert.Equal(t, "root", m.tabs[id].sessionState.CurrentAgentName(), "background usage must not select the worker")
 	}
-	_, _ = m.Update(messages.RoutedMsg{SessionID: hiddenID, Inner: runtime.BackgroundAgentStatus("child-"+hiddenID, "worker", false)})
+	_, _ = m.Update(messages.RoutedMsg{SessionID: hiddenID, Inner: contract.BackgroundAgentStatus("child-"+hiddenID, "worker", false)})
 	assert.NotContains(t, m.tabs[hiddenID].chatPage.View(), "Background:")
 	assert.Contains(t, ansi.Strip(m.tabs[activeID].chatPage.View()), "Background: 1 running")
-	_, _ = m.Update(runtime.BackgroundAgentStatus("child-"+activeID, "worker", false))
+	_, _ = m.Update(contract.BackgroundAgentStatus("child-"+activeID, "worker", false))
 	assert.NotContains(t, m.tabs[activeID].chatPage.View(), "Background:")
 	assert.Equal(t, "root", m.activeTab.sessionState.CurrentAgentName())
 }
@@ -47,9 +47,9 @@ func TestBackgroundUsagePreservesSelectedAgent(t *testing.T) {
 				return newRealChatPage(t, sess, routingID)
 			})
 			m.activeTab.sessionState.SetCurrentAgentName("root")
-			for _, event := range []runtime.Event{
-				runtime.NewTokenUsageEvent("child", "worker", &runtime.Usage{ContextLength: 10, ContextLimit: 100}),
-				&runtime.EvaluationUsageEvent{AgentContext: runtime.AgentContext{AgentName: "worker"}, SessionID: "child"},
+			for _, event := range []contract.Event{
+				contract.NewTokenUsageEvent("child", "worker", &contract.Usage{ContextLength: 10, ContextLimit: 100}),
+				&contract.EvaluationUsageEvent{AgentContext: contract.AgentContext{AgentName: "worker"}, SessionID: "child"},
 			} {
 				if routed {
 					_, _ = m.Update(messages.RoutedMsg{SessionID: activeID, Inner: event})
